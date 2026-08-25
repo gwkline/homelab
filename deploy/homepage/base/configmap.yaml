@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-config
+  namespace: agents
+data:
+  settings.yaml: |
+    title: homelab
+    theme: dark
+    color: teal
+    headerStyle: clean
+    layout:
+      Agents:
+        style: row
+  services.yaml: |
+    - Agents:
+        - T3 Code:
+            icon: mdi-console
+            description: Interactive agent servers
+            # Replace <tailnet> once (kubectl get svc -n agents shows it)
+            href: https://t3code-0.<tailnet>.ts.net
+            siteMonitor: http://t3code-headless.agents.svc.cluster.local:3773
+        - Hermes:
+            icon: mdi-brain
+            description: Orchestrator - messaging gateway or kubectl exec
+            href: https://github.com/gwkline/homelab#hermes
+  widgets.yaml: |
+    - resources:
+        backend: resources
+        cpu: true
+        memory: true
+        expanded: true

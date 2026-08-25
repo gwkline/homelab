@@ -1,6 +1,9 @@
 # Default-deny ingress in both namespaces. Egress stays open for now —
 # agents need the internet by design; revisit egress allowlists once
 # workloads are stable (documented decision, see README security section).
+#
+# Per-workload exposure rules live beside each workload (e.g.
+# deploy/t3code/base/netpol.yaml) so one apply brings up everything it needs.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -18,25 +21,3 @@ metadata:
 spec:
   podSelector: {}
   policyTypes: [Ingress]
----
-# Only Tailscale operator proxy pods (which run in the tailscale namespace)
-# may reach t3code servers. Hermes needs no inbound at all — access is via
-# kubectl exec and the agent's outbound gateway connections.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-tailscale-to-t3code
-  namespace: agents
-spec:
-  podSelector:
-    matchLabels:
-      app: t3code
-  policyTypes: [Ingress]
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: tailscale
-      ports:
-        - protocol: TCP
-          port: 3773

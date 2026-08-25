@@ -24,10 +24,10 @@ if git grep -nIE "$pattern" "$(git rev-list --all)" -- ':!scripts/verify.sh' 2>/
   fail 'secret-looking string found in history'
 fi
 
-echo '==> image references match the published namespace'
+echo '==> homelab image references match the published namespace'
 owner="$(git remote get-url origin | sed -E 's#.*[:/]([^/]+)/[^/]+(\.git)?$#\1#')"
 while IFS=: read -r file line; do
   [[ "$line" == *"ghcr.io/${owner}/homelab/"* ]] || fail "foreign image ref in ${file}: ${line}"
-done < <(grep -rn 'image: ghcr.io/' deploy/ || true)
+done < <(grep -rnE 'image: ghcr\.io/[^/]+/homelab/' deploy/ apps/ examples/ scripts/ || true)
 
 echo 'ALL CHECKS PASSED'

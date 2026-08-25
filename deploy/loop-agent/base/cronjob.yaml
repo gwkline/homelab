@@ -61,6 +61,8 @@ spec:
               env:
                 - name: GITHUB_TOKEN_FILE
                   value: /secrets/token
+                - name: GITHUB_WRITER_TOKEN_FILE
+                  value: /secrets-writer/token
                 - name: WORKSPACE_REPOS
                   valueFrom:
                     configMapKeyRef:
@@ -80,6 +82,9 @@ spec:
                   mountPath: /data
                 - name: github-token
                   mountPath: /secrets
+                  readOnly: true
+                - name: github-token-writer
+                  mountPath: /secrets-writer
                   readOnly: true
                 - name: sock
                   mountPath: /var/run
@@ -120,4 +125,10 @@ spec:
             - name: github-token
               secret:
                 secretName: github-token
+                optional: true
+            # Optional write-scoped PAT (Contents+PR write on target repos
+            # only) enabling loop -> GitHub reporting via gh. Absent by default.
+            - name: github-token-writer
+              secret:
+                secretName: github-token-writer
                 optional: true

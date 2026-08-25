@@ -144,6 +144,7 @@ kubectl apply -k deploy/policies/base
 kubectl apply -k deploy/t3code/base
 kubectl apply -k deploy/hermes/base
 kubectl apply -k deploy/loop-agent/base
+kubectl apply -k deploy/homepage/base
 
 kubectl get pods -A -w    # watch it settle; ^C when Running
 ```
@@ -173,6 +174,22 @@ kubectl rollout restart statefulset hermes -n agents
 ```sh
 kubectl create job --from=cronjob/loop-example smoke-test -n sandbox
 kubectl logs job/smoke-test -n sandbox -f
+```
+
+**homepage** (dashboard):
+
+```sh
+kubectl get svc homepage -n agents   # tailnet hostname
+# edit deploy/homepage/base/configmap.yaml to add services, then re-apply
+```
+
+**dispatcher** (optional, issue-driven runs): requires hermes' RBAC (applied
+above) and a PAT in secret `github-token` for API reads. Edit the repo and
+command in `deploy/dispatcher/base/cronjob.yaml`, then:
+
+```sh
+kubectl apply -k deploy/dispatcher/base
+# label any issue `run-agent` in the watched repo -> Job appears in sandbox
 ```
 
 ## 10. When a node dies

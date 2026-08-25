@@ -31,6 +31,16 @@ setup_git_auth() {
   unset _token
 }
 
+# Optional: expose a write-scoped token to the gh CLI for loops that report
+# back into GitHub (comments, issue updates). No-op unless the operator
+# mounts secret github-token-writer and sets GITHUB_WRITER_TOKEN_FILE.
+setup_gh_cli() {
+  if [ -n "${GITHUB_WRITER_TOKEN_FILE:-}" ] && [ -r "${GITHUB_WRITER_TOKEN_FILE}" ]; then
+    GH_TOKEN="$(cat "${GITHUB_WRITER_TOKEN_FILE}")"
+    export GH_TOKEN
+  fi
+}
+
 sync_repos() {
   _repos_dir="${DATA_DIR:-/data}/repos"
   mkdir -p "${_repos_dir}"

@@ -7,6 +7,7 @@ set -eu
 
 . /usr/local/lib/workspace-lib.sh
 setup_git_auth
+setup_gh_cli
 sync_repos
 
 : "${LOOP_COMMAND:?LOOP_COMMAND is required (e.g. 'node /data/repos/my-loop/check.mjs')}"

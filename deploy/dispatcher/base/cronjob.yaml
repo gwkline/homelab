@@ -1,0 +1,77 @@
+# Watches a repo for issues labeled `run-agent` and dispatches one Job each.
+# Only collaborators can add labels, which makes the label the authz gate.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dispatch-watcher
+  namespace: sandbox
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: dispatch-watcher
+        spec:
+          # The one thing this pod exists for: creating Jobs with this
+          # identity. Scoped by rbac.yaml to sandbox Jobs, nothing else.
+          serviceAccountName: dispatcher
+          automountServiceAccountToken: true
+          restartPolicy: Never
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: watcher
+              image: ghcr.io/gwkline/homelab/loop-agent
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: GITHUB_TOKEN_FILE
+                  value: /secrets/token
+                - name: HOME
+                  value: /tmp
+                - name: WATCHER_REPO
+                  value: "gwkline/homelab"
+                - name: WATCHER_LABEL
+                  value: "run-agent"
+                - name: DISPATCH_PREFIX
+                  value: "dispatched"
+                - name: DISPATCH_COMMAND
+                  value: |
+                    node /data/repos/homelab/examples/loop-hello.mjs && \
+                      echo "issue ${WATCHER_ISSUE}: all checks passed"
+                - name: LOOP_COMMAND
+                  value: |
+                    node /data/repos/homelab/examples/dispatch-watcher.mjs
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                - name: github-token
+                  mountPath: /secrets
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: 256Mi
+                limits:
+                  memory: 1Gi
+          volumes:
+            - name: data
+              emptyDir:
+                sizeLimit: 1Gi
+            - name: github-token
+              secret:
+                secretName: github-token
+                optional: true

@@ -10,6 +10,5 @@ labels:
 
 resources:
   - configmap.yaml
-  - statefulset.yaml
+  - deployment.yaml
   - service.yaml
-  - netpol.yaml

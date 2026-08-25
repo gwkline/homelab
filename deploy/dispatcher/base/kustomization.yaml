@@ -1,6 +1,5 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: agents
 
 labels:
   - pairs:
@@ -9,7 +8,5 @@ labels:
     includeSelectors: false
 
 resources:
-  - configmap.yaml
-  - statefulset.yaml
-  - service.yaml
-  - netpol.yaml
+  - rbac.yaml
+  - cronjob.yaml
