@@ -1,5 +1,8 @@
 # Nightly encrypted backups of the stateful PVCs to object storage.
 #
+# DISABLED BY DEFAULT. Nothing deploys this until you both create the
+# backup-target secret and apply this directory (runbook section 11).
+#
 # Same-node assumption: the PVCs use the local-path provisioner, which pins
 # them to the node where their pods run. RWO volumes can be mounted by other
 # pods only on that same node, so this CronJob must stay co-located. On a

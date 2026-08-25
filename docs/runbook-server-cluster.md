@@ -196,10 +196,11 @@ agent workspace is unrecoverable, which is the deal you signed up for.
 | Node NotReady after reboot | `sudo systemctl status k3s` on that node |
 | Clone fails on private repo | PAT expired or missing repo access (Section 6) |
 
-## 11. Nightly backups
+## 11. Nightly backups (off until you enable them)
 
-PVC data (agent home dirs, hermes memory) is backed up encrypted to object
-storage every night at 03:30. Git repos are skipped — they re-clone.
+PVC data (agent home dirs, hermes memory) can be backed up encrypted to
+object storage every night at 03:30. Git repos are skipped — they re-clone.
+Nothing runs until both steps below are done.
 
 One-time setup:
 

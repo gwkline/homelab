@@ -34,16 +34,17 @@ Token needs "Contents: read-only" on every repo listed in a ConfigMap.
 
 ## Backups
 
-A nightly restic CronJob snapshots the stateful PVCs (agent homes, hermes
-memory) encrypted to object storage. Setup:
+Off by default. Nothing is scheduled until you set up a bucket:
 
 ```sh
 scripts/create-backup-secret.sh <bucket-name>   # B2 keys + repo password
-kubectl apply -k deploy/backup/base
+kubectl apply -k deploy/backup/base             # enables nightly 03:30 runs
 ```
 
-Restore instructions live in the server runbook. Losing the restic password
-means losing the backups.
+A nightly restic CronJob then snapshots the stateful PVCs (agent homes,
+hermes memory) encrypted to any S3-compatible store. Restore instructions
+live in the server runbook. Losing the restic password means losing the
+backups.
 
 ## Launching one-off jobs
 
