@@ -8,12 +8,3 @@ spec:
   clusterIP: None
   selector:
     app: hermes
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: hermes-workspaces
-  namespace: agents
-data:
-  repos: |
-    https://github.com/gwkline/homelab.git
