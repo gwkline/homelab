@@ -1,0 +1,32 @@
+# Governs the StatefulSet's pod identity. Not used for traffic.
+apiVersion: v1
+kind: Service
+metadata:
+  name: t3code-headless
+  namespace: agents
+spec:
+  clusterIP: None
+  selector:
+    app: t3code
+---
+# Per-replica tailnet exposure via the Tailscale operator.
+# Each replica gets https://<hostname>.<tailnet>.ts.net with automatic certs.
+# Duplicate this block (selector + hostname annotation) per replica,
+# or generate in an overlay when scaling beyond a few.
+apiVersion: v1
+kind: Service
+metadata:
+  name: t3code-0
+  namespace: agents
+  annotations:
+    tailscale.com/hostname: t3code-0
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app: t3code
+    statefulset.kubernetes.io/pod-name: t3code-0
+  ports:
+    - name: https
+      port: 443
+      targetPort: http

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loop-tasks
+  namespace: sandbox
+data:
+  repos: |
+    https://github.com/gkline/homelab.git
+  # Script (inside the synced repo) this agent executes on every run.
+  command: |
+    node /data/repos/homelab/examples/loop-hello.mjs

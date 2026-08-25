@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-cluster-guide
+  namespace: agents
+data:
+  CLUSTER.md: |
+    # Your cluster
+
+    You (hermes) run inside Kubernetes with a ServiceAccount that may create,
+    inspect, and delete Jobs and CronJobs in the `sandbox` namespace, and read
+    pods/logs there. That is the full extent of your permissions.
+
+    ## Spawning a one-off task
+    ```sh
+    kubectl create job --from=cronjob/loop-example my-task -n sandbox
+    ```
+    Or write a Job manifest to /tmp and `kubectl apply -f /tmp/task.yaml`.
+    Use the loop-agent image (`ghcr.io/gkline/homelab/loop-agent`) with env
+    WORKSPACE_REPOS (newline-separated git URLs) and LOOP_COMMAND
+    (the shell command to run). The pod has Chromium and Docker available.
+
+    ## Scheduling a recurring task
+    Copy the CronJob pattern from an existing one:
+    ```sh
+    kubectl get cronjob -n sandbox -o yaml > /tmp/base.yaml
+    ```
+    Edit name/schedule/command, then apply.
+
+    ## Observing results
+    ```sh
+    kubectl get pods -n sandbox
+    kubectl logs job/my-task -n sandbox
+    ```
+    Loop pods are throwaway: anything worth keeping must be exported by the
+    task itself (git push, HTTP POST) before it exits.
+
+    ## Rules
+    - Never put credentials in manifests; reference secret github-token.
+    - Delete finished Jobs you created once their output is captured.
+    - If a permission is missing, report it to your operator instead of
+      trying workarounds.

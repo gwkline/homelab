@@ -1,0 +1,36 @@
+# Deliberate, scoped exception to "pods can't talk to Kubernetes":
+# hermes may manage throwaway workloads in `sandbox` — nothing else.
+# It cannot touch secrets, nodes, CRDs, or its own namespace's workloads.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hermes
+  namespace: agents
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: loop-manager
+  namespace: sandbox
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["create", "get", "list", "watch", "patch", "delete"]
+  # Read-only pod access so hermes can fetch logs to see why a run failed.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hermes-loop-manager
+  namespace: sandbox
+roleRef:
+  apiGroup: rbac.authorization.k8s.io/v1
+  kind: Role
+  name: loop-manager
+subjects:
+  - kind: ServiceAccount
+    name: hermes
+    namespace: agents

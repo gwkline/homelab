@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: t3code
+  namespace: agents
+spec:
+  serviceName: t3code-headless
+  replicas: 2
+  selector:
+    matchLabels:
+      app: t3code
+  template:
+    metadata:
+      labels:
+        app: t3code
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1000
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: t3code
+          image: ghcr.io/gkline/homelab/t3code # overridden per-env in overlays
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 3773
+              name: http
+          env:
+            - name: GITHUB_TOKEN_FILE
+              value: /secrets/token
+            - name: WORKSPACE_REPOS
+              valueFrom:
+                configMapKeyRef:
+                  name: t3code-workspaces
+                  key: repos
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: github-token
+              mountPath: /secrets
+              readOnly: true
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              memory: 6Gi
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            failureThreshold: 30
+            periodSeconds: 10
+      initContainers:
+        # Runs as root only to fix volume ownership, then exits. Main
+        # containers run as uid 1000 regardless of provisioner fsGroup support.
+        - name: volume-init
+          image: busybox:1.36
+          command: ["chown", "-R", "1000:1000", "/data"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: github-token
+          secret:
+            secretName: github-token
+            optional: true
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi

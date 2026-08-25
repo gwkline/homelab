@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: hermes
+  namespace: agents
+spec:
+  serviceName: hermes-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hermes
+  template:
+    metadata:
+      labels:
+        app: hermes
+    spec:
+      # No API access needed — hard fail if a compromise tries to talk to the
+      # kube-apiserver with the pod's identity.
+      serviceAccountName: hermes
+      automountServiceAccountToken: true
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1000
+      terminationGracePeriodSeconds: 60
+      initContainers:
+        - name: volume-init
+          image: busybox:1.36
+          command: ["chown", "-R", "1000:1000", "/data"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: hermes
+          image: ghcr.io/gkline/homelab/hermes # tag via overlays
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: HOME
+              value: /data/home
+            - name: GITHUB_TOKEN_FILE
+              value: /secrets/token
+            - name: WORKSPACE_REPOS
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-workspaces
+                  key: repos
+            - name: HERMES_COMMAND
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-workspaces
+                  key: command
+                  optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: guide
+              mountPath: /data/guide
+              readOnly: true
+            - name: github-token
+              mountPath: /secrets
+              readOnly: true
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+            limits:
+              memory: 4Gi
+      volumes:
+        - name: github-token
+          secret:
+            secretName: github-token
+            optional: true
+        - name: guide
+          configMap:
+            name: hermes-cluster-guide
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi

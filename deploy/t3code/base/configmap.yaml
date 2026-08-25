@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: t3code-workspaces
+  namespace: agents
+data:
+  # Git URLs cloned into every replica of this StatefulSet. One URL per line.
+  # Add/remove lines to change what agents can see. Private repos need
+  # credentials mounted (see README TODO).
+  repos: |
+    https://github.com/gkline/homelab.git
+    https://github.com/gkline/launchpad.git

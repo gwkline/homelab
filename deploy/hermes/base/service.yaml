@@ -1,0 +1,20 @@
+# Governs pod identity. Hermes is reached via kubectl exec / gateway, not HTTP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: hermes-headless
+  namespace: agents
+spec:
+  clusterIP: None
+  selector:
+    app: hermes
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-workspaces
+  namespace: agents
+data:
+  repos: |
+    https://github.com/gkline/homelab.git
+    https://github.com/gkline/launchpad.git

@@ -1,0 +1,102 @@
+# Throwaway loop pod with REAL nested Docker: a docker:dind sidecar daemon
+# scoped to this pod only (emptyDir socket — never the host's /var/run).
+# Runs in namespace `sandbox` because the sidecar must be privileged; the
+# namespace-level Pod Security Admission label is the only place privilege
+# is granted, and pods here are ephemeral by design.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: loop-example
+  namespace: sandbox
+spec:
+  schedule: "0 9 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: loop-agent
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          terminationGracePeriodSeconds: 120
+          # Hard ceiling: a runaway inner build can't starve the node.
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: docker-ready
+              image: docker:27-cli
+              command: ["sh", "-c", "for i in $(seq 1 30); do docker info >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1"]
+              volumeMounts:
+                - name: sock
+                  mountPath: /var/run
+          containers:
+            - name: loop
+              image: ghcr.io/gkline/homelab/loop-agent # tag via overlays
+              env:
+                - name: GITHUB_TOKEN_FILE
+                  value: /secrets/token
+                - name: WORKSPACE_REPOS
+                  valueFrom:
+                    configMapKeyRef:
+                      name: loop-tasks
+                      key: repos
+                - name: LOOP_COMMAND
+                  valueFrom:
+                    configMapKeyRef:
+                      name: loop-tasks
+                      key: command
+                - name: DOCKER_HOST
+                  value: unix:///var/run/docker.sock
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                - name: github-token
+                  mountPath: /secrets
+                  readOnly: true
+                - name: sock
+                  mountPath: /var/run
+              resources:
+                requests:
+                  cpu: "500m"
+                  memory: 1Gi
+                limits:
+                  memory: 4Gi
+            - name: dind
+              image: docker:27-dind
+              command: ["dockerd", "--host=unix:///var/run/docker.sock"]
+              securityContext:
+                privileged: true # required for nested namespaces/cgroups
+              env:
+                - name: DOCKER_TLS_CERTDIR # disable TLS: socket stays inside the pod
+                  value: ""
+              volumeMounts:
+                - name: sock
+                  mountPath: /var/run
+                - name: dind-storage
+                  mountPath: /var/lib/docker
+              resources:
+                requests:
+                  cpu: "500m"
+                  memory: 1Gi
+                limits:
+                  memory: 8Gi
+          volumes:
+            - name: sock
+              emptyDir: {}
+            - name: dind-storage
+              emptyDir:
+                sizeLimit: 20Gi
+            - name: data
+              emptyDir:
+                sizeLimit: 5Gi
+            - name: github-token
+              secret:
+                secretName: github-token
+                optional: true
