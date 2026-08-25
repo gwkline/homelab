@@ -43,7 +43,7 @@ fi
 
 echo "== 4. secrets present =="
 # extend as more namespaces adopt workloads
-if kubectl get secret agents/github-token >/dev/null 2>&1; then
+if kubectl get secret github-token -n agents >/dev/null 2>&1; then
   echo "  ok: agents/github-token"
 else
   echo "  WARN: agents/github-token missing (private repos disabled)"
