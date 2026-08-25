@@ -20,6 +20,9 @@ metadata:
   namespace: agents
   annotations:
     tailscale.com/hostname: t3code-0
+    # Operator defaults proxy devices to tag:k8s; our OAuth client is only
+    # allowed tag:k8s-operator (see deploy/tailscale/README.md).
+    tailscale.com/tags: tag:k8s-operator
 spec:
   type: LoadBalancer
   loadBalancerClass: tailscale
