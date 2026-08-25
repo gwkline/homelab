@@ -9,3 +9,6 @@ data:
   # github-token secret (see README -> Private repos).
   repos: |
     https://github.com/gwkline/homelab.git
+    https://github.com/gwkline/personal-site.git
+    https://github.com/gwkline/plantry.git
+    https://github.com/gwkline/launchpad.git
