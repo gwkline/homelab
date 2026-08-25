@@ -8,18 +8,20 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && npm install -g t3@0.0.33
 
-# --- Coding agents -----------------------------------------------------------
-# t3code orchestrates these; each authenticates via its own config/creds
-# mounted or paired at runtime.
-
-# OpenAI Codex CLI (npm distribution)
-RUN npm install -g @openai/codex@0.149.1
-
-# Claude Code (npm distribution)
-RUN npm install -g @anthropic-ai/claude-code@2.1.245
-
-# OpenCode (npm distribution)
-RUN npm install -g opencode-ai@1.18.23
+# Bleeding-edge matrix (Gavin wants nightlies where available):
+#  - t3code: nightly channel
+#  - codex: latest stable (npm has no nightly tag)
+#  - claude-code: latest stable (npm latest == newest release)
+#  - opencode v1: latest stable, kept until t3code supports v2
+#  - opencode v2 beta: separate npm prefix, exposed as `opencode-beta`
+RUN npm install -g \
+      t3@nightly \
+      @openai/codex@latest \
+      @anthropic-ai/claude-code@latest \
+      opencode-ai@1.18.23 \
+  && npm install -g --prefix /opt/opencode-v2 opencode-ai@beta \
+  && ln -sf /opt/opencode-v2/bin/opencode /usr/local/bin/opencode-beta \
+  && opencode-beta --version
 
 # Cursor CLI — pinned to the same version the official installer fetches.
 # The installer script (https://cursor.com/install) is just a wrapper around
