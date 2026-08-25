@@ -12,8 +12,8 @@ sync_repos
 : "${LOOP_COMMAND:?LOOP_COMMAND is required (e.g. 'node /data/repos/my-loop/check.mjs')}"
 
 echo "[loop] starting: ${LOOP_COMMAND}"
-sh -c "${LOOP_COMMAND}"
-status=$?
+status=0
+sh -c "${LOOP_COMMAND}" || status=$?
 
 # Optional post-run hook (e.g. notify, cleanup).
 if [ -n "${LOOP_POST_COMMAND:-}" ]; then

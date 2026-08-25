@@ -14,8 +14,9 @@ spec:
       labels:
         app: hermes
     spec:
-      # No API access needed — hard fail if a compromise tries to talk to the
-      # kube-apiserver with the pod's identity.
+      # Hermes intentionally holds a ServiceAccount token. Its RBAC (rbac.yaml)
+      # scopes that identity to managing throwaway Jobs/CronJobs in `sandbox`
+      # — nothing else, anywhere.
       serviceAccountName: hermes
       automountServiceAccountToken: true
       securityContext:
@@ -37,7 +38,7 @@ spec:
               mountPath: /data
       containers:
         - name: hermes
-          image: ghcr.io/gkline/homelab/hermes # tag via overlays
+          image: ghcr.io/gwkline/homelab/hermes
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

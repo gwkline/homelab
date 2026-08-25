@@ -6,7 +6,7 @@ metadata:
     # Interactive workloads only — no privileged pods allowed here.
     pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/enforce-version: latest
-    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/audit: baseline
 ---
 # Loop agents live here because nested Docker requires a privileged dind
 # sidecar. Isolating them in their own namespace keeps the blast radius of
@@ -18,4 +18,4 @@ metadata:
   labels:
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/enforce-version: latest
-    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/audit: baseline

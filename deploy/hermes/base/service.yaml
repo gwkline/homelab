@@ -16,5 +16,4 @@ metadata:
   namespace: agents
 data:
   repos: |
-    https://github.com/gkline/homelab.git
-    https://github.com/gkline/launchpad.git
+    https://github.com/gwkline/homelab.git

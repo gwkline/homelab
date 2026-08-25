@@ -25,8 +25,9 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
 
 if [[ "$ROLE" == "server" ]]; then
   echo "==> installing k3s (control-plane)"
+  # kubeconfig stays root-only (600); fetch it from your laptop with:
+  #   ssh <user>@<node-ip> sudo cat /etc/rancher/k3s/k3s.yaml
   curl -sfL https://get.k3s.io | sh -s - server \
-    --write-kubeconfig-mode 644 \
     --disable traefik
   echo "==> kubeconfig: /etc/rancher/k3s/k3s.yaml"
   echo "==> node token: /var/lib/rancher/k3s/server/node-token"

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Runs every check CI runs. Must pass before pushing.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+fail() { echo "FAIL: $1" >&2; exit 1; }
+
+echo '==> shellcheck'
+shellcheck bootstrap/*.sh apps/shared/*.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh \
+  || fail 'shell script lint'
+
+echo '==> kustomize builds'
+for d in deploy/*/base; do
+  kubectl kustomize "$d" >/dev/null || fail "kustomize build: $d"
+done
+
+echo '==> secret patterns (working tree + all reachable history)'
+pattern='(github_pat_|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|tskey-auth-)'
+if git grep --untracked -nIE "$pattern" -- ':!scripts/verify.sh' 2>/dev/null | grep .; then
+  fail 'secret-looking string in working tree'
+fi
+if git grep -nIE "$pattern" "$(git rev-list --all)" -- ':!scripts/verify.sh' 2>/dev/null | grep .; then
+  fail 'secret-looking string found in history'
+fi
+
+echo '==> image references match the published namespace'
+owner="$(git remote get-url origin | sed -E 's#.*[:/]([^/]+)/[^/]+(\.git)?$#\1#')"
+while IFS=: read -r file line; do
+  [[ "$line" == *"ghcr.io/${owner}/homelab/"* ]] || fail "foreign image ref in ${file}: ${line}"
+done < <(grep -rn 'image: ghcr.io/' deploy/ || true)
+
+echo 'ALL CHECKS PASSED'

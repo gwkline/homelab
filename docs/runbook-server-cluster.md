@@ -60,7 +60,7 @@ Then, on the machine:
 sudo apt-get install -y git
 git clone https://github.com/<github-user>/homelab.git && cd homelab
 
-sudo ./bootstrap/bootstrap.sh server        # ONLY on the first machine
+./bootstrap/bootstrap.sh server             # ONLY on the first machine
 ```
 
 On the second machine:
@@ -69,7 +69,8 @@ On the second machine:
 ssh <user>@<node2-ip>
 sudo apt-get install -y git
 git clone https://github.com/<github-user>/homelab.git && cd homelab
-sudo ./bootstrap/bootstrap.sh agent         # prompts for <node1-ip> + token
+
+./bootstrap/bootstrap.sh agent <node1-ip>   # prompts for the node token
 ```
 
 When prompted for the node token, get it from server 1:
@@ -86,8 +87,12 @@ sudo k3s kubectl get nodes   # both nodes Ready within ~60s
 
 ## 4. Drive the cluster from your laptop
 
+Install kubectl if you don't have it (macOS: `brew install kubectl`;
+otherwise see the [official docs](https://kubernetes.io/docs/tasks/tools/)).
+The kubeconfig is root-only on the node, so fetch it with sudo over SSH:
+
 ```sh
-scp <user>@<node1-ip>:/etc/rancher/k3s/k3s.yaml ~/kubeconfig-homelab
+ssh <user>@<node1-ip> sudo cat /etc/rancher/k3s/k3s.yaml > ~/kubeconfig-homelab
 sed -i '' "s|127.0.0.1|<node1-ip>|" ~/kubeconfig-homelab   # BSD/macOS sed
 export KUBECONFIG=~/kubeconfig-homelab                     # add to shell rc
 kubectl get nodes
@@ -174,7 +179,7 @@ kubectl logs job/smoke-test -n sandbox -f
 
 ```sh
 # reinstall OS (steps 2), then:
-sudo ./bootstrap/bootstrap.sh agent    # same token, same cluster
+./bootstrap/bootstrap.sh agent <node1-ip>   # same token, same cluster
 ```
 
 PVC data on the dead node is gone by definition — everything else converges

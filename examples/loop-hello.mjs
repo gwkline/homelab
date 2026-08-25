@@ -8,7 +8,7 @@ import { chromium } from "playwright";
 
 const report = { startedAt: new Date().toISOString(), checks: [] };
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({ args: ["--no-sandbox"] });
 try {
   const page = await browser.newPage();
   await page.goto("https://example.com", { waitUntil: "domcontentloaded" });

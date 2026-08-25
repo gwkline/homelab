@@ -5,8 +5,7 @@ metadata:
   namespace: agents
 data:
   # Git URLs cloned into every replica of this StatefulSet. One URL per line.
-  # Add/remove lines to change what agents can see. Private repos need
-  # credentials mounted (see README TODO).
+  # Add/remove lines to change what agents can see. Private repos need the
+  # github-token secret (see README -> Private repos).
   repos: |
-    https://github.com/gkline/homelab.git
-    https://github.com/gkline/launchpad.git
+    https://github.com/gwkline/homelab.git

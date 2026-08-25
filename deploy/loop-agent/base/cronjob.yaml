@@ -30,15 +30,34 @@ spec:
             seccompProfile:
               type: RuntimeDefault
           initContainers:
+            # Runs as root briefly: waits for the dind daemon, then opens the
+            # socket (666) so the unprivileged loop container can use it.
+            # Pod-local only — same boundary as the socket itself.
             - name: docker-ready
               image: docker:27-cli
-              command: ["sh", "-c", "for i in $(seq 1 30); do docker info >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1"]
+              command:
+                - sh
+                - -c
+                - |
+                  i=0
+                  while [ "$i" -lt 30 ]; do
+                    docker info >/dev/null 2>&1 && break
+                    i=$((i+1)); sleep 2
+                  done
+                  docker info >/dev/null 2>&1 || { echo "dind not ready after 60s" >&2; exit 1; }
+                  chmod 666 /var/run/docker.sock
               volumeMounts:
                 - name: sock
                   mountPath: /var/run
           containers:
             - name: loop
-              image: ghcr.io/gkline/homelab/loop-agent # tag via overlays
+              image: ghcr.io/gwkline/homelab/loop-agent
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
               env:
                 - name: GITHUB_TOKEN_FILE
                   value: /secrets/token
@@ -54,6 +73,8 @@ spec:
                       key: command
                 - name: DOCKER_HOST
                   value: unix:///var/run/docker.sock
+                - name: HOME
+                  value: /tmp
               volumeMounts:
                 - name: data
                   mountPath: /data

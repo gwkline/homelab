@@ -5,7 +5,7 @@ metadata:
   namespace: agents
 spec:
   serviceName: t3code-headless
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: t3code
@@ -22,7 +22,7 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: t3code
-          image: ghcr.io/gkline/homelab/t3code # overridden per-env in overlays
+          image: ghcr.io/gwkline/homelab/t3code
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

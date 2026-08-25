@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Creates the github-token Secret used by all workloads for private repo access.
 #
 # Token requirements: GitHub fine-grained PAT with "Contents: read-only" on the
@@ -7,7 +7,7 @@
 #
 # Usage:  ./create-github-secret.sh <namespace>...
 # Token is read from GITHUB_PAT env var or stdin, never stored in this repo.
-set -eu
+set -euo pipefail
 
 if [ $# -eq 0 ]; then
   echo "usage: $0 <namespace>... (e.g. $0 agents)" >&2

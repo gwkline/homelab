@@ -15,6 +15,7 @@ setup_git_auth() {
   [ -z "${_token}" ] && return 0
 
   _askpass="$(mktemp)"
+  # shellcheck disable=SC2016  # writes literal $1 into the generated helper
   {
     echo '#!/bin/sh'
     echo 'case "$1" in'

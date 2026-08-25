@@ -16,7 +16,7 @@ data:
     kubectl create job --from=cronjob/loop-example my-task -n sandbox
     ```
     Or write a Job manifest to /tmp and `kubectl apply -f /tmp/task.yaml`.
-    Use the loop-agent image (`ghcr.io/gkline/homelab/loop-agent`) with env
+    Use the loop-agent image (`ghcr.io/gwkline/homelab/loop-agent`) with env
     WORKSPACE_REPOS (newline-separated git URLs) and LOOP_COMMAND
     (the shell command to run). The pod has Chromium and Docker available.
 

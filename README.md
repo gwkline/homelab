@@ -19,7 +19,7 @@ node can be rebuilt from `bootstrap/bootstrap.sh` in ~15 minutes.
   `kubectl exec`. It holds scoped RBAC to spawn/inspect/delete loop jobs in
   `sandbox`, so you can ask *it* to schedule cluster work from inside a chat.
 
-Both share `apps/shared/workspace-lib.sh` (git auth + repo sync).
+All three share `apps/shared/workspace-lib.sh` (git auth + repo sync).
 
 ## Private repos
 
@@ -39,12 +39,18 @@ bootstrap/          node setup scripts (tailscale, k3s)
 apps/shared/        workspace-lib.sh (git auth, repo sync) shared by all images
 apps/t3code/        interactive agent server image
 apps/loop-agent/    unattended loop image (Chromium, docker CLI)
+apps/hermes/        persistent orchestrator image (kubectl included)
 deploy/
-  tailscale/        Tailscale operator install (Helm)
+  namespaces.yaml   agents + sandbox namespaces with PSA labels
+  policies/base/    default-deny NetworkPolicies
+  tailscale/        Tailscale operator install notes
   t3code/base/      StatefulSet + per-replica Services
+  hermes/base/      StatefulSet + scoped RBAC + cluster guide
   loop-agent/base/  CronJob example + task ConfigMap
+docs/               hardware runbooks
+.github/workflows/  image builds + validation
 examples/           sample loop script target
-scripts/            cluster ops helpers
+scripts/            cluster ops helpers + verify.sh
 ```
 
 ## Rebuilding a dead node
@@ -81,14 +87,22 @@ Decisions and their reasons, so future-you can audit them:
 - **Secrets**: PAT mounted read-only per namespace, delivered to git via a
   runtime-generated askpass helper (never in `.git/config`, env, or image
   layers). Non-dind containers run as uid 1000 with all capabilities dropped.
+- **Tailscale SSH is enabled on nodes** (`bootstrap.sh` runs `tailscale up
+  --ssh`), gated by your tailnet ACLs. Tighten those before inviting anyone.
+- **Supply chain**: npm packages, upstream images, and GitHub Actions are
+  pinned to exact versions; Renovate keeps them current. Images are rebuilt
+  on every push to `main`.
 - **Known gap**: dind sidecar is privileged by necessity. Next escalation
   step if wanted: gVisor (`runsc` RuntimeClass) for inner containers.
 
 ## GHCR images
 
-The GitHub Action publishes images to `ghcr.io/<owner>/...`. If this repo is
-private, those images are private too — create a pull secret once and
-reference it:
+CI publishes images to `ghcr.io/gwkline/homelab/{t3code,loop-agent,hermes}`
+on every push to `main`. The manifests reference those paths directly; if you
+fork this repo, update them (or add a kustomize overlay with your own
+`images:` transforms).
+
+If your packages are private, create a pull secret once and reference it:
 
 ```sh
 kubectl create secret docker-registry ghcr-pull \

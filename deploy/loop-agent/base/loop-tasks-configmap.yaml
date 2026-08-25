@@ -5,7 +5,7 @@ metadata:
   namespace: sandbox
 data:
   repos: |
-    https://github.com/gkline/homelab.git
+    https://github.com/gwkline/homelab.git
   # Script (inside the synced repo) this agent executes on every run.
   command: |
     node /data/repos/homelab/examples/loop-hello.mjs
