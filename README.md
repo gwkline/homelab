@@ -101,6 +101,11 @@ kubectl create secret docker-registry ghcr-pull \
 
 Making this repo public makes its images public and removes this step.
 
+## Runbooks
+
+- [Server cluster: bare metal → working cluster](docs/runbook-server-cluster.md)
+- [Gaming desktop: Windows + Linux dual boot](docs/runbook-gaming-dualboot.md)
+
 ## Access
 
 Each t3code pod gets a Tailnet hostname via the operator:

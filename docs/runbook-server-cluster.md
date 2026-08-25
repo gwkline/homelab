@@ -1,0 +1,192 @@
+# Server cluster runbook
+
+From bare hardware to a working two-node agent cluster. Everything after
+Step 3 happens over SSH — no monitor needed once the OS is installed.
+
+Replace throughout:
+
+| Placeholder | Meaning |
+|---|---|
+| `<user>` | your username on the servers |
+| `<node1-ip>` / `<node2-ip>` | LAN IPs of server 1 / 2 |
+| `<github-user>` | GitHub username |
+
+---
+
+## 0. Prerequisites
+
+- 2+ x86_64 machines, 8 GB+ RAM each, a spare 16 GB+ disk each
+- A USB stick (4 GB+) per simultaneous install
+- A second machine (laptop/desktop) to drive everything from
+- Ethernet strongly preferred for servers
+
+## 1. BIOS settings (per machine)
+
+Do this while you still have a monitor attached. Exact names vary by vendor:
+
+- **Restore on AC Power Loss → Power On** (or "Auto Power On") — so machines
+  come back after an outage without you driving across the apartment
+- **Boot mode → UEFI** (disable CSM/Legacy)
+- Disable **Secure Boot** if present (avoids driver/MOK friction later;
+  optional on Ubuntu but simpler)
+- Note the machine's RAM/CPU for capacity planning later
+
+## 2. Install Ubuntu Server 24.04 LTS (per machine)
+
+1. Download `ubuntu-24.04.x-live-server-amd64.iso`
+2. Flash to USB: [balenaEtcher](https://etcher.balena.io/) (macOS/Win/Linux)
+   or `dd` if you know it
+3. Boot from USB, installer choices:
+   - Keyboard/locale: yours
+   - Type: **Ubuntu Server** (default, no snap extras needed)
+   - Network: leave DHCP for now
+   - Storage: **Use entire disk** (no LVM needed for a throwaway node)
+   - Profile: name `<user>`, hostname `agent-1` / `agent-2`, your password
+   - **[x] Install OpenSSH server** ← the important checkbox
+   - Skip all featured snaps
+4. Reboot, remove USB. The installer summary screen shows the IP — write it
+   down (`<node1-ip>`). If you miss it, it's also in your router's client list.
+
+## 3. Bootstrap both machines (first SSH, from your laptop)
+
+```sh
+ssh <user>@<node1-ip>
+```
+
+Then, on the machine:
+
+```sh
+# grab the homelab repo and run bootstrap (installs tailscale + k3s)
+sudo apt-get install -y git
+git clone https://github.com/<github-user>/homelab.git && cd homelab
+
+sudo ./bootstrap/bootstrap.sh server        # ONLY on the first machine
+```
+
+On the second machine:
+
+```sh
+ssh <user>@<node2-ip>
+sudo apt-get install -y git
+git clone https://github.com/<github-user>/homelab.git && cd homelab
+sudo ./bootstrap/bootstrap.sh agent         # prompts for <node1-ip> + token
+```
+
+When prompted for the node token, get it from server 1:
+
+```sh
+ssh <user>@<node1-ip> sudo cat /var/lib/rancher/k3s/server/node-token
+```
+
+Verify from server 1 (or your laptop, next step):
+
+```sh
+sudo k3s kubectl get nodes   # both nodes Ready within ~60s
+```
+
+## 4. Drive the cluster from your laptop
+
+```sh
+scp <user>@<node1-ip>:/etc/rancher/k3s/k3s.yaml ~/kubeconfig-homelab
+sed -i '' "s|127.0.0.1|<node1-ip>|" ~/kubeconfig-homelab   # BSD/macOS sed
+export KUBECONFIG=~/kubeconfig-homelab                     # add to shell rc
+kubectl get nodes
+```
+
+(Windows/Linux: use `sed -i "s|..."` without the `''`.)
+
+## 5. Tailscale operator (tailnet HTTPS for services)
+
+1. Log into https://login.tailscale.com/admin/settings/oauth → generate an
+   OAuth client (no extra scopes needed)
+2. Install Helm anywhere kubectl works:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+helm repo add tailscale https://pkgs.tailscale.com/helmcharts && helm repo update
+
+helm upgrade --install tailscale-operator tailscale/tailscale-operator \
+  --namespace tailscale --create-namespace \
+  --set-string oauth.clientId="<CLIENT_ID>" \
+  --set-string oauth.clientSecret="<CLIENT_SECRET>"
+```
+
+## 6. Secrets (private repo access)
+
+Fine-grained PAT: https://github.com/settings/personal-access-tokens/new →
+Repository access: pick your repos → Permissions: Contents **Read-only**.
+
+```sh
+./scripts/create-github-secret.sh agents sandbox   # paste PAT when prompted
+```
+
+## 7. Make images pullable
+
+CI built `ghcr.io/<github-user>/homelab/{t3code,loop-agent,hermes}` on push
+(check the Actions tab). Either:
+
+- **Easy**: github.com → your profile → Packages → each package →
+  Package settings → Change visibility → Public, **or**
+- Private: create pull secrets per namespace (see main README).
+
+If the StatefulSet pods sit in `ImagePullBackoff`, this is why.
+
+## 8. Deploy everything
+
+```sh
+kubectl apply -f deploy/namespaces.yaml
+kubectl apply -k deploy/policies/base
+kubectl apply -k deploy/t3code/base
+kubectl apply -k deploy/hermes/base
+kubectl apply -k deploy/loop-agent/base
+
+kubectl get pods -A -w    # watch it settle; ^C when Running
+```
+
+## 9. First contact
+
+**t3code** (interactive coding agents):
+
+```sh
+kubectl get svc -n agents                 # find t3code-0 tailnet hostname
+kubectl logs t3code-0 -n agents | head    # pairing URL
+# open URL from desktop app/phone; add projects via configmap + restart pod
+```
+
+**hermes** (orchestrator):
+
+```sh
+kubectl exec -it hermes-0 -n agents -- bash
+hermes setup --portal      # one-time: provider/model/gateway config
+exit
+kubectl rollout restart statefulset hermes -n agents
+# message it on Telegram/Discord: "what can you see in the cluster?"
+```
+
+**loop-agent** (throwaway jobs):
+
+```sh
+kubectl create job --from=cronjob/loop-example smoke-test -n sandbox
+kubectl logs job/smoke-test -n sandbox -f
+```
+
+## 10. When a node dies
+
+```sh
+# reinstall OS (steps 2), then:
+sudo ./bootstrap/bootstrap.sh agent    # same token, same cluster
+```
+
+PVC data on the dead node is gone by definition — everything else converges
+from git. For t3code repos: they re-clone automatically. Unpushed work in an
+agent workspace is unrecoverable, which is the deal you signed up for.
+
+## Troubleshooting quick hits
+
+| Symptom | Fix |
+|---|---|
+| `ImagePullBackoff` | Section 7 |
+| Pod `CreateContainerError` privileged | workload landed in wrong namespace |
+| t3code pairing fails over tailnet | check NetworkPolicy allowed tailscale ns |
+| Node NotReady after reboot | `sudo systemctl status k3s` on that node |
+| Clone fails on private repo | PAT expired or missing repo access (Section 6) |
