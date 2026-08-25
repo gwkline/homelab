@@ -145,6 +145,7 @@ kubectl apply -k deploy/t3code/base
 kubectl apply -k deploy/hermes/base
 kubectl apply -k deploy/loop-agent/base
 kubectl apply -k deploy/homepage/base
+kubectl apply -k deploy/panel/base
 
 kubectl get pods -A -w    # watch it settle; ^C when Running
 ```
@@ -181,6 +182,14 @@ kubectl logs job/smoke-test -n sandbox -f
 ```sh
 kubectl get svc homepage -n agents   # tailnet hostname
 # edit deploy/homepage/base/configmap.yaml to add services, then re-apply
+```
+
+**panel** (factory control panel):
+
+```sh
+kubectl get svc panel -n agents      # tailnet hostname
+# open it: launch runs, watch jobs. Set your tailnet in
+# deploy/homepage/base/configmap.yaml to link it from the dashboard
 ```
 
 **dispatcher** (optional, issue-driven runs): requires hermes' RBAC (applied

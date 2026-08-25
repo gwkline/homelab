@@ -1,0 +1,23 @@
+# Third deliberate exception to "pods cannot talk to Kubernetes": the panel
+# backend holds the same sandbox-Job verbs as hermes and dispatcher, under
+# its own identity, so the UI can list and launch runs. Read-only for
+# everything except Job creation.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: panel
+  namespace: agents
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: panel-loop-manager
+  namespace: sandbox
+roleRef:
+  apiGroup: rbac.authorization.k8s.io/v1
+  kind: Role
+  name: loop-manager
+subjects:
+  - kind: ServiceAccount
+    name: panel
+    namespace: agents

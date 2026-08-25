@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+:root {
+  --background: 224 24% 8%;
+  --foreground: 210 20% 94%;
+  --muted: 220 16% 14%;
+  --muted-foreground: 216 12% 62%;
+  --border: 220 14% 20%;
+  --card: 222 20% 11%;
+  --primary: 172 66% 50%;
+  --primary-foreground: 200 60% 6%;
+  --destructive: 0 72% 58%;
+  --success: 142 60% 45%;
+  --warning: 38 92% 56%;
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-border: hsl(var(--border));
+  --color-card: hsl(var(--card));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-success: hsl(var(--success));
+  --color-warning: hsl(var(--warning));
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}

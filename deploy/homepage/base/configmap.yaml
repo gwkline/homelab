@@ -14,6 +14,11 @@ data:
         style: row
   services.yaml: |
     - Agents:
+        - Factory Panel:
+            icon: mdi-view-dashboard
+            description: launch runs, watch jobs
+            href: https://panel.<tailnet>.ts.net
+            siteMonitor: http://panel.agents.svc.cluster.local:3000
         - T3 Code:
             icon: mdi-console
             description: Interactive agent servers

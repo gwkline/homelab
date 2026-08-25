@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: panel
+  namespace: agents
+  annotations:
+    tailscale.com/hostname: panel
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app: panel
+  ports:
+    - name: https
+      port: 443
+      targetPort: http
+---
+# Workload-owned exposure rule; default-deny lives in policies/base.
+# Tailnet identity is the auth layer, same model as every other service here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-tailscale-to-panel
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: panel
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tailscale
+      ports:
+        - protocol: TCP
+          port: 3000

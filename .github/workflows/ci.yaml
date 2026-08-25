@@ -35,6 +35,7 @@ jobs:
           - app: t3code
           - app: loop-agent
           - app: hermes
+          - app: panel
     runs-on: ubuntu-latest
     permissions:
       contents: read

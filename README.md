@@ -20,6 +20,9 @@ node can be rebuilt from `bootstrap/bootstrap.sh` in ~15 minutes.
   `sandbox`, so you can ask *it* to schedule cluster work from inside a chat.
 - **homepage**: dashboard for every tailnet service at
   `https://homepage.<tailnet>.ts.net` — live status cards, config in git.
+- **panel**: the factory control panel at `https://panel.<tailnet>.ts.net`.
+  Custom Vite + React app (this repo's own code) listing sandbox jobs and
+  schedules, with a button to launch runs against a command or issue number.
 - **dispatcher**: watches a repo for issues labeled `run-agent` and turns each
   one into a sandbox Job automatically. The label is the authz gate (only
   collaborators can add it).
@@ -86,7 +89,8 @@ deploy/
   policies/base/    default-deny NetworkPolicies
   backup/base/      opt-in nightly restic backups of stateful PVCs
   gvisor/base/      opt-in loop-agent variant under gVisor
-  homepage/base/    tailnet dashboard (workload #4 pattern)
+  homepage/base/    tailnet dashboard (config-driven, zero code)
+  panel/            factory control panel (Vite + React, this repo's code)
   dispatcher/base/  label-driven issue -> Job automation
   tailscale/        Tailscale operator install notes
   t3code/base/      StatefulSet + per-replica Services
@@ -119,19 +123,18 @@ Decisions and their reasons, so future-you can audit them:
 - **No host Docker socket, ever.** The dind daemon owns an emptyDir-scoped
   unix socket shared within its own pod. A compromised inner container gets
   that pod's daemon, not the node's.
-- **Pods cannot talk to Kubernetes** — with two deliberate, audited
-  exceptions: hermes runs as ServiceAccount `hermes`, which may create/
-  inspect/delete Jobs and CronJobs in `sandbox` only (plus read pods/logs so
-  it can debug failed runs), and the dispatcher holds the same scoped verbs
-  under ServiceAccount `dispatcher` so labeled GitHub issues become runs
-  without a human in the loop. Neither can touch secrets, nodes, CRDs, or
-  anything in its own namespace. This is what lets agents schedule work.
-  A mounted CLUSTER.md playbook teaches hermes the patterns.
+- **Pods cannot talk to Kubernetes** — with three deliberate, audited
+  exceptions, all scoped to the same verbs on sandbox Jobs/CronJobs (plus
+  read pods/logs): hermes (conversational orchestration), dispatcher
+  (label-driven issue automation), and panel (the control panel's backend).
+  None can touch secrets, nodes, CRDs, or anything in their own namespace.
+  This is what lets agents and you schedule work. A mounted CLUSTER.md
+  playbook teaches hermes the patterns.
 - **Default-deny ingress** in both namespaces; only Tailscale operator proxies
-  may reach t3code and homepage (each workload declares its own exposure rule
-  beside its manifests). Hermes has no inbound at all. Egress is open by
-  design — agents need the internet — revisit with allowlists if you start
-  pointing agents at sensitive internal targets.
+  may reach t3code, homepage, and panel (each workload declares its own
+  exposure rule beside its manifests). Hermes has no inbound at all. Egress
+  is open by design — agents need the internet — revisit with allowlists if
+  you start pointing agents at sensitive internal targets.
 - **Secrets**: PAT mounted read-only per namespace, delivered to git via a
   runtime-generated askpass helper (never in `.git/config`, env, or image
   layers). Non-dind containers run as uid 1000 with all capabilities dropped.
