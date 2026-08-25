@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: serve-fixer
+  namespace: tailscale
+  labels:
+    app.kubernetes.io/part-of: homelab
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: serve-fixer
+  namespace: tailscale
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: serve-fixer
+  namespace: tailscale
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: serve-fixer
+subjects:
+  - kind: ServiceAccount
+    name: serve-fixer
+---
+# Read-only access to the app pod's IP from the agents namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: serve-fixer-app-reader
+  namespace: agents
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: serve-fixer-app-reader
+  namespace: agents
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: serve-fixer-app-reader
+subjects:
+  - kind: ServiceAccount
+    name: serve-fixer
+    namespace: tailscale
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: t3code-serve-fixer
+  namespace: tailscale
+  labels:
+    app.kubernetes.io/name: t3code-serve-fixer
+    app.kubernetes.io/part-of: homelab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: t3code-serve-fixer
+  template:
+    metadata:
+      labels:
+        app: t3code-serve-fixer
+    spec:
+      serviceAccountName: serve-fixer
+      automountServiceAccountToken: true
+      containers:
+        - name: fixer
+          image: ghcr.io/gwkline/homelab/loop-agent:latest
+          command:
+            - /bin/sh
+            - /scripts/serve-fixer.sh
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: t3code-serve-fixer
+            defaultMode: 0755
