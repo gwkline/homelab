@@ -32,6 +32,28 @@ scripts/create-github-secret.sh agents   # prompts for token, or set GITHUB_PAT
 
 Token needs "Contents: read-only" on every repo listed in a ConfigMap.
 
+## Backups
+
+A nightly restic CronJob snapshots the stateful PVCs (agent homes, hermes
+memory) encrypted to object storage. Setup:
+
+```sh
+scripts/create-backup-secret.sh <bucket-name>   # B2 keys + repo password
+kubectl apply -k deploy/backup/base
+```
+
+Restore instructions live in the server runbook. Losing the restic password
+means losing the backups.
+
+## Launching one-off jobs
+
+```sh
+scripts/new-job.sh my-task 'node /data/repos/homelab/examples/loop-hello.mjs'
+kubectl logs job/my-task -n sandbox -f
+```
+
+Or ask hermes to schedule it for you — same mechanism, conversational.
+
 ## Layout
 
 ```
@@ -43,6 +65,8 @@ apps/hermes/        persistent orchestrator image (kubectl included)
 deploy/
   namespaces.yaml   agents + sandbox namespaces with PSA labels
   policies/base/    default-deny NetworkPolicies
+  backup/base/      nightly restic backups of stateful PVCs
+  gvisor/base/      opt-in loop-agent variant under gVisor
   tailscale/        Tailscale operator install notes
   t3code/base/      StatefulSet + per-replica Services
   hermes/base/      StatefulSet + scoped RBAC + cluster guide
@@ -91,9 +115,11 @@ Decisions and their reasons, so future-you can audit them:
   --ssh`), gated by your tailnet ACLs. Tighten those before inviting anyone.
 - **Supply chain**: npm packages, upstream images, and GitHub Actions are
   pinned to exact versions; Renovate keeps them current. Images are rebuilt
-  on every push to `main`.
+  on every push to `main` and signed keylessly with cosign — verify with
+  `cosign verify <image>` against the GitHub workflow identity.
 - **Known gap**: dind sidecar is privileged by necessity. Next escalation
-  step if wanted: gVisor (`runsc` RuntimeClass) for inner containers.
+  step if wanted: gVisor (`runsc` RuntimeClass) for inner containers. An
+  opt-in variant lives in `deploy/gvisor/base`; see the server runbook.
 
 ## GHCR images
 

@@ -195,3 +195,61 @@ agent workspace is unrecoverable, which is the deal you signed up for.
 | t3code pairing fails over tailnet | check NetworkPolicy allowed tailscale ns |
 | Node NotReady after reboot | `sudo systemctl status k3s` on that node |
 | Clone fails on private repo | PAT expired or missing repo access (Section 6) |
+
+## 11. Nightly backups
+
+PVC data (agent home dirs, hermes memory) is backed up encrypted to object
+storage every night at 03:30. Git repos are skipped — they re-clone.
+
+One-time setup:
+
+```sh
+./scripts/create-backup-secret.sh <bucket-name>   # prompts for B2 keys + repo password
+kubectl apply -k deploy/backup/base
+```
+
+Save the restic password somewhere other than this cluster. Losing it means
+losing the backups.
+
+Verify it ran: `kubectl logs job/restic-backup-<id> -n backup`. Restore from
+any machine with the same credentials and bucket access:
+
+```sh
+docker run --rm -it -v "$PWD:/restore" -e RESTIC_REPOSITORY=b2:<bucket>/homelab \
+  -e B2_ACCOUNT_ID=... -e B2_ACCOUNT_KEY=... -e RESTIC_PASSWORD=... \
+  restic/restic:0.18.0 restore latest --target /restore --include /mnt/t3code
+```
+
+## 12. Experimental: gVisor for sandbox pods
+
+Runs loop-agent containers under gVisor's userspace kernel so kernel-level
+escapes from the privileged dind sidecar get much harder. **Untested on this
+cluster so far** — nested Docker inside gVisor is known to be rough. Verify
+the smoke test passes before relying on it.
+
+Per node, install runsc and register it with k3s containerd:
+
+```sh
+curl -fsSL https://gvisor.dev/archive.key | \
+  sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release/main" | \
+  sudo tee /etc/apt/sources.list.d/gvisor.list
+sudo apt-get update && sudo apt-get install -y runsc
+
+sudo mkdir -p /var/lib/rancher/k3s/agent/etc/containerd
+printf '%s\n' \
+  '{{ template "base" . }}' \
+  '[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]' \
+  '  runtime_type = "io.containerd.runc.v2"' \
+  '  runtime_engine = "/usr/local/bin/runsc"' \
+  '  runtime_root = "/run/containerd/runsc"' | \
+  sudo tee /var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl
+sudo systemctl restart k3s
+```
+
+Then deploy the variant instead of the default:
+
+```sh
+kubectl apply -k deploy/gvisor/base     # replaces deploy/loop-agent/base
+./scripts/new-job.sh gvisor-smoke 'node /data/repos/homelab/examples/loop-hello.mjs'
+```

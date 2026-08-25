@@ -1,0 +1,39 @@
+# Opt-in variant of the loop-agent deployment running ALL its containers
+# (including the privileged dind sidecar) under gVisor's userspace kernel.
+#
+# Apply this INSTEAD OF deploy/loop-agent/base:
+#   kubectl apply -k deploy/gvisor/base
+#
+# EXPERIMENTAL. Nested Docker inside gVisor is known to be rough (mount,
+# cgroup, and networking quirks). Verify the smoke-test job passes before
+# relying on this path.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: homelab
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false
+
+resources:
+  - ../../loop-agent/base
+  - runtimeclass.yaml
+
+patches:
+  - target:
+      group: batch
+      version: v1
+      kind: CronJob
+      name: loop-example
+    patch: |
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: loop-example
+      spec:
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                runtimeClassName: gvisor

@@ -1,0 +1,77 @@
+# Nightly encrypted backups of the stateful PVCs to object storage.
+#
+# Same-node assumption: the PVCs use the local-path provisioner, which pins
+# them to the node where their pods run. RWO volumes can be mounted by other
+# pods only on that same node, so this CronJob must stay co-located. On a
+# single-node cluster that is automatic; if you later add nodes and a
+# workload moves, pin this CronJob with a nodeSelector to match.
+#
+# Repos themselves are not precious (git re-clones); agent home dirs and
+# hermes memory are.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: restic-backup
+  namespace: backup
+spec:
+  schedule: "30 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 3600
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app: restic-backup
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: restic
+              image: restic/restic:0.18.0
+              # Idempotent: initializes the repo on first ever run, then
+              # snapshots + prunes every night.
+              command: ["sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  restic snapshots --quiet >/dev/null 2>&1 || restic init
+                  for dir in /mnt/t3code /mnt/hermes; do
+                    [ -d "$dir" ] || { echo "skip missing $dir"; continue; }
+                    echo "==> backing up ${dir}"
+                    restic backup "$dir" --tag "$(basename "$dir")"
+                  done
+                  restic forget --keep-daily 7 --keep-weekly 5 --keep-monthly 6 --prune
+                  echo "==> backup complete"
+              envFrom:
+                - secretRef:
+                    name: backup-target
+              volumeMounts:
+                - name: t3code-data
+                  mountPath: /mnt/t3code
+                  readOnly: true
+                - name: hermes-data
+                  mountPath: /mnt/hermes
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: "200m"
+                  memory: 256Mi
+                limits:
+                  memory: 1Gi
+          volumes:
+            - name: t3code-data
+              persistentVolumeClaim:
+                claimName: t3code-data-t3code-0
+                readOnly: true
+            - name: hermes-data
+              persistentVolumeClaim:
+                claimName: hermes-data-hermes-0
+                readOnly: true
