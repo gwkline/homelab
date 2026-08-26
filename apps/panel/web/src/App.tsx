@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, Rocket, Hash } from "lucide-react";
+import { RefreshCw, Rocket, Hash, Factory } from "lucide-react";
 import { Card, CardHeader, Badge, Button, Input } from "./components/ui";
 
 interface Job {
@@ -19,6 +19,12 @@ interface State {
   cronjobs: CronJob[];
   error?: string;
 }
+interface FactoryIssue {
+  number: number;
+  title: string;
+  url: string;
+  labels: string[];
+}
 
 export default function App() {
   const [state, setState] = useState<State>({ jobs: [], cronjobs: [] });
@@ -27,6 +33,11 @@ export default function App() {
   const [issue, setIssue] = useState("");
   const [launching, setLaunching] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [factoryIssues, setFactoryIssues] = useState<FactoryIssue[]>([]);
+  const [factoryRepo] = useState("gwkline/launchpad");
+  const [selectedIssue, setSelectedIssue] = useState<number | null>(null);
+  const [factoryRunning, setFactoryRunning] = useState(false);
+  const [factoryMsg, setFactoryMsg] = useState<string | null>(null);
 
   const refresh = async () => {
     try {
@@ -38,8 +49,20 @@ export default function App() {
     setLoading(false);
   };
 
+  const refreshFactoryIssues = async () => {
+    try {
+      const res = await fetch(`/api/factory/issues?repo=${encodeURIComponent(factoryRepo)}`);
+      const body = await res.json();
+      if (res.ok) setFactoryIssues(body.issues ?? []);
+      else setFactoryMsg(body.error ?? "failed to load issues");
+    } catch (e) {
+      setFactoryMsg(String(e));
+    }
+  };
+
   useEffect(() => {
     refresh();
+    refreshFactoryIssues();
     const id = setInterval(refresh, 10000);
     return () => clearInterval(id);
   }, []);
@@ -66,6 +89,32 @@ export default function App() {
     }
   };
 
+  const runFactory = async () => {
+    if (selectedIssue == null) return;
+    setFactoryRunning(true);
+    setFactoryMsg(null);
+    try {
+      const res = await fetch("/api/factory/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ issue: selectedIssue, repo: factoryRepo }),
+      });
+      const body = await res.json();
+      if (res.ok) {
+        setFactoryMsg(`queued #${body.issue} → ${body.jobName ?? "scheduled (next tick)"} — watching…`);
+        setSelectedIssue(null);
+        refresh();
+        refreshFactoryIssues();
+      } else {
+        setFactoryMsg(body.error ?? "failed");
+      }
+    } catch (e) {
+      setFactoryMsg(String(e));
+    } finally {
+      setFactoryRunning(false);
+    }
+  };
+
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
       <header className="flex items-center justify-between">
@@ -77,6 +126,57 @@ export default function App() {
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> refresh
         </Button>
       </header>
+
+      <Card>
+        <CardHeader
+          title="factory — run an issue"
+          subtitle={`${factoryRepo} · pick an open issue and dispatch the orchestrator immediately (no 6h wait)`}
+          action={
+            <Button
+              onClick={refreshFactoryIssues}
+              className="bg-muted text-foreground hover:opacity-80 h-7 px-2 py-1 text-xs"
+            >
+              <RefreshCw size={12} /> reload
+            </Button>
+          }
+        />
+        <div className="space-y-3 p-5">
+          <div className="max-h-64 divide-y divide-border overflow-auto rounded-lg border border-border">
+            {factoryIssues.length === 0 && <p className="px-3 py-4 text-sm text-muted-foreground">no open issues (or not loaded)</p>}
+            {factoryIssues.map((fi) => {
+              const isSelected = selectedIssue === fi.number;
+              const isQueued = fi.labels.includes("factory/queued");
+              const isInProgress = fi.labels.includes("factory/in-progress");
+              const isDone = fi.labels.includes("factory/draft-pr");
+              const disabled = isQueued || isInProgress || isDone;
+              return (
+                <button
+                  key={fi.number}
+                  onClick={() => !disabled && setSelectedIssue(isSelected ? null : fi.number)}
+                  disabled={disabled}
+                  className={`flex w-full items-start justify-between gap-3 px-3 py-2 text-left text-sm transition-colors ${isSelected ? "bg-primary/10" : "hover:bg-muted/50"} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                >
+                  <span className="min-w-0">
+                    <span className="font-mono font-medium">#{fi.number}</span> {fi.title}
+                    <span className="ml-2 text-xs text-muted-foreground">{fi.labels.join(", ") || "no labels"}</span>
+                  </span>
+                  {disabled && <Badge status={isQueued ? "queued" : isInProgress ? "running" : "complete"} />}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">
+              {selectedIssue != null ? `selected #${selectedIssue}` : "select an issue above"}
+            </span>
+            <div className="ml-auto" />
+            <Button onClick={runFactory} disabled={factoryRunning || selectedIssue == null}>
+              <Factory size={14} /> {factoryRunning ? "queuing…" : "run factory"}
+            </Button>
+          </div>
+          {factoryMsg && <p className="text-xs text-muted-foreground">{factoryMsg}</p>}
+        </div>
+      </Card>
 
       <Card>
         <CardHeader title="launch a run" subtitle="runs the loop-agent image in sandbox; results export themselves" />

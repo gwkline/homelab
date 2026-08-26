@@ -23,21 +23,28 @@ spec:
       containers:
         - name: panel
           image: ghcr.io/gwkline/homelab/panel
+          env:
+            - name: FACTORY_REPO
+              value: gwkline/launchpad
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
             allowPrivilegeEscalation: false
             capabilities:
-              drop: ["ALL"]
+              drop: [ALL]
           ports:
             - containerPort: 3000
               name: http
           resources:
             requests:
-              cpu: "50m"
+              cpu: 50m
               memory: 128Mi
             limits:
               memory: 512Mi
+          volumeMounts:
+            - name: github-token
+              mountPath: /secrets
+              readOnly: true
           startupProbe:
             httpGet:
               path: /
@@ -49,3 +56,10 @@ spec:
               path: /
               port: http
             periodSeconds: 30
+      volumes:
+        - name: github-token
+          secret:
+            secretName: github-token
+            items:
+              - key: token
+                path: token

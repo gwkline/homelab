@@ -1,7 +1,8 @@
 # Third deliberate exception to "pods cannot talk to Kubernetes": the panel
 # backend holds the same sandbox-Job verbs as hermes and dispatcher, under
 # its own identity, so the UI can list and launch runs. Read-only for
-# everything except Job creation.
+# everything except Job creation. Also owns the GitHub token mount for
+# the factory manual-trigger (label queued + create Job from CronJob).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
