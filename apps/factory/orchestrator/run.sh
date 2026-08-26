@@ -136,6 +136,8 @@ spec:
           env:
             - { name: FACTORY_REPO,  value: "${REPO}" }
             - { name: FACTORY_ISSUE, value: "${NUM}" }
+            # Worker-side expansion: k8s substitutes $(GH_TOKEN) from the env
+            # above; orchestrator never touches the secret material.
             - { name: CLONE_URL,     value: "https://x-access-token:$(GH_TOKEN)@github.com/${REPO}.git" }
             - { name: WORKER_CMD,    value: "${WORKER_CMD:-claude --dangerously-skip-permissions}" }
             - name: FACTORY_BRIEF_B64
@@ -173,7 +175,7 @@ ${LOGTAIL}
   POD=$(kubectl get pods -n sandbox -l job-name="${JOB_NAME}" -o jsonpath='{.items[0].metadata.name}')
   kubectl cp "sandbox/${POD}:/out/patch.diff" "/tmp/patch-${NUM}.diff" >/dev/null 2>&1 || {
     update_status "failed" "Could not retrieve patch artifact."
-    gh issue edit "${NUM}" -R "${REPO}" --add-label "${LABEL_FAILED}" >/dev/null
+    gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
     continue
   }
 
@@ -219,7 +221,7 @@ _Comment edited by factory; CI will run on the draft branch._"
 \`\`\`
 ${ERR}
 \`\`\`"
-    gh issue edit "${NUM}" -R "${REPO}" --add-label "${LABEL_FAILED}" >/dev/null
+    gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
   fi
   cd /
 done
