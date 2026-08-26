@@ -44,6 +44,20 @@ register_project() {
 for dir in "${REPOS_DIR}"/*/; do
   [ -d "${dir}.git" ] && register_project "${dir}"
 done
+# Enable the opencode provider in t3code settings (source of truth:
+# $T3_STATE_DIR/settings.json — the UI toggle writes here). Idempotent.
+SETTINGS="/home/node/.t3/userdata/settings.json"
+if [ -d "$(dirname "${SETTINGS}")" ] && ! grep -q '"opencode"' "${SETTINGS}" 2>/dev/null; then
+  if command -v python3 >/dev/null; then
+    python3 -c "
+import json, os
+p = '${SETTINGS}'
+s = json.load(open(p)) if os.path.exists(p) else {}
+s.setdefault('providers', {}).setdefault('opencode', {})['enabled'] = True
+json.dump(s, open(p, 'w'), indent=2)
+"
+  fi
+fi
 
 echo "[t3code] starting server on 0.0.0.0:3773"
 exec t3 serve --host 0.0.0.0 --port 3773
