@@ -29,10 +29,25 @@ gh auth status >/dev/null 2>&1 || { echo "[orch] no gh auth" >&2; exit 1; }
 timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # ---- 1. find queued issues -------------------------------------------------
-QUEUED=$(gh api "repos/${REPO}/issues?labels=${LABEL_QUEUED}&state=open&per_page=5" \
-  --jq '.[] | "\(.number)\t\(.title)"')
-
-[ -n "${QUEUED}" ] || { echo "[orch] $(timestamp) nothing queued"; exit 0; }
+# Panel manual trigger can pin a single issue via FACTORY_ISSUE env (avoids GH label propagation race).
+if [ -n "${FACTORY_ISSUE:-}" ]; then
+  NUM_Q="${FACTORY_ISSUE}"
+  # Verify the issue is still open and has the queued label (or was just labeled by panel)
+  if gh api "repos/${REPO}/issues/${NUM_Q}" --jq '.labels[].name' 2>/dev/null | grep -qx "${LABEL_QUEUED}"; then
+    TITLE=$(gh api "repos/${REPO}/issues/${NUM_Q}" --jq '.title' 2>/dev/null || echo "issue #${NUM_Q}")
+    QUEUED="${NUM_Q}	${TITLE}"
+    echo "[orch] pinned FACTORY_ISSUE=${NUM_Q}: ${TITLE}" >&2
+  else
+    echo "[orch] FACTORY_ISSUE=${NUM_Q} has no ${LABEL_QUEUED} label — falling back to queue poll" >&2
+    QUEUED=$(gh api "repos/${REPO}/issues?labels=${LABEL_QUEUED}&state=open&per_page=5" \
+      --jq '.[] | "\(.number)\t\(.title)"')
+    [ -n "${QUEUED}" ] || { echo "[orch] $(timestamp) nothing queued"; exit 0; }
+  fi
+else
+  QUEUED=$(gh api "repos/${REPO}/issues?labels=${LABEL_QUEUED}&state=open&per_page=5" \
+    --jq '.[] | "\(.number)\t\(.title)"')
+  [ -n "${QUEUED}" ] || { echo "[orch] $(timestamp) nothing queued"; exit 0; }
+fi
 
 echo "${QUEUED}" | while IFS="$(printf '\t')" read -r NUM TITLE; do
   echo "[orch] $(timestamp) picked issue #${NUM}: ${TITLE}"
