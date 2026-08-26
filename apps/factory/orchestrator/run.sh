@@ -134,6 +134,7 @@ spec:
           image: ghcr.io/gwkline/homelab/factory/worker:latest
           env:
             - { name: FACTORY_REPO,  value: "${REPO}" }
+            - { name: CLONE_URL,     value: "https://x-access-token:\${GH_TOKEN}@github.com/${REPO}.git" }
             - { name: FACTORY_ISSUE, value: "${NUM}" }
             - name: FACTORY_BRIEF_B64
               value: "${BRIEF_B64}"

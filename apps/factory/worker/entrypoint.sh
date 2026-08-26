@@ -27,7 +27,10 @@ RUN_ID=$(python3 -c "import json;print(json.load(open('${BRIEF}'))['run_id'])")
 echo "[worker] run=${RUN_ID} repo=${REPO} issue=#${ISSUE_NUM}"
 
 # --- clone (read-only public https or token-injected remote by orchestrator)
-git clone --depth 20 "https://github.com/${REPO}.git" repo
+# Private repos need the token; public clones work with the plain URL too.
+CLONE_URL="${CLONE_URL:-https://github.com/${REPO}.git}"
+git clone --depth 20 "${CLONE_URL}" repo
+git -C repo remote set-url origin "https://github.com/${REPO}.git"
 cd repo
 BASE_SHA=$(git rev-parse HEAD)
 
