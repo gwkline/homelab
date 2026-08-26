@@ -8,6 +8,13 @@
 #   exit 0             success; non-zero = failed attempt
 set -eu
 
+
+# opencode auth: decode from env (base64 auth.json) if provided.
+if [ -n "${OPENCODE_AUTH_B64:-}" ]; then
+  mkdir -p /home/node/.local/share/opencode
+  printf '%s' "${OPENCODE_AUTH_B64}" | base64 -d > /home/node/.local/share/opencode/auth.json
+fi
+
 BRIEF="/task/brief.json"
 OUT="/out"
 

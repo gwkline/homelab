@@ -34,8 +34,11 @@ spec:
               env:
                 - name: FACTORY_REPO
                   value: gwkline/launchpad       # demo target per operator
+                - name: OPENCODE_AUTH_B64
+                  valueFrom:
+                    secretKeyRef: { name: factory-opencode-auth, key: auth-b64 }
                 - name: WORKER_CMD
-                  value: "claude --dangerously-skip-permissions --print"
+                  value: "opencode run"
                 - name: GH_TOKEN
                   valueFrom:
                     secretKeyRef: { name: github-token, key: token, optional: false }
