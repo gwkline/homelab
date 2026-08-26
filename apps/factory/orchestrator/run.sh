@@ -158,7 +158,17 @@ EOF2
   update_status "running" "_Job \`${JOB_NAME}\` running._"
 
   # ---- 4. wait for completion ---------------------------------------------
-  if ! kubectl wait "job/${JOB_NAME}" -n sandbox --for=condition=complete --timeout=30m >/dev/null 2>&1; then
+  # Poll instead of `kubectl wait`: dash + set -e silently swallowed its
+  # non-zero exit in some conditions, skipping the failure path entirely.
+  WAIT_OK=0
+  for _i in $(seq 1 90); do
+    PHASE=$(kubectl get job "${JOB_NAME}" -n sandbox -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
+    if [ "${PHASE}" = "True" ]; then WAIT_OK=1; break; fi
+    FAILED=$(kubectl get job "${JOB_NAME}" -n sandbox -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || echo "")
+    if [ "${FAILED}" = "True" ]; then break; fi
+    sleep 10
+  done
+  if [ "${WAIT_OK}" != "1" ]; then
     LOGTAIL=$(kubectl logs "job/${JOB_NAME}" -n sandbox --tail=40 2>/dev/null || true)
     update_status "failed" "Job failed or timed out.
 
