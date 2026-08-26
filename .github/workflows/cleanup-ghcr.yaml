@@ -1,0 +1,189 @@
+name: cleanup-ghcr
+
+on:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * *" # daily at 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (list only, do not delete)"
+        type: boolean
+        default: true
+      keep:
+        description: "Images to keep per package (oldest pruned)"
+        type: number
+        default: 5
+
+permissions:
+  packages: write
+  contents: read
+
+jobs:
+  purge:
+    if: >
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [t3code, loop-agent, hermes, panel, factory/worker, factory/orchestrator]
+    steps:
+      - name: Purge old versions of ${{ matrix.package }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE: homelab/${{ matrix.package }}
+          KEEP: ${{ inputs.keep || 5 }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          # Dry-run on workflow_run (ci success) — never auto-delete; live only on schedule/dispatch with dry_run=false
+          if [ "$EVENT" = "workflow_run" ]; then
+            DRY_RUN=true
+          elif [ -z "$DRY_RUN" ]; then
+            DRY_RUN=true
+          fi
+
+          PKG_ENC=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$PACKAGE', safe=''))")
+          echo "Package: $PACKAGE (encoded: $PKG_ENC) keep=$KEEP dry_run=$DRY_RUN"
+
+          TMP=$(mktemp)
+          # Fetch all versions (paginate, up to 1000)
+          gh api --paginate "/users/${{ github.repository_owner }}/packages/container/${PKG_ENC}/versions?per_page=100" > "$TMP"
+
+          python3 - "$TMP" "$KEEP" "$DRY_RUN" "$PACKAGE" "$PKG_ENC" << 'PY'
+          import json, sys, os, subprocess
+          from datetime import datetime
+
+          tmp, keep_s, dry_run_s, package, pkg_enc = sys.argv[1:6]
+          KEEP = int(keep_s)
+          DRY_RUN = dry_run_s.lower() in ("true", "1", "yes")
+
+          owner = os.environ.get("GITHUB_REPOSITORY_OWNER", "gwkline")
+
+          data = json.load(open(tmp))
+          # gh --paginate with --jq would flatten; here we get concatenated JSON arrays or single array
+          # Normalize: gh paginate outputs newline-delimited JSON arrays/pages
+          if isinstance(data, dict) and "message" in data:
+              print(f"API error: {data}", file=sys.stderr)
+              sys.exit(1)
+          # If paginate gave us a list of lists (multiple pages), flatten
+          if data and isinstance(data, list) and data and isinstance(data[0], list):
+              flat = []
+              for page in data:
+                  flat.extend(page)
+              data = flat
+          # If file contains multiple JSON arrays concatenated (gh paginate raw), handle
+          if not isinstance(data, list):
+              # Try to read as newline-delimited JSON
+              data = []
+              for line in open(tmp):
+                  line=line.strip()
+                  if not line:
+                      continue
+                  v=json.loads(line)
+                  if isinstance(v, list):
+                      data.extend(v)
+                  else:
+                      data.append(v)
+
+          print(f"Total GHCR versions for {package}: {len(data)}")
+
+          def tags_of(v):
+              return v.get("metadata", {}).get("container", {}).get("tags") or []
+
+          def is_image(v):
+              tags = tags_of(v)
+              # image tags: sha-<gitsha> or latest (not .sig)
+              return any(t == "latest" or (t.startswith("sha-") and not t.endswith(".sig")) for t in tags)
+
+          def is_sig(v):
+              tags = tags_of(v)
+              return any(t.endswith(".sig") for t in tags)
+
+          images = [v for v in data if is_image(v)]
+          sigs = [v for v in data if is_sig(v)]
+          untagged = [v for v in data if not tags_of(v)]
+
+          # Sort images newest first by updated_at
+          images.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
+
+          keep_images = images[:KEEP]
+          if not keep_images:
+              print("No image versions found — nothing to do")
+              sys.exit(0)
+
+          keep_image_names = set(v.get("name", "") for v in keep_images)  # sha256:xxx
+          # sig tag is sha256-<hex>.sig (dash, not colon) — normalize
+          def sig_matches_image(sig_tags, image_names):
+              for t in sig_tags:
+                  # t like sha256-3226bae0...sig -> convert to sha256:xxx
+                  if t.endswith(".sig"):
+                      digest = t[:-4].replace("sha256-", "sha256:")
+                      if digest in image_names:
+                          return True
+                      # also handle full digest with dash variant
+                      for n in image_names:
+                          if n.replace("sha256:", "sha256-") in t:
+                              return True
+              return False
+
+          keep_sigs = [v for v in sigs if sig_matches_image(tags_of(v), keep_image_names)]
+
+          # Keep untagged layers newer than the oldest kept image (same push window)
+          oldest_kept = min(v.get("updated_at", "") for v in keep_images)
+          keep_untagged = [v for v in untagged if v.get("updated_at", "") >= oldest_kept]
+
+          keep_ids = set(v["id"] for v in keep_images) | set(v["id"] for v in keep_sigs) | set(v["id"] for v in keep_untagged)
+
+          to_delete = [v for v in data if v["id"] not in keep_ids]
+          to_delete.sort(key=lambda x: x.get("updated_at", ""))  # oldest first for log
+
+          print(f"Images: {len(images)} keep {len(keep_images)} | Sigs: {len(sigs)} keep {len(keep_sigs)} | Untagged: {len(untagged)} keep {len(keep_untagged)} | Total keep {len(keep_ids)} | To delete {len(to_delete)}")
+          print(f"Keep images: {[tags_of(v) for v in keep_images]}")
+          if keep_sigs:
+              print(f"Keep sigs: {[tags_of(v) for v in keep_sigs[:5]]}")
+
+          if not to_delete:
+              print("Nothing to delete")
+              sys.exit(0)
+
+          # Safety: never delete 'latest' if it somehow fell outside keep window
+          latest_versions = [v for v in data if "latest" in tags_of(v)]
+          if latest_versions:
+              latest_id = max(latest_versions, key=lambda x: x.get("updated_at", ""))["id"]
+              if latest_id not in keep_ids:
+                  print(f"SAFETY: latest {latest_id} would be deleted — aborting")
+                  sys.exit(1)
+
+          print(f"{'DRY-RUN — would delete' if DRY_RUN else 'Deleting'} {len(to_delete)} versions:")
+          for v in to_delete[:20]:
+              print(f"  id={v['id']} updated={v.get('updated_at')} tags={tags_of(v)} name={v.get('name','')[:40]}")
+          if len(to_delete) > 20:
+              print(f"  ... and {len(to_delete)-20} more")
+
+          if DRY_RUN:
+              print("Dry-run: no deletions performed")
+              sys.exit(0)
+
+          for v in to_delete:
+              vid = v["id"]
+              print(f"DELETE {package} version {vid} tags={tags_of(v)}", flush=True)
+              # Retry once on 500/502
+              for attempt in range(2):
+                  r = subprocess.run(
+                      ["gh", "api", "-X", "DELETE", f"/users/{owner}/packages/container/{pkg_enc}/versions/{vid}"],
+                      capture_output=True, text=True
+                  )
+                  if r.returncode == 0:
+                      break
+                  print(f"  attempt {attempt+1} failed: {r.stderr.strip()[:300]}", file=sys.stderr)
+                  if attempt == 1:
+                      print(f"  giving up on {vid}", file=sys.stderr)
+          PY

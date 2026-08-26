@@ -9,7 +9,7 @@ metadata:
 spec:
   # Single-instance by construction: overlapping ticks are skipped (ADR-002).
   concurrencyPolicy: Forbid
-  schedule: "*/5 * * * *"
+  schedule: "0 */6 * * *" # slow drip: 1 run per 6h (~4/day), self-maintaining with human assist as needed (#85)
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
