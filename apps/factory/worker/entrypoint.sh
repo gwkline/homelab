@@ -136,4 +136,16 @@ print(json.dumps({
 EOF
 
 cat "${OUT}/report.json"
+
+# Emit artifacts to pod logs (publisher extracts via kubectl logs, not kubectl cp
+# which requires a Running container and fails on terminated Job pods).
+echo "---PATCH_B64_BEGIN---"
+base64 -w0 "${OUT}/patch.diff"
+echo ""
+echo "---PATCH_B64_END---"
+echo "---REPORT_B64_BEGIN---"
+base64 -w0 "${OUT}/report.json"
+echo ""
+echo "---REPORT_B64_END---"
+
 [ "${TESTS}" != "failed" ]
