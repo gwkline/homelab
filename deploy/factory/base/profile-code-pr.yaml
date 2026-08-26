@@ -1,0 +1,57 @@
+# Factory code-pr profile (#73): constrained execution template.
+# Callers provide ONLY repository/task inputs; this profile fixes the safe
+# environment: image, service account, netpol, resources, TTL, no k8s API.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: factory-profile-code-pr
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+    factory.gwkline.io/profile: code-pr
+data:
+  profile.json: |
+    {
+      "name": "code-pr",
+      "version": 1,
+      "image": "ghcr.io/gwkline/homelab/factory-worker:latest",
+      "serviceAccount": "factory-worker",
+      "activeDeadlineSeconds": 1800,
+      "backoffLimit": 1,
+      "ttlSecondsAfterFinished": 3600,
+      "resources": { "requests": {"cpu": "500m", "memory": "512Mi"},
+                     "limits":   {"cpu": "2",    "memory": "4Gi"} },
+      "envAllowlist": ["WORKER_CMD", "VERIFY_COMMAND"],
+      "netpolName": "allow-factory-worker"
+    }
+---
+# Worker network policy: egress ONLY to github.com + registry; no cluster DNS
+# rebinding surprises (explicit IPs resolved via k8s egress to internet).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-factory-worker
+  namespace: sandbox
+spec:
+  podSelector:
+    matchLabels:
+      factory.gwkline.io/profile: code-pr
+  policyTypes: [Ingress, Egress]
+  ingress: []                       # nothing may connect TO a worker
+  egress:
+    - to:                           # GitHub + git clones over HTTPS
+        - ipBlock: { cidr: 140.82.112.0/20 }     # github.com
+        - ipBlock: { cidr: 185.199.108.0/22 }    # raw.githubusercontent
+        - ipBlock: { cidr: 185.199.108.0/22 }     # objects.githubusercontent (fastly)
+    - to:                           # container registries (npm, ghcr)
+        - ipBlock: { cidr: 104.16.0.0/12 }
+    - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+# Least-privilege SA: workers get NO Kubernetes API access at all.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: factory-worker
+  namespace: sandbox
+automountServiceAccountToken: false

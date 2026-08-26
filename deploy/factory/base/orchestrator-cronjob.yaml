@@ -1,0 +1,87 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: factory-orchestrator
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+    factory.gwkline.io/component: orchestrator
+spec:
+  # Single-instance by construction: overlapping ticks are skipped (ADR-002).
+  concurrencyPolicy: Forbid
+  schedule: "*/5 * * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 2700        # must finish before next tick window
+      backoffLimit: 0                    # a failed tick stays failed — visible
+      template:
+        metadata:
+          labels:
+            factory.gwkline.io/component: orchestrator
+        spec:
+          restartPolicy: Never
+          serviceAccountName: factory-orchestrator
+          automountServiceAccountToken: true   # needs k8s API to spawn worker Jobs
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: orchestrator
+              image: ghcr.io/gwkline/homelab/factory-orchestrator
+              env:
+                - name: FACTORY_REPO
+                  value: gwkline/launchpad       # demo target per operator
+                - name: WORKER_CMD
+                  value: "claude --dangerously-skip-permissions --print"
+                - name: GH_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: github-token, key: token, optional: false }
+              resources:
+                requests: { cpu: 100m, memory: 128Mi }
+                limits:   { cpu: 500m, memory: 512Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+                readOnlyRootFilesystem: true
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+                - { name: home, mountPath: /home/nonroot }
+          volumes:
+            - { name: tmp, emptyDir: {} }
+            - { name: home, emptyDir: {} }
+---
+# Orchestrator RBAC: create/watch Jobs in sandbox ONLY. No secrets, no other
+# namespaces, no write anywhere else.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: factory-orchestrator
+  namespace: sandbox
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: factory-orchestrator
+  namespace: sandbox
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]             # kubectl cp for patch retrieval
+    verbs: ["create", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: factory-orchestrator
+  namespace: sandbox
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: factory-orchestrator }
+subjects:
+  - { kind: ServiceAccount, name: factory-orchestrator, namespace: sandbox }

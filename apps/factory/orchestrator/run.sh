@@ -1,0 +1,167 @@
+#!/bin/sh
+# Factory orchestrator (#78, ADR-002 GitHub-as-ledger).
+# Runs as a single-instance CronJob (concurrency: Forbid).
+#
+# One tick:
+#   1. Find issues labeled factory/queued in configured repos
+#   2. Swap label to factory/in-progress + post run marker comment
+#   3. Spawn a worker Job from profile-code-pr
+#   4. Watch it to completion; collect /out artifacts
+#   5. Hand patch to publisher logic (same script, phase 2: publish)
+#   6. Update labels + status comment through the whole lifecycle
+set -eu
+
+REPO="${FACTORY_REPO:?FACTORY_REPO required (owner/name)}"
+LABEL_QUEUED="factory/queued"
+LABEL_WIP="factory/in-progress"
+LABEL_DONE="factory/draft-pr"
+LABEL_FAILED="factory/failed"
+PROFILE="code-pr"
+WORKDIR="${HOME}/runs"
+
+gh auth status >/dev/null 2>&1 || { echo "[orch] no gh auth" >&2; exit 1; }
+
+timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# ---- 1. find queued issues -------------------------------------------------
+QUEUED=$(gh api "repos/${REPO}/issues?labels=${LABEL_QUEUED}&state=open&per_page=5" \
+  --jq '.[] | "\(.number)\t\(.title)"')
+
+[ -n "${QUEUED}" ] || { echo "[orch] $(timestamp) nothing queued"; exit 0; }
+
+echo "${QUEUED}" | while IFS="$(printf '\t')" read -r NUM TITLE; do
+  echo "[orch] $(timestamp) picked issue #${NUM}: ${TITLE}"
+  BRANCH="factory/issue-${NUM}/${PROFILE}"
+  RUN_TS=$(timestamp)
+
+  # ---- idempotency: skip if a PR already exists for this issue+profile ----
+  EXISTING=$(gh pr list -R "${REPO}" --head "${BRANCH}" --state all --json number \
+             --jq 'length')
+  if [ "${EXISTING}" != "0" ]; then
+    echo "[orch] branch ${BRANCH} already has PR — skipping duplicate"
+    gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_QUEUED}" >/dev/null
+    continue
+  fi
+
+  # ---- 2. swap labels + post marker comment ------------------------------
+  gh issue edit "${NUM}" -R "${REPO}" \
+      --remove-label "${LABEL_QUEUED}" --add-label "${LABEL_WIP}" >/dev/null
+  COMMENT_URL=$(gh issue comment "${NUM}" -R "${REPO}" --body "$(cat <<EOF
+<!-- factory:run:${NUM}:${RUN_TS} -->
+## 🏭 Factory Run
+
+| | |
+|---|---|
+| Status | running |
+| Started | ${RUN_TS} |
+| Profile | ${PROFILE} |
+| Attempt | 1 |
+
+_Worker dispatched — this comment updates live._
+EOF
+)")
+  echo "[orch] marker comment: ${COMMENT_URL}"
+
+  MARKER_ID=$(gh api "repos/${REPO}/issues/comments/$(basename "${COMMENT_URL}")" --jq .id)
+
+  update_status() {  # $1=status, $2=extra detail markdown
+    gh api -X PATCH "repos/${REPO}/issues/comments/${MARKER_ID}" \
+      -F body="$(cat <<EOF
+<!-- factory:run:${NUM}:${RUN_TS} -->
+## 🏭 Factory Run
+
+| | |
+|---|---|
+| Status | ${1} |
+| Started | ${RUN_TS} |
+| Updated | $(timestamp) |
+| Profile | ${PROFILE} |
+| Attempt | 1 |
+
+${2:-_Worker dispatched._}
+EOF
+)" >/dev/null
+  }
+
+  # ---- 3. spawn the worker Job -------------------------------------------
+  JOB_NAME="factory-issue-${NUM}-$(date +%s)"
+  kubectl create job "${JOB_NAME}" -n sandbox \
+    --image=ghcr.io/gwkline/homelab/factory-worker:latest >/dev/null
+  kubectl set env "job/${JOB_NAME}" -n sandbox \
+    FACTORY_REPO="${REPO}" FACTORY_ISSUE="${NUM}" WORKER_CMD="${WORKER_CMD:-claude --dangerously-skip-permissions}" \
+    GH_TOKEN="${GH_TOKEN}" >/dev/null
+  kubectl label job "${JOB_NAME}" -n sandbox \
+    factory.gwkline.io/issue="${NUM}" factory.gwkline.io/profile="${PROFILE}" >/dev/null
+  echo "[orch] job ${JOB_NAME} created"
+
+  update_status "running" "_Job \`${JOB_NAME}\` running._"
+
+  # ---- 4. wait for completion ---------------------------------------------
+  if ! kubectl wait "job/${JOB_NAME}" -n sandbox --for=condition=complete --timeout=30m >/dev/null 2>&1; then
+    LOGTAIL=$(kubectl logs "job/${JOB_NAME}" -n sandbox --tail=40 2>/dev/null || true)
+    update_status "failed" "Job failed or timed out.
+
+<details><summary>log tail</summary>
+
+\`\`\`
+${LOGTAIL}
+\`\`\`
+</details>"
+    gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
+    continue
+  fi
+
+  # ---- 5. extract patch from the completed pod ----------------------------
+  POD=$(kubectl get pods -n sandbox -l job-name="${JOB_NAME}" -o jsonpath='{.items[0].metadata.name}')
+  kubectl cp "sandbox/${POD}:/out/patch.diff" "/tmp/patch-${NUM}.diff" >/dev/null 2>&1 || {
+    update_status "failed" "Could not retrieve patch artifact."
+    gh issue edit "${NUM}" -R "${REPO}" --add-label "${LABEL_FAILED}" >/dev/null
+    continue
+  }
+
+  # ---- 6. publish phase (publisher responsibilities, inline for v1) -------
+  update_status "publishing" "_Applying patch and opening draft PR..._"
+
+  PUBLISH_DIR="/tmp/publish-${NUM}"
+  rm -rf "${PUBLISH_DIR}"; mkdir -p "${PUBLISH_DIR}"; cd "${PUBLISH_DIR}"
+  git clone -q "https://github.com/${REPO}.git" .
+  git config user.name "factory-bot"; git config user.email "factory@homelab.local"
+  git checkout -qb "${BRANCH}"
+  if git apply --whitespace=nowarn "/tmp/patch-${NUM}.diff" 2>/tmp/apply-err; then
+    git add -A && git commit -qm "factory: resolve #${NUM}
+
+Produced by homelab software factory (${PROFILE} profile).
+Refs #${NUM}" 
+    git push -q "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "${BRANCH}"
+    PR_URL=$(gh pr create -R "${REPO}" --draft \
+      --head "${BRANCH}" --base main \
+      --title "$(gh issue view "${NUM}" -R "${REPO}" --json title --jq .title)" \
+      --body "$(cat <<EOF
+## Factory Run — ${PROFILE}
+
+Closes #${NUM}
+
+> ⚠️ **Automated draft PR** produced by the homelab software factory.
+> Requires CI green + human review before promotion. Do not auto-merge.
+
+**Verification:** see status comment on the linked issue.
+EOF
+)")
+    update_status "published" "Draft PR: ${PR_URL}
+
+_Comment edited by factory; CI will run on the draft branch._"
+    gh issue edit "${NUM}" -R "${REPO}" \
+        --remove-label "${LABEL_WIP}" --add-label "${LABEL_DONE}" >/dev/null
+    gh issue comment "${NUM}" -R "${REPO}" --body "🏭 Draft PR ready: ${PR_URL}" >/dev/null
+    echo "[orch] published ${PR_URL}"
+  else
+    ERR=$(cat /tmp/apply-err | head -10)
+    update_status "failed" "Patch failed to apply to current base:
+
+\`\`\`
+${ERR}
+\`\`\`"
+    gh issue edit "${NUM}" -R "${REPO}" --add-label "${LABEL_FAILED}" >/dev/null
+  fi
+  cd /
+done
