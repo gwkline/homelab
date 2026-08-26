@@ -85,13 +85,15 @@ EOF
 
   # ---- 3. spawn the worker Job -------------------------------------------
   JOB_NAME="factory-issue-${NUM}-$(date +%s)"
+  # Single-shot creation with env + labels baked in (orchestrator SA cannot
+  # patch Jobs after creation — and shouldn't need to).
   kubectl create job "${JOB_NAME}" -n sandbox \
-    --image=ghcr.io/gwkline/homelab/factory/worker:latest >/dev/null
-  kubectl set env "job/${JOB_NAME}" -n sandbox \
-    FACTORY_REPO="${REPO}" FACTORY_ISSUE="${NUM}" WORKER_CMD="${WORKER_CMD:-claude --dangerously-skip-permissions}" \
-    GH_TOKEN="${GH_TOKEN}" >/dev/null
-  kubectl label job "${JOB_NAME}" -n sandbox \
-    factory.gwkline.io/issue="${NUM}" factory.gwkline.io/profile="${PROFILE}" >/dev/null
+    --image=ghcr.io/gwkline/homelab/factory/worker:latest \
+    --env="FACTORY_REPO=${REPO}" \
+    --env="FACTORY_ISSUE=${NUM}" \
+    --env="WORKER_CMD=${WORKER_CMD:-claude --dangerously-skip-permissions}" \
+    --env="GH_TOKEN=${GH_TOKEN}" \
+    --labels="factory.gwkline.io/issue=${NUM},factory.gwkline.io/profile=${PROFILE}" >/dev/null
   echo "[orch] job ${JOB_NAME} created"
 
   update_status "running" "_Job \`${JOB_NAME}\` running._"
