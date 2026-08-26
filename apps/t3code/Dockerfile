@@ -14,6 +14,9 @@ RUN apt-get update \
 #  - claude-code: latest stable (npm latest == newest release)
 #  - opencode v1: latest stable, kept until t3code supports v2
 #  - opencode v2 beta: separate npm prefix, exposed as `opencode-beta`
+# NOTE on pinning strategy: t3 tracks nightly BY DESIGN; codex/claude float
+# @latest because neither publishes nightlies via npm. Renovate opens weekly
+# bump PRs (see renovate.json) so drift is deliberate, not accidental.
 RUN npm install -g \
       t3@nightly \
       @openai/codex@latest \
