@@ -83,6 +83,7 @@ bootstrap/          node setup scripts (tailscale, k3s)
 apps/shared/        workspace-lib.sh (git auth, repo sync) shared by all images
 apps/t3code/        interactive agent server image
 apps/loop-agent/    unattended loop image (Chromium, docker CLI)
+                    Both coding images ship a pinned Rust toolchain (cargo).
 apps/hermes/        persistent orchestrator image (kubectl included)
 deploy/
   namespaces.yaml   agents + sandbox namespaces with PSA labels

@@ -30,6 +30,25 @@ RUN apt-get update \
   && npm install playwright@1.62.1 \
   && ln -s /opt/loop/node_modules /node_modules \
   && /opt/loop/node_modules/.bin/playwright install --with-deps chromium
+
+# Rust toolchain so cargo repos (e.g. launchpad) build out of the box.
+# System-wide install under /usr/local: uid 1000 gets it at runtime with no
+# per-user rustup. The slim base has no C toolchain, so gcc/libc-dev are
+# added here too — without a linker every `cargo build` fails immediately.
+# pkg-config/libssl-dev cover the common openssl-sys dep.
+ARG RUST_VERSION=1.98.0
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:${PATH}
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+      gcc libc6-dev make pkg-config libssl-dev \
+  && rm -rf /var/lib/apt/lists/* \
+  && curl -fsSL https://sh.rustup.rs \
+      | sh -s -- -y --profile minimal --default-toolchain "${RUST_VERSION}" --no-modify-path \
+  && chmod -R a+rX "${RUSTUP_HOME}" "${CARGO_HOME}" \
+  && cargo --version
+
 COPY apps/shared/workspace-lib.sh /usr/local/lib/workspace-lib.sh
 COPY apps/loop-agent/run-loop.sh /usr/local/bin/run-loop
 RUN chmod +x /usr/local/bin/run-loop
