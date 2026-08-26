@@ -9,10 +9,28 @@
 set -eu
 
 
-# opencode auth: decode from env (base64 auth.json) if provided.
+# opencode auth + config: auth.json arrives base64-encoded via env.
 if [ -n "${OPENCODE_AUTH_B64:-}" ]; then
-  mkdir -p /home/node/.local/share/opencode
+  mkdir -p /home/node/.local/share/opencode /home/node/.config/opencode
   printf '%s' "${OPENCODE_AUTH_B64}" | base64 -d > /home/node/.local/share/opencode/auth.json
+  # npm provider requires the key as env too:
+  OPENROUTER_API_KEY=$(python3 -c "import json;print(json.load(open('/home/node/.local/share/opencode/auth.json'))['openrouter']['key'])")
+  export OPENROUTER_API_KEY
+
+  # Force openrouter as THE provider — no zen router, no nous fallback.
+  cat > /home/node/.config/opencode/opencode.jsonc <<'OCEOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "openrouter": {
+      "npm": "@openrouter/ai-sdk-provider",
+      "name": "OpenRouter",
+      "options": { "baseURL": "https://openrouter.ai/api/v1" }
+    }
+  },
+  "model": "openrouter/z-ai/glm-5.3-flash"
+}
+OCEOF
 fi
 
 BRIEF="/task/brief.json"
