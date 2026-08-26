@@ -47,7 +47,7 @@ spec:
     - to:                           # container registries (npm, ghcr, crates.io)
         - ipBlock: { cidr: 104.16.0.0/12 }
         - ipBlock: { cidr: 18.214.0.0/16 }      # index.crates.io
-        - ipBlock: { cidr: 108.138.0.0/14 }     # static.crates.io CDN
+        - ipBlock: { cidr: 108.138.128.0/17 }    # static.crates.io CDN
     - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
 ---
 # Least-privilege SA: workers get NO Kubernetes API access at all.
