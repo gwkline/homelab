@@ -12,6 +12,11 @@
 set -eu
 
 REPO="${FACTORY_REPO:?FACTORY_REPO required (owner/name)}"
+# Operator whitelist (#85 v1): auto-resolution only for these repos.
+case "${REPO}" in
+  gwkline/homelab|gwkline/launchpad) ;;
+  *) echo "[orch] repo ${REPO} not whitelisted for factory runs" >&2; exit 78 ;;
+esac
 LABEL_QUEUED="factory/queued"
 LABEL_WIP="factory/in-progress"
 LABEL_DONE="factory/draft-pr"
@@ -85,15 +90,15 @@ EOF
 
   # ---- 3. spawn the worker Job -------------------------------------------
   JOB_NAME="factory-issue-${NUM}-$(date +%s)"
-  # Build the worker brief from the issue (base64 so JSON survives env).
-  BRIEF_B64=$(gh issue view "${NUM}" -R "${REPO}" --json number,title,body,state,url \
-    --jq '{number, title, body, url} | @base64' | base64 -w0)
-  python3 - "$BRIEF_B64" << 'PYEOF' > /tmp/brief.json
-import json, sys, base64
-d = json.loads(base64.b64decode(sys.argv[1]).decode())
+  # Build the worker brief: single python step, gh output via temp file.
+  gh issue view "${NUM}" -R "${REPO}" --json number,title,body,url > /tmp/issue.json
+  python3 - "${REPO}" "${NUM}" << 'PYEOF' > /tmp/brief.json
+import json, sys
+repo, num = sys.argv[1], sys.argv[2]
+d = json.load(open("/tmp/issue.json"))
 print(json.dumps({
-    "run_id": f"issue{d['number']}-${NUM}",
-    "repository": "${REPO}",
+    "run_id": f"issue{num}-{num}",
+    "repository": repo,
     "issue": d,
     "constraints": ["draft PR only", "minimal diff"],
     "verify_command": ""
