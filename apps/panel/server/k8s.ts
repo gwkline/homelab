@@ -1,6 +1,9 @@
 // Minimal Kubernetes API client using the pod's own ServiceAccount identity.
 // No kubectl, no client library: the API is just HTTPS + JSON.
 import { readFileSync } from "node:fs";
+import { request as httpsRequest } from "node:https";
+import { request as httpRequest } from "node:http";
+import { URL } from "node:url";
 
 const NS = "sandbox";
 
@@ -35,41 +38,58 @@ export function loadConfig(env = process.env): K8sConfig {
   };
 }
 
-async function request<T = unknown>(cfg: K8sConfig, method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${cfg.base}${path}`, {
+function k8sFetch<T>(cfg: K8sConfig, method: string, path: string, body?: unknown): Promise<T> {
+  const url = new URL(`${cfg.base}${path}`);
+  const isHttps = url.protocol === "https:";
+  const reqFn = isHttps ? httpsRequest : httpRequest;
+  const opts: Record<string, unknown> = {
     method,
     headers: {
       authorization: `Bearer ${cfg.token}`,
       "content-type": "application/json",
       accept: "application/json",
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
+  };
+  if (isHttps && cfg.ca) (opts as any).ca = cfg.ca;
+  if (isHttps) (opts as any).rejectUnauthorized = cfg.rejectUnauthorized;
+
+  return new Promise<T>((resolve, reject) => {
+    const req = reqFn(url, opts as any, (res: any) => {
+      let data = "";
+      res.on("data", (c: Buffer) => (data += c.toString("utf8")));
+      res.on("end", () => {
+        let json: unknown = undefined;
+        try {
+          json = data ? JSON.parse(data) : undefined;
+        } catch {
+          // non-JSON
+        }
+        const status = res.statusCode ?? 0;
+        if (status < 200 || status >= 300) {
+          const message =
+            (json as { message?: string } | undefined)?.message ??
+            `${status} ${res.statusMessage ?? ""}`.trim();
+          reject(Object.assign(new Error(message || `k8s ${status}`), { status }));
+          return;
+        }
+        resolve(json as T);
+      });
+    });
+    req.on("error", reject);
+    if (body !== undefined) req.write(JSON.stringify(body));
+    req.end();
   });
-  const text = await res.text();
-  let json: unknown = undefined;
-  try {
-    json = text ? JSON.parse(text) : undefined;
-  } catch {
-    // non-JSON error bodies still carry a message
-  }
-  if (!res.ok) {
-    const message =
-      (json as { message?: string } | undefined)?.message ??
-      `${res.status} ${res.statusText}`;
-    throw Object.assign(new Error(message), { status: res.status });
-  }
-  return json as T;
 }
 
 export const api = (cfg: K8sConfig) => ({
   listJobs: (): Promise<{ items?: any[] }> =>
-    request(cfg, "GET", `/apis/batch/v1/namespaces/${NS}/jobs`),
+    k8sFetch(cfg, "GET", `/apis/batch/v1/namespaces/${NS}/jobs`),
   listCronJobs: (): Promise<{ items?: any[] }> =>
-    request(cfg, "GET", `/apis/batch/v1/namespaces/${NS}/cronjobs`),
+    k8sFetch(cfg, "GET", `/apis/batch/v1/namespaces/${NS}/cronjobs`),
   getCronJob: (name: string): Promise<unknown> =>
-    request(cfg, "GET", `/apis/batch/v1/namespaces/${NS}/cronjobs/${encodeURIComponent(name)}`),
+    k8sFetch(cfg, "GET", `/apis/batch/v1/namespaces/${NS}/cronjobs/${encodeURIComponent(name)}`),
   createJob: (manifest: unknown) =>
-    request(cfg, "POST", `/apis/batch/v1/namespaces/${NS}/jobs`, manifest),
+    k8sFetch(cfg, "POST", `/apis/batch/v1/namespaces/${NS}/jobs`, manifest),
 });
 
 export type K8sApi = ReturnType<typeof api>;
