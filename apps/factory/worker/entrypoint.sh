@@ -11,6 +11,12 @@ set -eu
 BRIEF="/task/brief.json"
 OUT="/out"
 
+# Brief arrives via env (base64 JSON) or mounted file — support both.
+if [ -n "${FACTORY_BRIEF_B64:-}" ] && [ ! -f "${BRIEF}" ]; then
+  mkdir -p /task
+  printf '%s' "${FACTORY_BRIEF_B64}" | base64 -d > "${BRIEF}"
+fi
+
 [ -f "${BRIEF}" ] || { echo "[worker] FATAL: no ${BRIEF}" >&2; exit 78; }
 
 REPO=$(python3 -c "import json;print(json.load(open('${BRIEF}'))['repository'])")

@@ -85,6 +85,22 @@ EOF
 
   # ---- 3. spawn the worker Job -------------------------------------------
   JOB_NAME="factory-issue-${NUM}-$(date +%s)"
+  # Build the worker brief from the issue (base64 so JSON survives env).
+  BRIEF_B64=$(gh issue view "${NUM}" -R "${REPO}" --json number,title,body,state,url \
+    --jq '{number, title, body, url} | @base64' | base64 -w0)
+  python3 - "$BRIEF_B64" << 'PYEOF' > /tmp/brief.json
+import json, sys, base64
+d = json.loads(base64.b64decode(sys.argv[1]).decode())
+print(json.dumps({
+    "run_id": f"issue{d['number']}-${NUM}",
+    "repository": "${REPO}",
+    "issue": d,
+    "constraints": ["draft PR only", "minimal diff"],
+    "verify_command": ""
+}))
+PYEOF
+  BRIEF_B64=$(base64 -w0 /tmp/brief.json)
+
   # Single-shot creation via generated manifest (kubectl create job has no
   # --env/--labels flags; a here-doc manifest needs no patch verbs).
   kubectl apply -f - >/dev/null << EOF2
@@ -114,6 +130,8 @@ spec:
           env:
             - { name: FACTORY_REPO,  value: "${REPO}" }
             - { name: FACTORY_ISSUE, value: "${NUM}" }
+            - name: FACTORY_BRIEF_B64
+              value: "${BRIEF_B64}"
             - { name: WORKER_CMD,    value: "${WORKER_CMD:-claude --dangerously-skip-permissions}" }
             - name: GH_TOKEN
               valueFrom:
