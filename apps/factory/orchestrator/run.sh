@@ -67,7 +67,7 @@ EOF
 )")
   echo "[orch] marker comment: ${COMMENT_URL}"
 
-  MARKER_ID=$(basename "${COMMENT_URL}")
+  MARKER_ID=${COMMENT_URL##*issuecomment-}
 
   update_status() {  # $1=status, $2=extra detail markdown
     gh api -X PATCH "repos/${REPO}/issues/comments/${MARKER_ID}" \
@@ -108,7 +108,7 @@ PYEOF
 
   # Single-shot creation via generated manifest (kubectl create job has no
   # --env/--labels flags; a here-doc manifest needs no patch verbs).
-  kubectl apply -f - >/dev/null << EOF2
+  kubectl apply -f - << EOF2
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -136,7 +136,7 @@ spec:
           env:
             - { name: FACTORY_REPO,  value: "${REPO}" }
             - { name: FACTORY_ISSUE, value: "${NUM}" }
-            # Worker-side expansion: k8s substitutes $(GH_TOKEN) from the env
+            # Worker-side expansion: heredoc injects ${GH_TOKEN} value here
             # above; orchestrator never touches the secret material.
             - name: GH_TOKEN
               valueFrom:
