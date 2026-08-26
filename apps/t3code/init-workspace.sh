@@ -59,5 +59,14 @@ json.dump(s, open(p, 'w'), indent=2)
   fi
 fi
 
+# opencode credentials: symlink its state dir into the PVC-backed agent-state
+# so auth.json survives rollouts (opencode reads
+# ~/.local/share/opencode/auth.json).
+mkdir -p "${DATA_DIR}/agent-state/opencode/share" /home/node/.local/share
+[ -f "${DATA_DIR}/agent-state/opencode/share/auth.json" ] || \
+  cp /home/node/.local/share/opencode/auth.json \
+     "${DATA_DIR}/agent-state/opencode/share/auth.json" 2>/dev/null || true
+ln -sfn "${DATA_DIR}/agent-state/opencode/share" /home/node/.local/share/opencode
+
 echo "[t3code] starting server on 0.0.0.0:3773"
 exec t3 serve --host 0.0.0.0 --port 3773
