@@ -85,15 +85,46 @@ EOF
 
   # ---- 3. spawn the worker Job -------------------------------------------
   JOB_NAME="factory-issue-${NUM}-$(date +%s)"
-  # Single-shot creation with env + labels baked in (orchestrator SA cannot
-  # patch Jobs after creation — and shouldn't need to).
-  kubectl create job "${JOB_NAME}" -n sandbox \
-    --image=ghcr.io/gwkline/homelab/factory/worker:latest \
-    --env="FACTORY_REPO=${REPO}" \
-    --env="FACTORY_ISSUE=${NUM}" \
-    --env="WORKER_CMD=${WORKER_CMD:-claude --dangerously-skip-permissions}" \
-    --env="GH_TOKEN=${GH_TOKEN}" \
-    --labels="factory.gwkline.io/issue=${NUM},factory.gwkline.io/profile=${PROFILE}" >/dev/null
+  # Single-shot creation via generated manifest (kubectl create job has no
+  # --env/--labels flags; a here-doc manifest needs no patch verbs).
+  kubectl apply -f - >/dev/null << EOF2
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${JOB_NAME}
+  namespace: sandbox
+  labels:
+    factory.gwkline.io/issue: "${NUM}"
+    factory.gwkline.io/profile: ${PROFILE}
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        factory.gwkline.io/profile: code-pr
+    spec:
+      restartPolicy: Never
+      serviceAccountName: factory-worker
+      automountServiceAccountToken: false
+      containers:
+        - name: worker
+          image: ghcr.io/gwkline/homelab/factory/worker:latest
+          env:
+            - { name: FACTORY_REPO,  value: "${REPO}" }
+            - { name: FACTORY_ISSUE, value: "${NUM}" }
+            - { name: WORKER_CMD,    value: "${WORKER_CMD:-claude --dangerously-skip-permissions}" }
+            - name: GH_TOKEN
+              valueFrom:
+                secretKeyRef: { name: github-token, key: token }
+          resources:
+            requests: { cpu: 500m, memory: 512Mi }
+            limits:   { cpu: "2", memory: 4Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+EOF2
   echo "[orch] job ${JOB_NAME} created"
 
   update_status "running" "_Job \`${JOB_NAME}\` running._"
