@@ -138,13 +138,13 @@ spec:
             - { name: FACTORY_ISSUE, value: "${NUM}" }
             # Worker-side expansion: k8s substitutes $(GH_TOKEN) from the env
             # above; orchestrator never touches the secret material.
+            - name: GH_TOKEN
+              valueFrom:
+                secretKeyRef: { name: github-token, key: token }
             - { name: CLONE_URL,     value: "https://x-access-token:$(GH_TOKEN)@github.com/${REPO}.git" }
             - { name: WORKER_CMD,    value: "${WORKER_CMD:-claude --dangerously-skip-permissions}" }
             - name: FACTORY_BRIEF_B64
               value: "${BRIEF_B64}"
-            - name: GH_TOKEN
-              valueFrom:
-                secretKeyRef: { name: github-token, key: token }
           resources:
             requests: { cpu: 500m, memory: 512Mi }
             limits:   { cpu: "2", memory: 4Gi }
