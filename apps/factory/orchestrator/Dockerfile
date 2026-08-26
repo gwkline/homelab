@@ -1,12 +1,12 @@
 # Factory orchestrator image: kubectl + gh + jq + git in a slim shell.
-FROM bitnami/kubectl:1.31 AS kubectl
+FROM alpine/k8s:1.31.3 AS kubectl
 
 FROM debian:bookworm-slim
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq python3 openssh-client \
   && rm -rf /var/lib/apt/lists/*
-COPY --from=kubectl /opt/bitnami/kubectl/bin/kubectl /usr/local/bin/kubectl
+COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 
 ARG GH_VERSION=2.62.0
 RUN ARCH=$(dpkg --print-architecture) \
