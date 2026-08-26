@@ -134,11 +134,17 @@ app.post("/api/factory/run", async (c) => {
     if (!template) throw new Error("CronJob has no jobTemplate");
     const ts = Date.now().toString(36);
     jobName = `factory-issue-${issueNum}-${ts}`.slice(0, 63);
+    // Clone the template so we can inject FACTORY_ISSUE (avoids GH label propagation race)
+    const spec = JSON.parse(JSON.stringify(template.spec));
+    const containers = spec.template?.spec?.containers ?? [];
+    if (containers[0]) {
+      containers[0].env = [...(containers[0].env ?? []), { name: "FACTORY_ISSUE", value: String(issueNum) }];
+    }
     const job = {
       apiVersion: "batch/v1",
       kind: "Job",
       metadata: { name: jobName, namespace: FACTORY_NS, labels: { "factory.gwkline.io/trigger": "panel", "factory.gwkline.io/issue": String(issueNum) } },
-      spec: template.spec,
+      spec,
     };
     await k8s.createJob(job);
   } catch (err: any) {
