@@ -183,12 +183,34 @@ ${LOGTAIL}
   fi
 
   # ---- 5. extract patch from the completed pod ----------------------------
-  POD=$(kubectl get pods -n sandbox -l job-name="${JOB_NAME}" -o jsonpath='{.items[0].metadata.name}')
-  kubectl cp "sandbox/${POD}:/out/patch.diff" "/tmp/patch-${NUM}.diff" >/dev/null 2>&1 || {
-    update_status "failed" "Could not retrieve patch artifact."
+  # Worker prints base64 artifacts to logs (---PATCH_B64_BEGIN--- ... ---PATCH_B64_END---).
+  # kubectl cp / kubectl exec requires Running; Job pods are terminated (Failed/Succeeded).
+  # Use kubectl logs on the Succeeded pod; select deterministically, not .items[0].
+  POD=$(kubectl get pods -n sandbox -l job-name="${JOB_NAME}" --field-selector status.phase=Succeeded -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  if [ -z "${POD}" ]; then
+    # Fallback: no Succeeded pod yet — job may still be retrying (backoffLimit 1)
+    POD=$(kubectl get pods -n sandbox -l job-name="${JOB_NAME}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  fi
+  if [ -z "${POD}" ]; then
+    update_status "failed" "Could not find worker pod for job ${JOB_NAME}."
     gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
     continue
-  }
+  fi
+  # Try log-based extraction; fallback to cp for old image compat during rollout.
+  EXTRACTED=0
+  if kubectl logs -n sandbox "${POD}" 2>/dev/null | grep -q "PATCH_B64_BEGIN"; then
+    kubectl logs -n sandbox "${POD}" 2>/dev/null \
+      | sed -n '/---PATCH_B64_BEGIN---/,/---PATCH_B64_END---/p' \
+      | grep -v -- "---PATCH" | tr -d '\n\r ' | base64 -d > "/tmp/patch-${NUM}.diff" 2>/dev/null && EXTRACTED=1
+  fi
+  if [ "${EXTRACTED}" != "1" ]; then
+    kubectl cp "sandbox/${POD}:/out/patch.diff" "/tmp/patch-${NUM}.diff" >/dev/null 2>&1 && EXTRACTED=1 || true
+  fi
+  if [ "${EXTRACTED}" != "1" ] || [ ! -s "/tmp/patch-${NUM}.diff" ]; then
+    update_status "failed" "Could not retrieve patch artifact (pod: ${POD})."
+    gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
+    continue
+  fi
 
   # ---- 6. publish phase (publisher responsibilities, inline for v1) -------
   update_status "publishing" "_Applying patch and opening draft PR..._"
