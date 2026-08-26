@@ -217,7 +217,7 @@ ${LOGTAIL}
 
   PUBLISH_DIR="/tmp/publish-${NUM}"
   rm -rf "${PUBLISH_DIR}"; mkdir -p "${PUBLISH_DIR}"; cd "${PUBLISH_DIR}"
-  git clone -q "https://github.com/${REPO}.git" .
+  git clone -q "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" .
   git config user.name "factory-bot"; git config user.email "factory@homelab.local"
   git checkout -qb "${BRANCH}"
   if git apply --whitespace=nowarn "/tmp/patch-${NUM}.diff" 2>/tmp/apply-err; then
