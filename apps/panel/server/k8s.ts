@@ -66,6 +66,8 @@ export const api = (cfg: K8sConfig) => ({
     request(cfg, "GET", `/apis/batch/v1/namespaces/${NS}/jobs`),
   listCronJobs: (): Promise<{ items?: any[] }> =>
     request(cfg, "GET", `/apis/batch/v1/namespaces/${NS}/cronjobs`),
+  getCronJob: (name: string): Promise<unknown> =>
+    request(cfg, "GET", `/apis/batch/v1/namespaces/${NS}/cronjobs/${encodeURIComponent(name)}`),
   createJob: (manifest: unknown) =>
     request(cfg, "POST", `/apis/batch/v1/namespaces/${NS}/jobs`, manifest),
 });
