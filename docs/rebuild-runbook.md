@@ -61,6 +61,14 @@ kubectl apply -k deploy/tailscale          # serve-fixer
 kubectl apply -k deploy/t3code/base
 kubectl apply -k deploy/hermes/base
 kubectl apply -k deploy/loop-agent/base
+kubectl apply -k deploy/panel/base         # admin portal (panel.tailc3cc03.ts.net)
+
+# 3b. HTTPS for tailscale-proxied services (one-time tailnet approval already
+# granted; re-run after operator reinstall or proxy pod replacement)
+./scripts/serve-https.sh                   # t3code
+APP_IP=$(kubectl get pod -n agents -l app=panel -o jsonpath='{.items[0].status.podIP}')
+PROXY=$(kubectl get pods -n tailscale --no-headers | grep ts-panel | awk '{print $1}' | head -1)
+kubectl exec -n tailscale "$PROXY" -- tailscale serve --bg --https=443 "http://${APP_IP}:3000"
 
 # 4. wait & verify
 kubectl get pods -A -w
