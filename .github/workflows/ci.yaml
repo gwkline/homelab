@@ -36,6 +36,8 @@ jobs:
           - app: loop-agent
           - app: hermes
           - app: panel
+          - app: factory/worker
+          - app: factory/orchestrator
     runs-on: ubuntu-latest
     permissions:
       contents: read
