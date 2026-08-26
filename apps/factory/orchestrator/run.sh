@@ -148,7 +148,7 @@ spec:
               value: '${BRIEF_B64}'            # shell substitutes
           resources:
             requests: { cpu: 500m, memory: 512Mi }
-            limits:   { cpu: "2", memory: 4Gi }
+            limits:   { cpu: "4",   memory: 12Gi }
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
