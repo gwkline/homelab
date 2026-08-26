@@ -1,4 +1,53 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"]
+  "extends": ["config:recommended"],
+  "timezone": "America/New_York",
+  "schedule": ["after 6am and before 10am every weekday"],
+  "prConcurrentLimit": 4,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "packageRules": [
+    {
+      "description": "Agent CLIs: weekly, grouped, auto-merge patch/minor after CI passes",
+      "groupName": "agent CLIs (codex/claude-code/opencode/t3)",
+      "matchFileNames": ["apps/t3code/Dockerfile"],
+      "matchDatasources": ["npm"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true,
+      "schedule": ["after 6am and before 9am on monday"]
+    },
+    {
+      "description": "Major bumps of agent CLIs: separate PR, no automerge — review breaking changes",
+      "groupName": "agent CLI majors",
+      "matchFileNames": ["apps/t3code/Dockerfile"],
+      "matchDatasources": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "description": "Base images: pin digest via pinDigests, automerge patch only",
+      "matchDatasources": ["docker"],
+      "matchPackagePatterns": ["node", "python", "busybox"],
+      "pinDigests": true,
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    },
+    {
+      "description": "k8s manifests reference ghcr images by :latest on purpose (CI builds them); Renovate must not 'help' here",
+      "matchManagers": ["kubernetes"],
+      "enabled": false
+    },
+    {
+      "description": "GitHub Actions: monthly, grouped",
+      "groupName": "github-actions",
+      "matchManagers": ["github-actions"],
+      "extends": ["schedule:monthly"],
+      "automerge": true,
+      "matchUpdateTypes": ["minor", "patch", "digest"]
+    }
+  ]
 }
