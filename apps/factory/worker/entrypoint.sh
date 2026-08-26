@@ -13,13 +13,16 @@ set -eu
 if [ -n "${OPENCODE_AUTH_B64:-}" ]; then
   mkdir -p /home/node/.local/share/opencode /home/node/.config/opencode
   # The secret may hold raw JSON or base64(json) — normalize to raw JSON.
-  _tmpf=$(mktemp)
-  printf '%s' "${OPENCODE_AUTH_B64}" | base64 -d > "${_tmpf}" 2>/dev/null
-  if ! python3 -c "import json;json.load(open('${_tmpf}'))" 2>/dev/null; then
-    python3 -c "import json,base64,sys;open('${_tmpf}','w').write(base64.b64decode(open('${_tmpf}','rb').read()).decode())"
-  fi
-  cp "${_tmpf}" /home/node/.local/share/opencode/auth.json
-  rm -f "${_tmpf}"
+  # Env value may be raw JSON or base64(JSON) depending on how the secret was
+  # created — validate, and decode once if needed.
+  printf '%s' "${OPENCODE_AUTH_B64}" | python3 -c "
+import json, sys, base64
+v = sys.stdin.read().strip()
+try:
+    json.loads(v); print(v)  # already raw JSON
+except json.JSONDecodeError:
+    print(base64.b64decode(v).decode())
+" > /home/node/.local/share/opencode/auth.json
   # npm provider requires the key as env too:
   OPENROUTER_API_KEY=$(python3 -c "import json;print(json.load(open('/home/node/.local/share/opencode/auth.json'))['openrouter']['key'])")
   export OPENROUTER_API_KEY
@@ -46,7 +49,14 @@ OUT="/out"
 # Brief arrives via env (base64 JSON) or mounted file — support both.
 if [ -n "${FACTORY_BRIEF_B64:-}" ] && [ ! -f "${BRIEF}" ]; then
   mkdir -p /task
-  printf '%s' "${FACTORY_BRIEF_B64}" | base64 -d > "${BRIEF}"
+  python3 -c "
+import json, sys, base64
+v = sys.argv[1].strip()
+try:
+    d = base64.b64decode(v).decode(); json.loads(d)
+except Exception:
+    sys.exit(1)
+" "${FACTORY_BRIEF_B64}" && printf '%s' "${FACTORY_BRIEF_B64}" | base64 -d > "${BRIEF}" || printf '%s' "${FACTORY_BRIEF_B64}" > "${BRIEF}"
 fi
 
 [ -f "${BRIEF}" ] || { echo "[worker] FATAL: no ${BRIEF}" >&2; exit 78; }
