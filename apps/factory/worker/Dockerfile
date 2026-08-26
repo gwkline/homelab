@@ -51,7 +51,7 @@ RUN mkdir -p /task /out /work && chown -R node:node /task /out /work
 USER node
 WORKDIR /work
 
-COPY apps/factory/worker/entrypoint.sh /usr/local/bin/entrypoint
-RUN chmod +x /usr/local/bin/entrypoint
+COPY --chmod=755 --chown=node:node apps/factory/worker/entrypoint.sh /usr/local/bin/entrypoint
+
 
 ENTRYPOINT ["/usr/local/bin/entrypoint"]
