@@ -12,7 +12,14 @@ set -eu
 # opencode auth + config: auth.json arrives base64-encoded via env.
 if [ -n "${OPENCODE_AUTH_B64:-}" ]; then
   mkdir -p /home/node/.local/share/opencode /home/node/.config/opencode
-  printf '%s' "${OPENCODE_AUTH_B64}" | base64 -d > /home/node/.local/share/opencode/auth.json
+  # The secret may hold raw JSON or base64(json) — normalize to raw JSON.
+  _tmpf=$(mktemp)
+  printf '%s' "${OPENCODE_AUTH_B64}" | base64 -d > "${_tmpf}" 2>/dev/null
+  if ! python3 -c "import json;json.load(open('${_tmpf}'))" 2>/dev/null; then
+    python3 -c "import json,base64,sys;open('${_tmpf}','w').write(base64.b64decode(open('${_tmpf}','rb').read()).decode())"
+  fi
+  cp "${_tmpf}" /home/node/.local/share/opencode/auth.json
+  rm -f "${_tmpf}"
   # npm provider requires the key as env too:
   OPENROUTER_API_KEY=$(python3 -c "import json;print(json.load(open('/home/node/.local/share/opencode/auth.json'))['openrouter']['key'])")
   export OPENROUTER_API_KEY
