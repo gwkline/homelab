@@ -34,14 +34,16 @@ RUN npm install -g \
       @anthropic-ai/claude-code@latest \
       opencode-ai@1.18.23
 
-# Cursor CLI (pinned lab release, same version as t3code).
+# Cursor CLI — pinned lab release, exact mechanism from apps/t3code/Dockerfile.
 ARG CURSOR_AGENT_VERSION=2026.08.11-e8db854
-RUN ARCH=$(dpkg --print-architecture) \
-  && curl -fsSL "https://cursor.com/download/${CURSOR_AGENT_VERSION}?platform=linux-${ARCH}-cli" \
-      -o /tmp/cursor.tgz \
-  && mkdir -p /opt/cursor && tar -xzf /tmp/cursor.tgz -C /opt/cursor --strip-components=1 \
-  && rm /tmp/cursor.tgz \
-  && ln -s /opt/cursor/bin/cursor-agent /usr/local/bin/cursor-agent
+RUN ARCH="$(uname -m)" \
+  && case "$ARCH" in x86_64|amd64) CARCH=x64 ;; arm64|aarch64) CARCH=arm64 ;; esac \
+  && curl -fsSL "https://downloads.cursor.com/lab/${CURSOR_AGENT_VERSION}/linux/${CARCH}/agent-cli-package.tar.gz" \
+      -o /tmp/cursor-agent.tar.gz \
+  && mkdir -p /opt/cursor-agent \
+  && tar -xzf /tmp/cursor-agent.tar.gz -C /opt/cursor-agent \
+  && ln -s /opt/cursor-agent/dist-package/cursor-agent /usr/local/bin/cursor-agent \
+  && rm /tmp/cursor-agent.tar.gz
 
 # Non-root worker; task I/O on explicit volume-style paths.
 RUN useradd -m -u 1000 worker \
