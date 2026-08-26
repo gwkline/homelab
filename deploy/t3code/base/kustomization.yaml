@@ -1,6 +1,5 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: agents
 
 labels:
   - pairs:
@@ -9,7 +8,8 @@ labels:
     includeSelectors: false
 
 resources:
+  - t3state-pvc.yaml
   - configmap.yaml
-  - statefulset.yaml
-  - service.yaml
   - netpol.yaml
+  - service.yaml
+  - statefulset.yaml

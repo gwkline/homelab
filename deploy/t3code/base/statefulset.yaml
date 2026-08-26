@@ -43,6 +43,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            # t3code state (environment-id, pairings, sessions, agent creds).
+            # Standalone PVC (not a VCT — those are immutable after creation)
+            # so pairing survives pod replacement; without this, every rollout
+            # orphans the browser session.
+            - name: t3state
+              mountPath: /home/node/.t3
             - name: github-token
               mountPath: /secrets
               readOnly: true
@@ -77,6 +83,9 @@ spec:
           secret:
             secretName: github-token
             optional: true
+        - name: t3state
+          persistentVolumeClaim:
+            claimName: t3state-t3code-0
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -85,3 +94,12 @@ spec:
         resources:
           requests:
             storage: 20Gi
+    # Small dedicated volume for t3code's own state dir (env-id, pairings,
+    # sessions). Kept separate from /data so repo churn never risks state.
+    - metadata:
+        name: t3state
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
