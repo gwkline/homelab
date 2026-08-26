@@ -141,7 +141,7 @@ spec:
             - name: GH_TOKEN
               valueFrom:
                 secretKeyRef: { name: github-token, key: token }
-            - { name: CLONE_URL,     value: "https://x-access-token:$(GH_TOKEN)@github.com/${REPO}.git" }
+            - { name: CLONE_URL,     value: "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" }
             - { name: WORKER_CMD,    value: "${WORKER_CMD:-claude --dangerously-skip-permissions}" }
             - name: FACTORY_BRIEF_B64
               value: "${BRIEF_B64}"
