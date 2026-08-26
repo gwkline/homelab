@@ -46,10 +46,9 @@ RUN ARCH="$(uname -m)" \
   && rm /tmp/cursor-agent.tar.gz
 
 # Non-root worker; task I/O on explicit volume-style paths.
-RUN useradd -m -u 1000 worker \
-  && mkdir -p /task /out /work \
-  && chown -R worker:worker /task /out /work
-USER worker
+# node:24 base already ships a non-root 'node' user (uid 1000) — reuse it.
+RUN mkdir -p /task /out /work && chown -R node:node /task /out /work
+USER node
 WORKDIR /work
 
 COPY apps/factory/worker/entrypoint.sh /usr/local/bin/entrypoint
