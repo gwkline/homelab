@@ -86,7 +86,7 @@ EOF
   # ---- 3. spawn the worker Job -------------------------------------------
   JOB_NAME="factory-issue-${NUM}-$(date +%s)"
   kubectl create job "${JOB_NAME}" -n sandbox \
-    --image=ghcr.io/gwkline/homelab/factory-worker:latest >/dev/null
+    --image=ghcr.io/gwkline/homelab/factory/worker:latest >/dev/null
   kubectl set env "job/${JOB_NAME}" -n sandbox \
     FACTORY_REPO="${REPO}" FACTORY_ISSUE="${NUM}" WORKER_CMD="${WORKER_CMD:-claude --dangerously-skip-permissions}" \
     GH_TOKEN="${GH_TOKEN}" >/dev/null

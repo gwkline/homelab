@@ -30,7 +30,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: orchestrator
-              image: ghcr.io/gwkline/homelab/factory-orchestrator
+              image: ghcr.io/gwkline/homelab/factory/orchestrator
               env:
                 - name: FACTORY_REPO
                   value: gwkline/launchpad       # demo target per operator
