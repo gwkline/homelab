@@ -1,12 +1,67 @@
 # Deliberate, scoped exception to "pods can't talk to Kubernetes":
-# hermes may manage throwaway workloads in `sandbox` — nothing else.
-# It cannot touch secrets, nodes, CRDs, or its own namespace's workloads.
+# hermes may manage throwaway workloads in `sandbox`, observe its own
+# namespace, and read cluster health — nothing else.
+# It cannot touch secrets, CRDs, or other namespaces' workloads.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: hermes
   namespace: agents
 ---
+# Self-visibility: lets hermes report on the workloads it hosts.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hermes-self-viewer
+  namespace: agents
+rules:
+  - apiGroups: ["", "apps", "batch"]
+    resources: ["pods", "pods/log", "services", "statefulsets", "jobs", "cronjobs", "configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hermes-self-viewer
+  namespace: agents
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hermes-self-viewer
+subjects:
+  - kind: ServiceAccount
+    name: hermes
+    namespace: agents
+---
+# Cluster health: read-only nodes/componentstatuses so hermes can answer
+# "is the cluster healthy?" — no write, no secrets access (nodes expose no
+# secret material via these verbs).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hermes-cluster-reader
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hermes-cluster-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hermes-cluster-reader
+subjects:
+  - kind: ServiceAccount
+    name: hermes
+    namespace: agents
+---
+# Throwaway job management in sandbox (unchanged).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
