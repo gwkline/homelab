@@ -26,6 +26,15 @@ if [ -d "${_sid_src}" ]; then
     "${_sid_dst}/" 2>/dev/null || true
 fi
 
+# Agent CLI state (claude/codex logins + sessions) lives under /home/node but
+# is container-local. Restore from /data (survives rollouts); a snapshot hook
+# elsewhere writes it back before pod termination.
+for _d in .claude .codex; do
+  if [ -d "/data/agent-state/${_d}" ]; then
+    cp -a "/data/agent-state/${_d}/." "/home/node/${_d}/" 2>/dev/null || true
+  fi
+done
+
 # First boot requires `hermes setup` (provider/model config) — run it once
 # interactively via kubectl exec; this entrypoint refuses to guess.
 # NOTE: hermes writes config to ${HERMES_HOME}/config.yaml (yaml, despite the
