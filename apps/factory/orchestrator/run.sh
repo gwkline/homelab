@@ -62,7 +62,7 @@ EOF
 )")
   echo "[orch] marker comment: ${COMMENT_URL}"
 
-  MARKER_ID=$(gh api "repos/${REPO}/issues/comments/$(basename "${COMMENT_URL}")" --jq .id)
+  MARKER_ID=$(basename "${COMMENT_URL}")
 
   update_status() {  # $1=status, $2=extra detail markdown
     gh api -X PATCH "repos/${REPO}/issues/comments/${MARKER_ID}" \
