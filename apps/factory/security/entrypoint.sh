@@ -23,6 +23,16 @@ except Exception:
 " "${FACTORY_BRIEF_B64}" && printf '%s' "${FACTORY_BRIEF_B64}" | base64 -d > "${BRIEF}" || printf '%s' "${FACTORY_BRIEF_B64}" > "${BRIEF}"
 fi
 
+# Nightly mode needs no brief — synthesize a minimal one from env.
+# (CronJob sets FACTORY_SECURITY_MODE=nightly + FACTORY_REPO but no brief.)
+if [ ! -f "${BRIEF}" ] && [ "${FACTORY_SECURITY_MODE:-}" = "nightly" ] && [ -n "${FACTORY_REPO:-}" ]; then
+  mkdir -p /task
+  RUN_ID="nightly-$(date +%s)"
+  printf '{"run_id":"%s","repository":"%s","issue":{"number":0,"title":"nightly sweep","body":""}}' \
+    "${RUN_ID}" "${FACTORY_REPO}" > "${BRIEF}"
+  echo "[security] synthesized nightly brief: repo=${FACTORY_REPO}"
+fi
+
 [ -f "${BRIEF}" ] || { echo "[security] FATAL: no ${BRIEF}" >&2; exit 78; }
 
 REPO=$(python3 -c "import json;print(json.load(open('${BRIEF}'))['repository'])")
