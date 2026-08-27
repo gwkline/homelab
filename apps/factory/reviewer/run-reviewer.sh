@@ -31,9 +31,11 @@ classify_checks() {
 }
 
 # List open PRs that carry factory ledger labels.
+# NOTE: use printf, never echo — echo mangles JSON content (parse errors on
+# real payloads with emoji/control chars); printf '%s' round-trips byte-safe.
 PRS_JSON="$(gh api "repos/${REPO}/pulls?state=open&per_page=50&labels=factory/draft-pr")"
 
-echo "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
+printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
   NUM="$(printf '%s' "$PR" | jq -r '.number')"
   DRAFT="$(printf '%s' "$PR" | jq -r '.draft')"
   HEAD_REF="$(printf '%s' "$PR" | jq -r '.head.ref')"
