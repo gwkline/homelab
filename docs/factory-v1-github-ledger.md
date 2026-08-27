@@ -29,6 +29,12 @@ queued      : label "factory/queued" added by collector
 claimed     : label swapped to "factory/in-progress" + status comment posted
 publishing  : status comment edited (publisher Job picked up)
 published   : label "factory/draft-pr" + PR link comment; queued/in-progress removed
+needs-review: label "factory/needs-review" added by reviewer when PR is
+              ready (isDraft:false or review requested) AND CI green;
+              draft-pr stays until merge
+approved    : label "factory/approved" added by reviewer when reviewDecision
+              == APPROVED AND CI green — ready to merge
+shipped     : PR merged → labels cleaned, linked issue closed via "Closes #N"
 failed      : label "factory/failed" + failure comment (exit code, log tail)
 cancelled   : label "factory/cancelled" + comment
 ```
@@ -48,6 +54,36 @@ by `<!-- factory:run:<issue>-<ts> -->` HTML marker):
 | Attempt | 1 |
 
 **Log tail:** …
+```
+
+## Reviewer / approval loop (Phase 1)
+
+The `factory-reviewer` CronJob (and the panel Review Queue) extend this ledger
+with a human-approval gate. PR `isDraft`, `reviewDecision`, and
+`statusCheckRollup` are DERIVED state — labels above remain the source of truth.
+
+Panel API contract (tailnet-only, same trust model as `/api/factory/run`):
+
+```
+GET  /api/factory/prs?repo=<owner/name>
+     → { repo, prs: [{ number, title, headRef, url, isDraft, reviewDecision,
+                       state, checks: {state, conclusion}, labels, linkedIssue }] }
+POST /api/factory/review { repo, pr, event: "APPROVE"|"REQUEST_CHANGES"|"COMMENT", body? }
+     → POST /repos/{repo}/pulls/{pr}/reviews  (gh pr review equivalent)
+POST /api/factory/merge   { repo, pr, strategy: "squash"|"merge"|"rebase" }
+     → guard: pr must have factory/issue-* head AND be APPROVED with green
+       checks; then PUT /repos/{repo}/pulls/{pr}/merge
+```
+
+Reviewer transitions (v1 read-only + comments; auto-promote behind
+`FACTORY_REVIEWER_AUTO_MERGE=false` default):
+
+```
+factory/draft-pr, CI pending                → nudge comment "CI ⏳"
+factory/draft-pr, CI green                  → suggest ready-for-review / add needs-review
+factory/needs-review                        → "@owner review?" comment
+APPROVED + CI green                         → "✅ ready to merge" (+ optional auto-merge)
+CI red or CHANGES_REQUESTED                 → stays, failure-style nudge
 ```
 
 All state mutations are `PATCH /repos/{owner}/{repo}/issues/comments` on the

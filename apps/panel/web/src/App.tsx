@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, Rocket, Hash, Factory } from "lucide-react";
+import { RefreshCw, Rocket, Hash, Factory, GitPullRequest } from "lucide-react";
 import { Card, CardHeader, Badge, Button, Input } from "./components/ui";
 
 interface Job {
@@ -25,6 +25,18 @@ interface FactoryIssue {
   url: string;
   labels: string[];
 }
+interface ReviewPr {
+  number: number;
+  title: string;
+  headRef: string;
+  url: string;
+  isDraft: boolean;
+  reviewDecision: string;
+  state: string;
+  checks: { state: string };
+  labels: string[];
+  linkedIssue: number | null;
+}
 
 export default function App() {
   const [state, setState] = useState<State>({ jobs: [], cronjobs: [] });
@@ -39,6 +51,9 @@ export default function App() {
   const [selectedProfile, setSelectedProfile] = useState("code-pr");
   const [factoryRunning, setFactoryRunning] = useState(false);
   const [factoryMsg, setFactoryMsg] = useState<string | null>(null);
+  const [reviewPrs, setReviewPrs] = useState<ReviewPr[]>([]);
+  const [reviewBusy, setReviewBusy] = useState<number | null>(null);
+  const [reviewMsg, setReviewMsg] = useState<string | null>(null);
 
   const refresh = async () => {
     try {
@@ -67,6 +82,66 @@ export default function App() {
     const id = setInterval(refresh, 10000);
     return () => clearInterval(id);
   }, []);
+
+  // ── Review Queue ──────────────────────────────────────────────────────
+  const refreshReviewQueue = async () => {
+    try {
+      const res = await fetch(`/api/factory/prs?repo=${encodeURIComponent(factoryRepo)}`);
+      const body = await res.json();
+      if (res.ok) setReviewPrs(body.prs ?? []);
+      else setReviewMsg(body.error ?? "failed to load PRs");
+    } catch (e) {
+      setReviewMsg(String(e));
+    }
+  };
+
+  const reviewAction = async (pr: ReviewPr, action: "approve" | "changes" | "ready" | "merge") => {
+    setReviewBusy(pr.number);
+    setReviewMsg(null);
+    try {
+      let res: Response;
+      if (action === "approve" || action === "changes") {
+        res = await fetch("/api/factory/review", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            repo: factoryRepo, pr: pr.number,
+            event: action === "approve" ? "APPROVE" : "REQUEST_CHANGES",
+            body: action === "approve" ? "LGTM via panel review queue" : "Changes requested via panel",
+          }),
+        });
+      } else if (action === "ready") {
+        res = await fetch(`/api/factory/review`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ repo: factoryRepo, pr: pr.number, event: "COMMENT", body: "Ready for review — flipping draft via panel" }),
+        });
+      } else {
+        res = await fetch("/api/factory/merge", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ repo: factoryRepo, pr: pr.number, strategy: "squash" }),
+        });
+      }
+      const body = await res.json();
+      if (res.ok) {
+        setReviewMsg(
+          action === "merge"
+            ? `merged #${pr.number} (${body.strategy ?? "squash"})`
+            : `${action} recorded on #${pr.number}`,
+        );
+      } else {
+        setReviewMsg(body.error ?? `action failed on #${pr.number}`);
+      }
+      refreshReviewQueue();
+      refreshFactoryIssues();
+      refresh();
+    } catch (e) {
+      setReviewMsg(String(e));
+    } finally {
+      setReviewBusy(null);
+    }
+  };
 
   const launch = async () => {
     if (!command.trim()) return;
@@ -185,6 +260,97 @@ export default function App() {
             </Button>
           </div>
           {factoryMsg && <p className="text-xs text-muted-foreground">{factoryMsg}</p>}
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="review queue"
+          subtitle={`${factoryRepo} · factory draft PRs — approve & merge without leaving the panel`}
+          action={
+            <Button
+              onClick={refreshReviewQueue}
+              className="bg-muted text-foreground hover:opacity-80 h-7 px-2 py-1 text-xs"
+            >
+              <RefreshCw size={12} /> reload
+            </Button>
+          }
+        />
+        <div className="divide-y divide-border">
+          {reviewPrs.length === 0 && (
+            <p className="px-5 py-4 text-sm text-muted-foreground">no open factory PRs (or not loaded)</p>
+          )}
+          {reviewPrs.map((pr) => {
+            const checksGreen = pr.checks?.state === "success";
+            const checksPending = pr.checks?.state === "pending" || pr.checks?.state === "none";
+            const approved = pr.reviewDecision === "APPROVED";
+            const changes = pr.reviewDecision === "CHANGES_REQUESTED";
+            const badge = pr.isDraft ? "draft"
+              : changes ? "failed"
+              : approved ? "complete"
+              : checksPending ? "running" : "queued";
+            const canMerge = !pr.isDraft && approved && checksGreen;
+            const busy = reviewBusy === pr.number;
+            return (
+              <div key={pr.number} className="px-5 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <a
+                      href={pr.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="truncate text-sm hover:underline"
+                    >
+                      <GitPullRequest size={12} className="mr-1 inline text-muted-foreground" />
+                      <span className="font-mono font-medium">#{pr.number}</span> {pr.title}
+                    </a>
+                    <p className="text-xs text-muted-foreground">
+                      {pr.headRef}
+                      {pr.linkedIssue != null && <> · issue #{pr.linkedIssue}</>}
+                      {" · "}checks {pr.checks?.state ?? "?"}
+                    </p>
+                  </div>
+                  <Badge status={badge} />
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {!approved && (
+                    <Button
+                      onClick={() => reviewAction(pr, "approve")}
+                      disabled={busy}
+                      className="h-7 px-2 py-1 text-xs bg-success/15 text-success border border-success/30 hover:bg-success/25"
+                    >
+                      approve
+                    </Button>
+                  )}
+                  <Button
+                    onClick={() => reviewAction(pr, "changes")}
+                    disabled={busy}
+                    className="h-7 px-2 py-1 text-xs bg-muted text-foreground border border-border hover:opacity-80"
+                  >
+                    request changes
+                  </Button>
+                  {pr.isDraft && (
+                    <Button
+                      onClick={() => reviewAction(pr, "ready")}
+                      disabled={busy}
+                      className="h-7 px-2 py-1 text-xs bg-muted text-foreground border border-border hover:opacity-80"
+                    >
+                      ready for review
+                    </Button>
+                  )}
+                  <Button
+                    onClick={() => reviewAction(pr, "merge")}
+                    disabled={busy || !canMerge}
+                    title={canMerge ? "squash merge" : "needs: draft off + APPROVED + green checks"}
+                    className="h-7 px-2 py-1 text-xs"
+                  >
+                    {busy ? "…" : "merge (squash)"}
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+          {reviewMsg && <p className="px-5 py-2 text-xs text-muted-foreground">{reviewMsg}</p>}
         </div>
       </Card>
 

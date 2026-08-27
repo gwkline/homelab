@@ -39,6 +39,7 @@ jobs:
           - app: factory/worker
           - app: factory/security
           - app: factory/orchestrator
+          - app: factory/reviewer
     runs-on: ubuntu-latest
     permissions:
       contents: read

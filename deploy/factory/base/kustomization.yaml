@@ -9,5 +9,7 @@ labels:
 resources:
   - profile-code-pr.yaml
   - profile-security.yaml
+  - profile-reviewer.yaml
   - orchestrator-cronjob.yaml
   - security-cronjob.yaml
+  - reviewer-cronjob.yaml
