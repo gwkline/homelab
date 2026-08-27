@@ -8,4 +8,6 @@ labels:
 
 resources:
   - profile-code-pr.yaml
+  - profile-security.yaml
   - orchestrator-cronjob.yaml
+  - security-cronjob.yaml

@@ -37,6 +37,7 @@ jobs:
           - app: hermes
           - app: panel
           - app: factory/worker
+          - app: factory/security
           - app: factory/orchestrator
     runs-on: ubuntu-latest
     permissions:

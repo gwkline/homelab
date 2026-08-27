@@ -12,7 +12,9 @@ const k8s = api(loadConfig());
 const FACTORY_NS = "sandbox";
 const FACTORY_CRONJOB = "factory-orchestrator";
 const FACTORY_REPOS = new Set(["gwkline/homelab", "gwkline/launchpad"]);
+const FACTORY_PROFILES = new Set(["code-pr", "security"]);
 const DEFAULT_FACTORY_REPO = process.env.FACTORY_REPO ?? "gwkline/launchpad";
+const DEFAULT_FACTORY_PROFILE = process.env.FACTORY_PROFILE ?? "code-pr";
 
 function ghToken(): string | null {
   const direct = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? "";
@@ -88,7 +90,7 @@ app.get("/api/factory/issues", async (c) => {
 });
 
 app.post("/api/factory/run", async (c) => {
-  let body: { issue?: number | string; repo?: string };
+  let body: { issue?: number | string; repo?: string; profile?: string };
   try {
     body = await c.req.json();
   } catch {
@@ -96,6 +98,8 @@ app.post("/api/factory/run", async (c) => {
   }
   const repo = (body.repo ?? DEFAULT_FACTORY_REPO).trim();
   if (!FACTORY_REPOS.has(repo)) return c.json({ error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` }, 400);
+  const profile = (body.profile ?? DEFAULT_FACTORY_PROFILE).trim();
+  if (!FACTORY_PROFILES.has(profile)) return c.json({ error: `profile not allowed (use ${[...FACTORY_PROFILES].join(", ")})` }, 400);
   const issueNum = Number(body.issue);
   if (!Number.isInteger(issueNum) || issueNum < 1 || issueNum > 10_000_000) return c.json({ error: "issue must be a positive integer" }, 400);
 
@@ -138,12 +142,16 @@ app.post("/api/factory/run", async (c) => {
     const spec = JSON.parse(JSON.stringify(template.spec));
     const containers = spec.template?.spec?.containers ?? [];
     if (containers[0]) {
-      containers[0].env = [...(containers[0].env ?? []), { name: "FACTORY_ISSUE", value: String(issueNum) }];
+      containers[0].env = [
+        ...(containers[0].env ?? []),
+        { name: "FACTORY_ISSUE", value: String(issueNum) },
+        { name: "FACTORY_PROFILE", value: profile },
+      ];
     }
     const job = {
       apiVersion: "batch/v1",
       kind: "Job",
-      metadata: { name: jobName, namespace: FACTORY_NS, labels: { "factory.gwkline.io/trigger": "panel", "factory.gwkline.io/issue": String(issueNum) } },
+      metadata: { name: jobName, namespace: FACTORY_NS, labels: { "factory.gwkline.io/trigger": "panel", "factory.gwkline.io/issue": String(issueNum), "factory.gwkline.io/profile": profile } },
       spec,
     };
     await k8s.createJob(job);
@@ -153,7 +161,7 @@ app.post("/api/factory/run", async (c) => {
     return c.json({ error: err.message, jobName, queued: true, issue: issueNum, repo }, status);
   }
 
-  return c.json({ queued: true, jobName, issue: issueNum, repo }, 201);
+  return c.json({ queued: true, jobName, issue: issueNum, repo, profile }, 201);
 });
 
 app.post("/api/jobs", async (c) => {

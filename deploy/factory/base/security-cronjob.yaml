@@ -1,0 +1,61 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: factory-security
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+    factory.gwkline.io/component: security
+    factory.gwkline.io/profile: security
+spec:
+  # Nightly sweep — harness-agnostic. For per-issue runs, panel POSTs
+  # /api/factory/run with profile=security (or label factory/security + manual Job).
+  schedule: "0 4 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  suspend: true
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 1800
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            factory.gwkline.io/profile: security
+        spec:
+          restartPolicy: Never
+          serviceAccountName: factory-security
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: security
+              image: ghcr.io/gwkline/homelab/factory/security:latest
+              imagePullPolicy: Always
+              env:
+                - name: FACTORY_REPO
+                  value: gwkline/homelab
+                - name: FACTORY_SECURITY_MODE
+                  value: nightly
+                - name: GH_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: github-token, key: token, optional: false }
+                - name: CLONE_URL
+                  # k8s $(GH_TOKEN) expansion — GH_TOKEN must be declared first.
+                  value: "https://x-access-token:$(GH_TOKEN)@github.com/gwkline/homelab.git"
+              resources:
+                requests: { cpu: 500m, memory: 1Gi }
+                limits:   { cpu: "2", memory: 4Gi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+                readOnlyRootFilesystem: true
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+                - { name: home, mountPath: /home/node }
+          volumes:
+            - { name: tmp, emptyDir: {} }
+            - { name: home, emptyDir: {} }
