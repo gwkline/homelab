@@ -12,9 +12,11 @@
 set -eu
 
 REPO="${FACTORY_REPO:?FACTORY_REPO required (owner/name)}"
-# Operator whitelist (#85 v1): auto-resolution only for these repos.
-case "${REPO}" in
-  gwkline/homelab|gwkline/launchpad) ;;
+# Operator whitelist: FACTORY_REPOS env (comma-separated) or built-in defaults.
+# Panel /api/factory/run keeps the canonical allowlist; this guards the CronJob.
+WHITELIST="${FACTORY_REPOS:-gwkline/homelab,gwkline/launchpad,gwkline/plantry,gwkline/personal-site,gwkline/kline-services-bot,gwkline/discord-bot,gwkline/pr-czar}"
+case ",${WHITELIST}," in
+  *",${REPO},"*) ;;
   *) echo "[orch] repo ${REPO} not whitelisted for factory runs" >&2; exit 78 ;;
 esac
 LABEL_QUEUED="factory/queued"

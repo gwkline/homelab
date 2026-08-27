@@ -88,6 +88,8 @@ export interface JobView {
   status: "running" | "complete" | "failed" | "pending";
   issue: string | null;
   age: string;
+  repo: string | null;
+  kind: string;
 }
 
 export function viewJob(j: any): JobView {
@@ -95,9 +97,15 @@ export function viewJob(j: any): JobView {
   const complete = conds.some((c) => c.type === "Complete" && c.status === "True");
   const failed = conds.some((c) => c.type === "Failed" && c.status === "True");
   const status = complete ? "complete" : failed ? "failed" : j.status?.active ? "running" : "pending";
-  const issue = /^dispatched-issue-\d+$|^panel-.*$/.test(j.metadata.name)
-    ? (j.spec?.template?.spec?.containers?.[0]?.env ?? []).find((e: any) => e.name === "WATCHER_ISSUE")?.value ?? null
-    : null;
+  const env: any[] = j.spec?.template?.spec?.containers?.[0]?.env ?? [];
+  const ev = (name: string) => env.find((e: any) => e.name === name)?.value ?? null;
+  const issue = ev("WATCHER_ISSUE") ?? (/^factory-issue-\d+/.test(j.metadata.name) ? (j.metadata.name.match(/^factory-issue-(\d+)/)?.[1] ?? null) : null);
+  const repo = ev("WATCHER_REPO") ?? (issue ? j.metadata.labels?.["factory.gwkline.io/repo"] ?? null : null);
+  const kind = j.metadata.name.startsWith("factory-")
+    ? `factory/${j.metadata.labels?.["factory.gwkline.io/profile"] ?? "worker"}`
+    : j.metadata.name.startsWith("panel-")
+      ? "loop-agent"
+      : "other";
   const created = new Date(j.metadata.creationTimestamp ?? Date.now());
   const seconds = Math.max(0, (Date.now() - created.getTime()) / 1000);
   const age =
@@ -105,5 +113,5 @@ export function viewJob(j: any): JobView {
     : seconds < 5400 ? `${Math.round(seconds / 60)}m`
     : seconds < 172800 ? `${Math.round(seconds / 3600)}h`
     : `${Math.round(seconds / 86400)}d`;
-  return { name: j.metadata.name, status, issue, age };
+  return { name: j.metadata.name, status, issue, age, repo, kind };
 }

@@ -11,7 +11,21 @@ const k8s = api(loadConfig());
 
 const FACTORY_NS = "sandbox";
 const FACTORY_CRONJOB = "factory-orchestrator";
-const FACTORY_REPOS = new Set(["gwkline/homelab", "gwkline/launchpad"]);
+// Factory-eligible repos: allowlist (labeling an issue factory/queued here makes
+// the orchestrator pick it up). Extend via FACTORY_EXTRA_REPOS="a/b,c/d" env.
+const FACTORY_REPOS = new Set([
+  "gwkline/homelab",
+  "gwkline/launchpad",
+  "gwkline/plantry",
+  "gwkline/personal-site",
+  "gwkline/kline-services-bot",
+  "gwkline/discord-bot",
+  "gwkline/pr-czar",
+  ...(process.env.FACTORY_EXTRA_REPOS ?? "")
+    .split(",")
+    .map((r) => r.trim())
+    .filter(Boolean),
+]);
 const FACTORY_PROFILES = new Set(["code-pr", "security"]);
 const DEFAULT_FACTORY_REPO = process.env.FACTORY_REPO ?? "gwkline/launchpad";
 const DEFAULT_FACTORY_PROFILE = process.env.FACTORY_PROFILE ?? "code-pr";
@@ -69,6 +83,34 @@ app.get("/api/state", async (c) => {
   } catch (err: any) {
     return c.json({ error: err.message }, 502);
   }
+});
+
+// Aggregate view: open issues across ALL factory-eligible repos in one response.
+app.get("/api/factory/all-issues", async (c) => {
+  const repos = [...FACTORY_REPOS];
+  const results = await Promise.allSettled(
+    repos.map(async (repo) => {
+      const data = (await ghFetch(`/repos/${repo}/issues?state=open&per_page=30`)) as any[];
+      return {
+        repo,
+        issues: data
+          .filter((i: any) => !i.pull_request)
+          .map((i: any) => ({
+            number: i.number,
+            title: i.title,
+            url: i.html_url,
+            labels: (i.labels ?? []).map((l: any) => l.name),
+            state: i.state,
+          })),
+      };
+    }),
+  );
+  const reposOut = results.map((r, i) =>
+    r.status === "fulfilled"
+      ? r.value
+      : { repo: repos[i], issues: [], error: String((r as PromiseRejectedResult).reason?.message ?? r.reason) },
+  );
+  return c.json({ repos: reposOut });
 });
 
 app.get("/api/factory/issues", async (c) => {
@@ -304,7 +346,7 @@ app.post("/api/factory/run", async (c) => {
     const job = {
       apiVersion: "batch/v1",
       kind: "Job",
-      metadata: { name: jobName, namespace: FACTORY_NS, labels: { "factory.gwkline.io/trigger": "panel", "factory.gwkline.io/issue": String(issueNum), "factory.gwkline.io/profile": profile } },
+      metadata: { name: jobName, namespace: FACTORY_NS, labels: { "factory.gwkline.io/trigger": "panel", "factory.gwkline.io/issue": String(issueNum), "factory.gwkline.io/profile": profile, "factory.gwkline.io/repo": repo } },
       spec,
     };
     await k8s.createJob(job);

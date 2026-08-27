@@ -7,6 +7,8 @@ interface Job {
   status: string;
   issue: string | null;
   age: string;
+  repo: string | null;
+  kind: string;
 }
 interface CronJob {
   name: string;
@@ -45,15 +47,17 @@ export default function App() {
   const [issue, setIssue] = useState("");
   const [launching, setLaunching] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [factoryIssues, setFactoryIssues] = useState<FactoryIssue[]>([]);
-  const [factoryRepo] = useState("gwkline/launchpad");
-  const [selectedIssue, setSelectedIssue] = useState<number | null>(null);
+  const [allIssues, setAllIssues] = useState<Array<{ repo: string; issues: FactoryIssue[]; error?: string }>>([]);
+  const [factoryRepo, setFactoryRepo] = useState("gwkline/launchpad");
+  const [selectedIssue, setSelectedIssue] = useState<string | null>(null); // "repo#num"
   const [selectedProfile, setSelectedProfile] = useState("code-pr");
   const [factoryRunning, setFactoryRunning] = useState(false);
   const [factoryMsg, setFactoryMsg] = useState<string | null>(null);
   const [reviewPrs, setReviewPrs] = useState<ReviewPr[]>([]);
-  const [reviewBusy, setReviewBusy] = useState<number | null>(null);
+  const [reviewBusy, setReviewBusy] = useState<string | null>(null);
   const [reviewMsg, setReviewMsg] = useState<string | null>(null);
+  const [openRepo, setOpenRepo] = useState<string | null>("gwkline/launchpad");
+  const [launchRepo, setLaunchRepo] = useState("gwkline/homelab");
 
   const refresh = async () => {
     try {
@@ -67,9 +71,9 @@ export default function App() {
 
   const refreshFactoryIssues = async () => {
     try {
-      const res = await fetch(`/api/factory/issues?repo=${encodeURIComponent(factoryRepo)}`);
+      const res = await fetch("/api/factory/all-issues");
       const body = await res.json();
-      if (res.ok) setFactoryIssues(body.issues ?? []);
+      if (res.ok) setAllIssues(body.repos ?? []);
       else setFactoryMsg(body.error ?? "failed to load issues");
     } catch (e) {
       setFactoryMsg(String(e));
@@ -96,7 +100,7 @@ export default function App() {
   };
 
   const reviewAction = async (pr: ReviewPr, action: "approve" | "changes" | "ready" | "merge") => {
-    setReviewBusy(pr.number);
+    setReviewBusy(`${factoryRepo}#${pr.number}`);
     setReviewMsg(null);
     try {
       let res: Response;
@@ -151,7 +155,7 @@ export default function App() {
       const res = await fetch("/api/jobs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ command, issue: issue || undefined }),
+        body: JSON.stringify({ command, issue: issue || undefined, repo: issue ? launchRepo : undefined }),
       });
       const body = await res.json();
       setMessage(res.ok ? `dispatched ${body.name}` : body.error);
@@ -167,17 +171,18 @@ export default function App() {
 
   const runFactory = async () => {
     if (selectedIssue == null) return;
+    const [repo, numStr] = selectedIssue.split("#");
     setFactoryRunning(true);
     setFactoryMsg(null);
     try {
       const res = await fetch("/api/factory/run", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ issue: selectedIssue, repo: factoryRepo, profile: selectedProfile }),
+        body: JSON.stringify({ issue: Number(numStr), repo, profile: selectedProfile }),
       });
       const body = await res.json();
       if (res.ok) {
-        setFactoryMsg(`queued #${body.issue} [${body.profile ?? selectedProfile}] → ${body.jobName ?? "scheduled (next tick)"} — watching…`);
+        setFactoryMsg(`queued ${repo}#${body.issue} [${body.profile ?? selectedProfile}] → ${body.jobName ?? "scheduled (next tick)"} — watching…`);
         setSelectedIssue(null);
         refresh();
         refreshFactoryIssues();
@@ -205,8 +210,8 @@ export default function App() {
 
       <Card>
         <CardHeader
-          title="factory — run an issue"
-          subtitle={`${factoryRepo} · pick an open issue and dispatch the orchestrator immediately (no 6h wait)`}
+          title="factory — issues across all repos"
+          subtitle="pick any open issue and dispatch the orchestrator immediately · label it factory/queued to auto-pickup on the next tick"
           action={
             <Button
               onClick={refreshFactoryIssues}
@@ -217,33 +222,60 @@ export default function App() {
           }
         />
         <div className="space-y-3 p-5">
-          <div className="max-h-64 divide-y divide-border overflow-auto rounded-lg border border-border">
-            {factoryIssues.length === 0 && <p className="px-3 py-4 text-sm text-muted-foreground">no open issues (or not loaded)</p>}
-            {factoryIssues.map((fi) => {
-              const isSelected = selectedIssue === fi.number;
-              const isQueued = fi.labels.includes("factory/queued");
-              const isInProgress = fi.labels.includes("factory/in-progress");
-              const isDone = fi.labels.includes("factory/draft-pr");
-              const disabled = isQueued || isInProgress || isDone;
+          {allIssues.length === 0 && <p className="text-sm text-muted-foreground">loading repos…</p>}
+          <div className="space-y-2">
+            {allIssues.map(({ repo, issues, error }) => {
+              const expanded = openRepo === repo;
+              const queuedCount = issues.filter((fi) => fi.labels.some((l) => l.startsWith("factory/"))).length;
               return (
-                <button
-                  key={fi.number}
-                  onClick={() => !disabled && setSelectedIssue(isSelected ? null : fi.number)}
-                  disabled={disabled}
-                  className={`flex w-full items-start justify-between gap-3 px-3 py-2 text-left text-sm transition-colors ${isSelected ? "bg-primary/10" : "hover:bg-muted/50"} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-                >
-                  <span className="min-w-0">
-                    <span className="font-mono font-medium">#{fi.number}</span> {fi.title}
-                    <span className="ml-2 text-xs text-muted-foreground">{fi.labels.join(", ") || "no labels"}</span>
-                  </span>
-                  {disabled && <Badge status={isQueued ? "queued" : isInProgress ? "running" : "complete"} />}
-                </button>
+                <div key={repo} className="rounded-lg border border-border">
+                  <button
+                    onClick={() => setOpenRepo(expanded ? null : repo)}
+                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-muted/50"
+                  >
+                    <span className="font-mono font-medium">{repo}</span>
+                    <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                      {error ? <Badge status="failed" /> : null}
+                      {queuedCount > 0 && <Badge status="running" />}
+                      {issues.length} open
+                      <span className="ml-1">{expanded ? "▾" : "▸"}</span>
+                    </span>
+                  </button>
+                  {expanded && (
+                    <div className="max-h-64 divide-y divide-border overflow-auto rounded-b-lg border-t border-border">
+                      {error && <p className="px-3 py-3 text-xs text-destructive">{error}</p>}
+                      {!error && issues.length === 0 && <p className="px-3 py-3 text-xs text-muted-foreground">no open issues</p>}
+                      {issues.map((fi) => {
+                        const key = `${repo}#${fi.number}`;
+                        const isSelected = selectedIssue === key;
+                        const isQueued = fi.labels.includes("factory/queued");
+                        const isInProgress = fi.labels.includes("factory/in-progress");
+                        const isDone = fi.labels.includes("factory/draft-pr");
+                        const disabled = isQueued || isInProgress || isDone;
+                        return (
+                          <button
+                            key={key}
+                            onClick={() => !disabled && setSelectedIssue(isSelected ? null : key)}
+                            disabled={disabled}
+                            className={`flex w-full items-start justify-between gap-3 px-3 py-2 text-left text-sm transition-colors ${isSelected ? "bg-primary/10" : "hover:bg-muted/50"} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                          >
+                            <span className="min-w-0">
+                              <span className="font-mono font-medium">#{fi.number}</span> {fi.title}
+                              <span className="ml-2 text-xs text-muted-foreground">{fi.labels.join(", ") || "no labels"}</span>
+                            </span>
+                            {disabled && <Badge status={isQueued ? "queued" : isInProgress ? "running" : "complete"} />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">
-              {selectedIssue != null ? `selected #${selectedIssue}` : "select an issue above"}
+              {selectedIssue != null ? `selected ${selectedIssue}` : "select an issue above"}
             </span>
             <select
               value={selectedProfile}
@@ -268,12 +300,24 @@ export default function App() {
           title="review queue"
           subtitle={`${factoryRepo} · factory draft PRs — approve & merge without leaving the panel`}
           action={
-            <Button
-              onClick={refreshReviewQueue}
-              className="bg-muted text-foreground hover:opacity-80 h-7 px-2 py-1 text-xs"
-            >
-              <RefreshCw size={12} /> reload
-            </Button>
+            <div className="flex items-center gap-2">
+              <select
+                value={factoryRepo}
+                onChange={(e) => setFactoryRepo(e.target.value)}
+                className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+                aria-label="review repo"
+              >
+                {allIssues.map(({ repo }) => (
+                  <option key={repo} value={repo}>{repo}</option>
+                ))}
+              </select>
+              <Button
+                onClick={refreshReviewQueue}
+                className="bg-muted text-foreground hover:opacity-80 h-7 px-2 py-1 text-xs"
+              >
+                <RefreshCw size={12} /> reload
+              </Button>
+            </div>
           }
         />
         <div className="divide-y divide-border">
@@ -290,7 +334,7 @@ export default function App() {
               : approved ? "complete"
               : checksPending ? "running" : "queued";
             const canMerge = !pr.isDraft && approved && checksGreen;
-            const busy = reviewBusy === pr.number;
+            const busy = reviewBusy === `${factoryRepo}#${pr.number}`;
             return (
               <div key={pr.number} className="px-5 py-3">
                 <div className="flex items-center justify-between gap-3">
@@ -373,6 +417,16 @@ export default function App() {
                 className="pl-8"
               />
             </div>
+            <select
+              value={launchRepo}
+              onChange={(e) => setLaunchRepo(e.target.value)}
+              className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+              aria-label="watcher repo"
+            >
+              {allIssues.map(({ repo }) => (
+                <option key={repo} value={repo}>{repo.split("/")[1]}</option>
+              ))}
+            </select>
             <Button onClick={launch} disabled={launching || !command.trim()}>
               <Rocket size={14} /> {launching ? "dispatching" : "dispatch"}
             </Button>
@@ -382,7 +436,7 @@ export default function App() {
       </Card>
 
       <Card>
-        <CardHeader title="jobs" subtitle={`${state.jobs.length} in sandbox`} />
+        <CardHeader title="jobs" subtitle={`${state.jobs.length} in sandbox — factory runs + loop agents`} />
         <div className="divide-y divide-border">
           {state.jobs.length === 0 && (
             <p className="px-5 py-6 text-sm text-muted-foreground">
@@ -390,10 +444,14 @@ export default function App() {
             </p>
           )}
           {state.jobs.map((j) => (
-            <div key={j.name} className="flex items-center justify-between px-5 py-3">
+            <div key={j.name} className="flex items-center justify-between gap-3 px-5 py-3">
               <div className="min-w-0">
-                <p className="truncate font-mono text-sm">{j.name}</p>
-                {j.issue && <p className="text-xs text-muted-foreground">issue #{j.issue}</p>}
+                <p className="truncate font-mono text-xs text-muted-foreground">{j.name}</p>
+                <p className="text-sm">
+                  <span className="mr-2 rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{j.kind}</span>
+                  {j.repo && <span className="mr-1 font-mono text-xs">{j.repo}</span>}
+                  {j.issue && <span className="text-xs">issue #{j.issue}</span>}
+                </p>
               </div>
               <div className="flex shrink-0 items-center gap-3">
                 <span className="text-xs text-muted-foreground">{j.age}</span>
