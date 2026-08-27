@@ -53,6 +53,88 @@ test("viewJob derives status and issue", async () => {
   assert.equal(failed.status, "failed");
 });
 
+test("GET /api/factory/prs lists open factory PRs with CI + review status", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const stage = mkdtempSync(join(tmpdir(), "panel-prs-"));
+  mkdirSync(join(stage, "web", "dist"), { recursive: true });
+  for (const f of ["index.js", "jobs.js", "k8s.js"]) copyFileSync(join(root, "dist", f), join(stage, f));
+  copyFileSync(join(root, "web", "dist", "index.html"), join(stage, "web", "dist", "index.html"));
+
+  // Mock GitHub API server: pull list + per-PR enrichment
+  const ghCalls = [];
+  const gh = createServer((req, res) => {
+    if (req.headers.authorization !== "Bearer test-token") {
+      res.writeHead(401).end('{"message":"unauthorized"}');
+      return;
+    }
+    ghCalls.push(req.url);
+    if (req.url.startsWith("/repos/gwkline/launchpad/pulls?")) {
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify([
+        {
+          number: 8, title: "draft one", state: "open", draft: true,
+          html_url: "https://github.com/gwkline/launchpad/pull/8",
+          head: { ref: "factory/issue-6/code-pr", sha: "abc123" },
+          labels: [{ name: "factory/draft-pr" }],
+          body: "Closes #6",
+        },
+        {
+          number: 11, title: "not a factory pr", state: "open", draft: false,
+          html_url: "https://github.com/gwkline/launchpad/pull/11",
+          head: { ref: "feat/manual-thing", sha: "def456" },
+          labels: [],
+          body: "",
+        },
+      ]));
+      return;
+    }
+    if (req.url.includes("/check-runs")) {
+      res.writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify({ total_count: 1, check_runs: [{ name: "validate", status: "completed", conclusion: "success" }] }));
+      return;
+    }
+    if (req.url.match(/\/pulls\/\d+\/reviews(\?.*)?$/)) {
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify([{ state: "APPROVED", user: { login: "gwkline" } }]));
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" }).end("{}");
+  });
+  await new Promise((r) => gh.listen(0, "127.0.0.1", r));
+  const ghPort = gh.address().port;
+
+  const port = 3941;
+  const child = spawn(process.execPath, [join(stage, "index.js")], {
+    env: { ...process.env, PORT: String(port), PANEL_ROOT: stage, PANEL_K8S_BASE: "http://127.0.0.1:1", GH_API_BASE: `http://127.0.0.1:${ghPort}`, GH_TOKEN: "test-token" },
+    stdio: "pipe",
+  });
+  child.stderr.on("data", (d) => process.stderr.write(d));
+  try {
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("server did not start")), 5000);
+      child.stdout.on("data", (d) => d.toString().includes("listening") && (clearTimeout(t), resolve()));
+    });
+
+    const badRepo = await fetch(`http://127.0.0.1:${port}/api/factory/prs?repo=evil/repo`);
+    assert.equal(badRepo.status, 400);
+
+    const r = await fetch(`http://127.0.0.1:${port}/api/factory/prs?repo=gwkline/launchpad`);
+    assert.equal(r.status, 200);
+    const j = await r.json();
+    assert.ok(Array.isArray(j.prs));
+    // only factory/* heads are included, manual PRs filtered out
+    assert.equal(j.prs.length, 1);
+    const pr = j.prs[0];
+    assert.equal(pr.number, 8);
+    assert.equal(pr.isDraft, true);
+    assert.equal(pr.headRef, "factory/issue-6/code-pr");
+    assert.equal(pr.reviewDecision, "APPROVED");
+    assert.equal(pr.checks.state, "success");
+    assert.equal(pr.linkedIssue, 6);
+  } finally {
+    child.kill();
+    gh.close();
+  }
+});
+
 test("server serves SPA and proxies k8s with locked-down manifests", async () => {
   const created = [];
   const mock = createServer((req, res) => {
