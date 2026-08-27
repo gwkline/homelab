@@ -10,11 +10,11 @@ metadata:
 spec:
   # Nightly sweep — harness-agnostic. For per-issue runs, panel POSTs
   # /api/factory/run with profile=security (or label factory/security + manual Job).
-  schedule: "0 4 * * *"
+  schedule: "15 */3 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
-  suspend: true
+  suspend: false
   jobTemplate:
     spec:
       activeDeadlineSeconds: 1800
