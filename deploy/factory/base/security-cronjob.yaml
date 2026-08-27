@@ -56,6 +56,12 @@ spec:
               volumeMounts:
                 - { name: tmp, mountPath: /tmp }
                 - { name: home, mountPath: /home/node }
+                - { name: task, mountPath: /task }
+                - { name: work, mountPath: /work }
+                - { name: out, mountPath: /out }
           volumes:
             - { name: tmp, emptyDir: {} }
             - { name: home, emptyDir: {} }
+            - { name: task, emptyDir: {} }
+            - { name: work, emptyDir: {} }
+            - { name: out, emptyDir: {} }
