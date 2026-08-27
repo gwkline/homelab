@@ -39,7 +39,7 @@ printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
   NUM="$(printf '%s' "$PR" | jq -r '.number')"
   DRAFT="$(printf '%s' "$PR" | jq -r '.draft')"
   HEAD_REF="$(printf '%s' "$PR" | jq -r '.head.ref')"
-  LABELS="$(printf '%s' "$PR" | jq -r '[.labels[].name] | join(",")')"
+  LABELS="$(printf '%s' "$PR" | jq -r '[(.labels // [])[].name] | join(",")')"
   LINKED_ISSUE=""
   case "$HEAD_REF" in
     factory/issue-*/*) LINKED_ISSUE="$(printf '%s' "$HEAD_REF" | sed 's|^factory/issue-\([0-9]*\)/.*|\1|')" ;;
