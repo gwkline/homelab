@@ -71,6 +71,42 @@ echo "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
 
   echo "[reviewer] issue #${LINKED_ISSUE:-?} → PR #${NUM} (${HEAD_REF}) draft=${DRAFT} ci=${CI} review=${DECISION} labels=[${LABELS}] :: ${VERDICT}"
 
+  # ── Write path (only when FACTORY_REVIEWER_AUTO_MERGE=true) ─────────────
+  # Priority: merge if approved+green → flip draft ready if green → otherwise
+  # just label/nudge. Branch protection still gates the actual merge; a refusal
+  # (405/409) is surfaced in the log, never forced.
+  if [ "${AUTO_MERGE}" = "true" ] && [ "$DRY" != "true" ]; then
+    case "$CI/$DECISION/$DRAFT" in
+      green/APPROVED/false)
+        echo "[reviewer] PR #${NUM}: auto-merge (squash) — approved + green"
+        if ! gh pr merge "$NUM" -R "$REPO" --squash --delete-branch >/dev/null 2>&1; then
+          echo "[reviewer] PR #${NUM}: merge refused by GitHub (branch protection?) — left open, see comment"
+        fi
+        ;;
+      green/PENDING/true)
+        echo "[reviewer] PR #${NUM}: flipping draft → ready for review"
+        gh pr ready "$NUM" -R "$REPO" >/dev/null 2>&1 \
+          || echo "[reviewer] PR #${NUM}: could not flip ready (needs Pull requests: write)"
+        ;;
+      *)
+        : # no safe mutation — comment above already nudges
+        ;;
+    esac
+    # Label bookkeeping: needs-review when ready+green; approved when APPROVED.
+    if [ "$CI" = "green" ] && [ "$DRAFT" = "false" ] && [ "$DECISION" != "CHANGES_REQUESTED" ] \
+       && ! printf '%s' "$LABELS" | grep -q "factory/needs-review"; then
+      gh api -X POST "repos/${REPO}/issues/${NUM}/labels" -f 'labels[]=factory/needs-review' >/dev/null 2>&1 || true
+      echo "[reviewer] PR #${NUM}: labeled factory/needs-review"
+    fi
+    if [ "$CI" = "green" ] && [ "$DECISION" = "APPROVED" ] \
+       && ! printf '%s' "$LABELS" | grep -q "factory/approved"; then
+      gh api -X POST "repos/${REPO}/issues/${NUM}/labels" -f 'labels[]=factory/approved' >/dev/null 2>&1 || true
+      echo "[reviewer] PR #${NUM}: labeled factory/approved"
+    fi
+  elif [ "${AUTO_MERGE}" = "true" ] && [ "$DRY" = "true" ]; then
+    echo "[reviewer] PR #${NUM}: auto-merge flag on but dry-run — would evaluate write actions"
+  fi
+
   # ── Idempotent status comment (one per PR, marker-edited in place) ──────
   if [ "$DRY" != "true" ]; then
     MARKER="<!-- factory:review:${NUM} -->"
@@ -100,9 +136,5 @@ _Updated by factory-reviewer (auto-managed comment; do not edit)._"
     echo "[reviewer] PR #${NUM}: dry-run — no comment written"
   fi
 done
-
-if [ "${AUTO_MERGE}" = "true" ]; then
-  echo "[reviewer] auto-merge requested but write path not enabled in this build (Phase 2)"
-fi
 
 echo "[reviewer] done"
