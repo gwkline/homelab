@@ -135,6 +135,97 @@ test("GET /api/factory/prs lists open factory PRs with CI + review status", asyn
   }
 });
 
+test("POST /api/factory/review + /merge guard and forward (write path)", async () => {
+  const stage = mkdtempSync(join(tmpdir(), "panel-rev-"));
+  mkdirSync(join(stage, "web", "dist"), { recursive: true });
+  for (const f of ["index.js", "jobs.js", "k8s.js"]) copyFileSync(join(root, "dist", f), join(stage, f));
+  copyFileSync(join(root, "web", "dist", "index.html"), join(stage, "web", "dist", "index.html"));
+
+  const ghCalls = [];
+  const gh = createServer((req, res) => {
+    if (req.headers.authorization !== "Bearer test-token") {
+      res.writeHead(401).end('{"message":"unauthorized"}');
+      return;
+    }
+    let chunks = "";
+    req.on("data", (c) => (chunks += c));
+    req.on("end", () => {
+      ghCalls.push({ method: req.method, url: req.url, body: chunks ? JSON.parse(chunks) : null });
+      const prMeta = {
+        number: 8, title: "draft one", state: "open", draft: false,
+        html_url: "https://github.com/gwkline/launchpad/pull/8",
+        head: { ref: "factory/issue-6/code-pr", sha: "abc123" },
+        labels: [], body: "Closes #6",
+      };
+      if (req.url.startsWith("/repos/evil")) { res.writeHead(404).end('{"message":"Not Found"}'); return; }
+      if (req.url.includes("/check-runs")) {
+        res.writeHead(200, { "content-type": "application/json" })
+          .end(JSON.stringify({ total_count: 1, check_runs: [{ name: "validate", status: "completed", conclusion: "success" }] }));
+        return;
+      }
+      if (req.url.match(/\/pulls\/\d+\/reviews(\?.*)?$/) && req.method === "GET") {
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify([{ state: "APPROVED", user: { login: "gwkline" } }]));
+        return;
+      }
+      if (req.url.match(/\/pulls\/8$/) && req.method === "GET") {
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(prMeta));
+        return;
+      }
+      if (req.url.endsWith("/merge") && req.method === "PUT") {
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ merged: true, sha: "deadbeef" }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: 424242 }));
+    });
+  });
+  await new Promise((r) => gh.listen(0, "127.0.0.1", r));
+  const ghPort = gh.address().port;
+
+  const port = 3951;
+  const child = spawn(process.execPath, [join(stage, "index.js")], {
+    env: { ...process.env, PORT: String(port), PANEL_ROOT: stage, PANEL_K8S_BASE: "http://127.0.0.1:1", GH_API_BASE: `http://127.0.0.1:${ghPort}`, GH_TOKEN: "test-token" },
+    stdio: "pipe",
+  });
+  child.stderr.on("data", (d) => process.stderr.write(d));
+  try {
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("server did not start")), 5000);
+      child.stdout.on("data", (d) => d.toString().includes("listening") && (clearTimeout(t), resolve()));
+    });
+    const base = `http://127.0.0.1:${port}`;
+
+    // validation guards
+    assert.equal((await fetch(`${base}/api/factory/review`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repo: "evil/r", pr: 8, event: "APPROVE" }) })).status, 400);
+    assert.equal((await fetch(`${base}/api/factory/review`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repo: "gwkline/launchpad", pr: -1, event: "APPROVE" }) })).status, 400);
+    assert.equal((await fetch(`${base}/api/factory/review`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repo: "gwkline/launchpad", pr: 8, event: "HACK" }) })).status, 400);
+
+    // happy path review
+    const rv = await fetch(`${base}/api/factory/review`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repo: "gwkline/launchpad", pr: 8, event: "APPROVE", body: "LGTM via panel" }) });
+    assert.equal(rv.status, 200);
+    const posted = ghCalls.find((c) => c.method === "POST" && c.url === "/repos/gwkline/launchpad/pulls/8/reviews");
+    assert.ok(posted, "review POST forwarded to GitHub");
+    assert.equal(posted.body.event, "APPROVE");
+    assert.equal(posted.body.body, "LGTM via panel");
+
+    // merge guard: non-factory head must be rejected
+    ghCalls.length = 0;
+    const badHead = await fetch(`${base}/api/factory/merge`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repo: "gwkline/launchpad", pr: 999, strategy: "squash" }) });
+    assert.equal(badHead.status, 409);
+
+    // happy path merge
+    const mg = await fetch(`${base}/api/factory/merge`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repo: "gwkline/launchpad", pr: 8, strategy: "squash" }) });
+    assert.equal(mg.status, 200);
+    const merged = await mg.json();
+    assert.equal(merged.merged, true);
+    const putMerge = ghCalls.find((c) => c.method === "PUT" && c.url === "/repos/gwkline/launchpad/pulls/8/merge");
+    assert.ok(putMerge, "merge PUT forwarded to GitHub");
+    assert.equal(putMerge.body.merge_method, "squash");
+  } finally {
+    child.kill();
+    gh.close();
+  }
+});
+
 test("server serves SPA and proxies k8s with locked-down manifests", async () => {
   const created = [];
   const mock = createServer((req, res) => {

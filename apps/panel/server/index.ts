@@ -147,6 +147,101 @@ app.get("/api/factory/prs", async (c) => {
   }
 });
 
+const FACTORY_REVIEW_EVENTS = new Set(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
+const FACTORY_MERGE_STRATEGIES = new Set(["squash", "merge", "rebase"]);
+
+function parseNum(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 1 && n <= 1_000_000 ? n : null;
+}
+
+app.post("/api/factory/review", async (c) => {
+  let body: { repo?: string; pr?: number | string; event?: string; body?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const repo = (body.repo ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) return c.json({ error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` }, 400);
+  const pr = parseNum(body.pr);
+  if (pr == null) return c.json({ error: "pr must be a positive integer" }, 400);
+  const event = String(body.event ?? "").trim();
+  if (!FACTORY_REVIEW_EVENTS.has(event)) return c.json({ error: `event must be one of ${[...FACTORY_REVIEW_EVENTS].join(", ")}` }, 400);
+  const reviewBody = typeof body.body === "string" && body.body.trim() ? body.body.trim().slice(0, 4000) : undefined;
+  try {
+    const review = await ghFetch(`/repos/${repo}/pulls/${pr}/reviews`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(reviewBody ? { event, body: reviewBody } : { event }),
+    });
+    const r = review as any;
+    return c.json({ id: r?.id ?? null, state: r?.state ?? null, pr, repo, event });
+  } catch (err: any) {
+    return c.json({ error: err.message }, err.status === 404 || err.status === 422 ? 404 : 502);
+  }
+});
+
+app.post("/api/factory/merge", async (c) => {
+  let body: { repo?: string; pr?: number | string; strategy?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const repo = (body.repo ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) return c.json({ error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` }, 400);
+  const pr = parseNum(body.pr);
+  if (pr == null) return c.json({ error: "pr must be a positive integer" }, 400);
+  const strategy = FACTORY_MERGE_STRATEGIES.has(body.strategy ?? "") ? body.strategy! : "squash";
+
+  // Guard: only merge factory-generated PRs with green checks + approval.
+  let meta: any;
+  try {
+    meta = await ghFetch(`/repos/${repo}/pulls/${pr}`);
+  } catch (err: any) {
+    return c.json({ error: err.message }, err.status === 404 ? 404 : 502);
+  }
+  if (!FACTORY_PR_HEAD_RE.test(meta.head?.ref ?? "")) {
+    return c.json({ error: `PR #${pr} head '${meta.head?.ref}' is not a factory branch — refusing to merge` }, 409);
+  }
+  if (meta.draft === true) {
+    return c.json({ error: `PR #${pr} is still a draft` }, 409);
+  }
+  if ((meta.mergeable_state ?? "").includes("blocked") && !(meta.mergeable === true)) {
+    // fallthrough: attempt anyway only when mergeable is explicitly true
+    return c.json({ error: `PR #${pr} is blocked (branch protection or failing checks)` }, 409);
+  }
+  try {
+    const cr = (await ghFetch(`/repos/${repo}/commits/${meta.head.sha}/check-runs?per_page=100`)) as any;
+    if (checksSummary(cr.check_runs ?? []).state !== "success") {
+      return c.json({ error: `PR #${pr} checks are not green — refusing to merge` }, 409);
+    }
+    const reviews = (await ghFetch(`/repos/${repo}/pulls/${pr}/reviews?per_page=100`)) as any[];
+    const approved = (reviews ?? []).some((r) => r.state === "APPROVED");
+    if (!approved) {
+      return c.json({ error: `PR #${pr} has no approving review — approve it first` }, 409);
+    }
+  } catch (err: any) {
+    return c.json({ error: `guard check failed: ${err.message}` }, 502);
+  }
+
+  try {
+    const res = await ghFetch(`/repos/${repo}/pulls/${pr}/merge`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        merge_method: strategy,
+        commit_title: `feat(factory): ${meta.title} (#${pr})`.slice(0, 200),
+      }),
+    });
+    const m = res as any;
+    return c.json({ merged: m?.merged === true, sha: m?.sha ?? null, pr, repo, strategy });
+  } catch (err: any) {
+    return c.json({ error: err.message }, err.status === 405 || err.status === 409 ? 409 : 502);
+  }
+});
+
 app.post("/api/factory/run", async (c) => {
   let body: { issue?: number | string; repo?: string; profile?: string };
   try {
