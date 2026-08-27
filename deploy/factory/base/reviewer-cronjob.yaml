@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: factory-reviewer
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+    factory.gwkline.io/component: reviewer
+spec:
+  # Approval-loop poller: observes draft PRs, nudges, reports review queue state.
+  # Phase 1 = read-only (+ idempotent status comments). Auto-promote is behind
+  # FACTORY_REVIEWER_AUTO_MERGE and stays OFF until explicitly enabled.
+  schedule: "0 */12 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  suspend: true
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 900
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            factory.gwkline.io/profile: reviewer
+        spec:
+          restartPolicy: Never
+          serviceAccountName: factory-reviewer
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: reviewer
+              image: ghcr.io/gwkline/homelab/factory/reviewer:latest
+              imagePullPolicy: Always
+              env:
+                - name: FACTORY_REPO
+                  value: gwkline/launchpad
+                - name: GH_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: github-token, key: token, optional: false }
+                # Write path (Task 8) — default OFF.
+                - name: FACTORY_REVIEWER_AUTO_MERGE
+                  value: "false"
+              resources:
+                requests: { cpu: 100m, memory: 128Mi }
+                limits:   { cpu: 500m, memory: 512Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+                readOnlyRootFilesystem: true
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - { name: tmp, emptyDir: {} }
