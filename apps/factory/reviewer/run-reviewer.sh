@@ -125,8 +125,8 @@ printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
 
 _Updated by factory-reviewer (auto-managed comment; do not edit)._"
 
-    EXISTING_ID="$(gh api --paginate "repos/${REPO}/issues/${NUM}/comments" 2>/dev/null |
-      jq -r --arg m "factory:review:${NUM}" '[.[] | select(.body | contains($m))][0].id // empty')" || EXISTING_ID=""
+    EXISTING_ID="$(gh api --paginate --slurp "repos/${REPO}/issues/${NUM}/comments" 2>/dev/null |
+      jq -r --arg m "factory:review:${NUM}" '[.[][] | select(.body | contains($m))][0].id // empty')" || EXISTING_ID=""
     if [ -n "$EXISTING_ID" ]; then
       gh api -X PATCH "repos/${REPO}/issues/comments/${EXISTING_ID}" -f body="$BODY" >/dev/null
       echo "[reviewer] PR #${NUM}: updated review comment ${EXISTING_ID}"
