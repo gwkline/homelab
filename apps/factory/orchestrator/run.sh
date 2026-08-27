@@ -21,7 +21,8 @@ LABEL_QUEUED="factory/queued"
 LABEL_WIP="factory/in-progress"
 LABEL_DONE="factory/draft-pr"
 LABEL_FAILED="factory/failed"
-PROFILE="code-pr"
+PROFILE="${FACTORY_PROFILE:-${PROFILE:-code-pr}}"
+# harness-agnostic: code-pr uses opencode/LLM, security uses local scanners (no OPENCODE_AUTH_B64 needed)
 WORKDIR="${HOME}/runs"
 
 gh auth status >/dev/null 2>&1 || { echo "[orch] no gh auth" >&2; exit 1; }
@@ -121,6 +122,20 @@ print(json.dumps({
 PYEOF
   BRIEF_B64=$(base64 -w0 /tmp/brief.json)
 
+  # Resolve profile-aware image/SA/resources (harness-agnostic).
+  case "${PROFILE}" in
+    security)
+      WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/security:latest"
+      WORKER_SA="factory-security"
+      WORKER_CPU="500m"; WORKER_MEM="4Gi"
+      ;;
+    code-pr|*)
+      WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/worker:latest"
+      WORKER_SA="factory-worker"
+      WORKER_CPU="500m"; WORKER_MEM="12Gi"
+      ;;
+  esac
+
   # Single-shot creation via generated manifest (kubectl create job has no
   # --env/--labels flags; a here-doc manifest needs no patch verbs).
   kubectl apply -f - << EOF2
@@ -138,32 +153,34 @@ spec:
   template:
     metadata:
       labels:
-        factory.gwkline.io/profile: code-pr
+        factory.gwkline.io/profile: ${PROFILE}
     spec:
       restartPolicy: Never
-      serviceAccountName: factory-worker
+      serviceAccountName: ${WORKER_SA}
       automountServiceAccountToken: false
       containers:
         - name: worker
-          image: ghcr.io/gwkline/homelab/factory/worker:latest
+          image: ${WORKER_IMAGE}
           imagePullPolicy: Always
           env:
             - { name: FACTORY_REPO,  value: "${REPO}" }
             - { name: FACTORY_ISSUE, value: "${NUM}" }
-            # Worker-side expansion: heredoc injects ${GH_TOKEN} value here
+            - { name: FACTORY_PROFILE, value: "${PROFILE}" }
+            # Worker-side expansion: heredoc injects $(GH_TOKEN) value here
             # above; orchestrator never touches the secret material.
             - name: GH_TOKEN
               valueFrom:
                 secretKeyRef: { name: github-token, key: token }
-            - { name: CLONE_URL,     value: "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" }
+            - { name: CLONE_URL,     value: "https://x-access-token:$(GH_TOKEN)@github.com/${REPO}.git" }
             - { name: WORKER_CMD,    value: "${WORKER_CMD:-claude --dangerously-skip-permissions}" }
             - name: OPENCODE_AUTH_B64
               value: '${OPENCODE_AUTH_B64:-}'   # shell substitutes; single-quote keeps yaml safe
             - name: FACTORY_BRIEF_B64
               value: '${BRIEF_B64}'            # shell substitutes
+            - { name: FACTORY_SECURITY_MODE, value: "per-issue" }
           resources:
-            requests: { cpu: 500m, memory: 512Mi }
-            limits:   { cpu: "4",   memory: 12Gi }
+            requests: { cpu: ${WORKER_CPU}, memory: 512Mi }
+            limits:   { cpu: "2",   memory: ${WORKER_MEM} }
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }

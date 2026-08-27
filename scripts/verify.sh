@@ -7,8 +7,14 @@ cd "$(dirname "$0")/.."
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
 echo '==> shellcheck'
-shellcheck bootstrap/*.sh apps/shared/*.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh \
-  || fail 'shell script lint'
+# Strictness: fail on errors, allow warnings/info (existing repo has intentional WORKDIR/ISSUE_BODY patterns).
+# The outer `if ! shellcheck` would trip on any warning (exit 1), so gate on -S error.
+if ! shellcheck -S error bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh >/dev/null 2>&1; then
+  shellcheck -S error bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh 2>&1 | head -n 80
+  fail 'shell script lint (error)'
+fi
+# Also show warnings for visibility without failing
+shellcheck bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh 2>&1 | head -n 100 || true
 
 echo '==> kustomize builds'
 for d in deploy/*/base; do

@@ -1,0 +1,57 @@
+# Factory security profile — harness-agnostic (not opencode-locked).
+# Sibling to code-pr; same ledger, different job spec.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: factory-profile-security
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+    factory.gwkline.io/profile: security
+data:
+  profile.json: |
+    {
+      "name": "security",
+      "version": 1,
+      "image": "ghcr.io/gwkline/homelab/factory/security:latest",
+      "serviceAccount": "factory-security",
+      "activeDeadlineSeconds": 1800,
+      "backoffLimit": 1,
+      "ttlSecondsAfterFinished": 3600,
+      "resources": { "requests": {"cpu": "500m", "memory": "1Gi"},
+                     "limits":   {  "cpu": "2",     "memory": "4Gi"} },
+      "envAllowlist": ["FACTORY_SECURITY_MODE"],
+      "netpolName": "allow-factory-security"
+    }
+---
+# Security worker: same egress as code-pr (github + ghcr only), no model API.
+# Extend with trivy DB if needed via separate CIDR; keep deny-by-default ingress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-factory-security
+  namespace: sandbox
+spec:
+  podSelector:
+    matchLabels:
+      factory.gwkline.io/profile: security
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - ipBlock: { cidr: 140.82.112.0/20 }
+        - ipBlock: { cidr: 185.199.108.0/22 }
+        - ipBlock: { cidr: 185.199.108.0/22 }
+    - to:
+        - ipBlock: { cidr: 104.16.0.0/12 }
+        - ipBlock: { cidr: 18.214.0.0/16 }
+        - ipBlock: { cidr: 108.138.128.0/17 }
+    - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+# Least-privilege SA — same as code-pr: no k8s API.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: factory-security
+  namespace: sandbox
+automountServiceAccountToken: false

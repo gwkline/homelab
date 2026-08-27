@@ -36,6 +36,7 @@ export default function App() {
   const [factoryIssues, setFactoryIssues] = useState<FactoryIssue[]>([]);
   const [factoryRepo] = useState("gwkline/launchpad");
   const [selectedIssue, setSelectedIssue] = useState<number | null>(null);
+  const [selectedProfile, setSelectedProfile] = useState("code-pr");
   const [factoryRunning, setFactoryRunning] = useState(false);
   const [factoryMsg, setFactoryMsg] = useState<string | null>(null);
 
@@ -97,11 +98,11 @@ export default function App() {
       const res = await fetch("/api/factory/run", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ issue: selectedIssue, repo: factoryRepo }),
+        body: JSON.stringify({ issue: selectedIssue, repo: factoryRepo, profile: selectedProfile }),
       });
       const body = await res.json();
       if (res.ok) {
-        setFactoryMsg(`queued #${body.issue} → ${body.jobName ?? "scheduled (next tick)"} — watching…`);
+        setFactoryMsg(`queued #${body.issue} [${body.profile ?? selectedProfile}] → ${body.jobName ?? "scheduled (next tick)"} — watching…`);
         setSelectedIssue(null);
         refresh();
         refreshFactoryIssues();
@@ -169,9 +170,18 @@ export default function App() {
             <span className="text-xs text-muted-foreground">
               {selectedIssue != null ? `selected #${selectedIssue}` : "select an issue above"}
             </span>
+            <select
+              value={selectedProfile}
+              onChange={(e) => setSelectedProfile(e.target.value)}
+              className="ml-2 rounded-md border border-border bg-background px-2 py-1 text-xs"
+              aria-label="profile"
+            >
+              <option value="code-pr">code-pr</option>
+              <option value="security">security</option>
+            </select>
             <div className="ml-auto" />
             <Button onClick={runFactory} disabled={factoryRunning || selectedIssue == null}>
-              <Factory size={14} /> {factoryRunning ? "queuing…" : "run factory"}
+              <Factory size={14} /> {factoryRunning ? "queuing…" : `run ${selectedProfile}`}
             </Button>
           </div>
           {factoryMsg && <p className="text-xs text-muted-foreground">{factoryMsg}</p>}
