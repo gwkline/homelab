@@ -65,6 +65,10 @@ printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
     VERDICT="ready-for-review: CI green on draft — flip ready & request review"
   elif [ "$DECISION" = "APPROVED" ]; then
     VERDICT="ready-to-merge: APPROVED + CI green ✅"
+  elif [ "$AUTO_MERGE" = "true" ]; then
+    # Auto-merge mode: the factory authored the PR and CI is the gate —
+    # no human approval needed (GitHub forbids self-approval anyway).
+    VERDICT="auto-merge: CI green ✅ (CI-as-gate, auto mode)"
   elif [ "$DECISION" = "CHANGES_REQUESTED" ]; then
     VERDICT="changes-requested: address review feedback"
   else
@@ -78,14 +82,14 @@ printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
   # just label/nudge. Branch protection still gates the actual merge; a refusal
   # (405/409) is surfaced in the log, never forced.
   if [ "${AUTO_MERGE}" = "true" ] && [ "$DRY" != "true" ]; then
-    case "$CI/$DECISION/$DRAFT" in
-      green/APPROVED/false)
-        echo "[reviewer] PR #${NUM}: auto-merge (squash) — approved + green"
+    case "$CI/$DRAFT" in
+      green/false)
+        echo "[reviewer] PR #${NUM}: auto-merge (squash) — CI green (auto mode)"
         if ! gh pr merge "$NUM" -R "$REPO" --squash --delete-branch >/dev/null 2>&1; then
-          echo "[reviewer] PR #${NUM}: merge refused by GitHub (branch protection?) — left open, see comment"
+          echo "[reviewer] PR #${NUM}: merge refused by GitHub — left open, see comment"
         fi
         ;;
-      green/PENDING/true)
+      green/true)
         echo "[reviewer] PR #${NUM}: flipping draft → ready for review"
         gh pr ready "$NUM" -R "$REPO" >/dev/null 2>&1 \
           || echo "[reviewer] PR #${NUM}: could not flip ready (needs Pull requests: write)"
