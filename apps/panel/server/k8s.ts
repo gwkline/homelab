@@ -38,7 +38,7 @@ export function loadConfig(env = process.env): K8sConfig {
   };
 }
 
-function k8sFetch<T>(cfg: K8sConfig, method: string, path: string, body?: unknown): Promise<T> {
+function k8sFetch<T>(cfg: K8sConfig, method: string, path: string, body?: unknown, contentType?: string): Promise<T> {
   const url = new URL(`${cfg.base}${path}`);
   const isHttps = url.protocol === "https:";
   const reqFn = isHttps ? httpsRequest : httpRequest;
@@ -46,7 +46,7 @@ function k8sFetch<T>(cfg: K8sConfig, method: string, path: string, body?: unknow
     method,
     headers: {
       authorization: `Bearer ${cfg.token}`,
-      "content-type": "application/json",
+      "content-type": contentType ?? "application/json",
       accept: "application/json",
     },
   };
@@ -90,6 +90,16 @@ export const api = (cfg: K8sConfig) => ({
     k8sFetch(cfg, "GET", `/apis/batch/v1/namespaces/${NS}/cronjobs/${encodeURIComponent(name)}`),
   createJob: (manifest: unknown) =>
     k8sFetch(cfg, "POST", `/apis/batch/v1/namespaces/${NS}/jobs`, manifest),
+  patchCronJob: (name: string, patch: unknown) =>
+    k8sFetch(cfg, "PATCH", `/apis/batch/v1/namespaces/${NS}/cronjobs/${encodeURIComponent(name)}`, patch, "application/merge-patch+json"),
+  listNodes: (): Promise<{ items?: any[] }> =>
+    k8sFetch(cfg, "GET", `/api/v1/nodes`),
+  listNamespaces: (): Promise<{ items?: any[] }> =>
+    k8sFetch(cfg, "GET", `/api/v1/namespaces`),
+  listPodsAll: (): Promise<{ items?: any[] }> =>
+    k8sFetch(cfg, "GET", `/api/v1/pods`),
+  deleteJob: (name: string): Promise<unknown> =>
+    k8sFetch(cfg, "DELETE", `/apis/batch/v1/namespaces/${NS}/jobs/${encodeURIComponent(name)}`),
 });
 
 export type K8sApi = ReturnType<typeof api>;

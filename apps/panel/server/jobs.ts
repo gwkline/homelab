@@ -90,6 +90,7 @@ export interface JobView {
   age: string;
   repo: string | null;
   kind: string;
+  created: string | null;
 }
 
 export function viewJob(j: any): JobView {
@@ -113,5 +114,5 @@ export function viewJob(j: any): JobView {
     : seconds < 5400 ? `${Math.round(seconds / 60)}m`
     : seconds < 172800 ? `${Math.round(seconds / 3600)}h`
     : `${Math.round(seconds / 86400)}d`;
-  return { name: j.metadata.name, status, issue, age, repo, kind };
+  return { name: j.metadata.name, status, issue, age, repo, kind, created: j.metadata.creationTimestamp ?? null };
 }

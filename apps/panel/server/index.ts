@@ -71,15 +71,80 @@ async function ghFetch(path: string, init: RequestInit = {}) {
 app.get("/api/state", async (c) => {
   try {
     const [jobs, cronjobs] = await Promise.all([k8s.listJobs(), k8s.listCronJobs()]);
+    const now = Date.now();
+    const jobsOut = (jobs.items ?? [])
+      .map(viewJob)
+      .sort((a, b) => new Date(b.created ?? 0).getTime() - new Date(a.created ?? 0).getTime());
     return c.json({
-      jobs: (jobs.items ?? []).map(viewJob).sort((a, b) => b.age.localeCompare(a.age)),
+      jobs: jobsOut,
       cronjobs: (cronjobs.items ?? []).map((cj: any) => ({
         name: cj.metadata.name,
         schedule: cj.spec.schedule,
         suspended: cj.spec.suspend === true,
         lastScheduled: cj.status?.lastScheduleTime ?? null,
+        active: cj.status?.active ?? 0,
       })),
+      now: now,
     });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 502);
+  }
+});
+
+// Cluster view: nodes, per-namespace pod counts, metrics.
+app.get("/api/cluster", async (c) => {
+  try {
+    const [nodes, pods] = await Promise.all([k8s.listNodes(), k8s.listPodsAll()]);
+    const podsByNode: Record<string, number> = {};
+    const podsByNs: Record<string, number> = {};
+    for (const p of pods.items ?? []) {
+      const nodeName = p.spec?.nodeName ?? "?";
+      const ns = p.metadata?.namespace ?? "?";
+      podsByNode[nodeName] = (podsByNode[nodeName] ?? 0) + 1;
+      podsByNs[ns] = (podsByNs[ns] ?? 0) + 1;
+    }
+    const nodesOut = (nodes.items ?? []).map((n: any) => {
+      const addrs: any[] = n.status?.addresses ?? [];
+      const internal = addrs.find((a) => a.type === "InternalIP")?.address ?? null;
+      const conds: any[] = n.status?.conditions ?? [];
+      const ready = conds.find((x) => x.type === "Ready")?.status === "True";
+      const mem = n.status?.capacity?.memory ?? null;
+      const cpu = n.status?.capacity?.cpu ?? null;
+      return {
+        name: n.metadata?.name,
+        status: ready ? "Ready" : "NotReady",
+        version: n.status?.nodeInfo?.kubeletVersion ?? null,
+        os: n.status?.nodeInfo?.osImage ?? null,
+        arch: n.status?.nodeInfo?.architecture ?? null,
+        internalIP: internal,
+        roles: Object.keys(n.metadata?.labels ?? {})
+          .filter((l) => l.startsWith("node-role.kubernetes.io/"))
+          .map((l) => l.split("/")[1]),
+        pods: podsByNode[n.metadata?.name] ?? 0,
+        capacity: { cpu, memory: mem },
+        age: n.metadata?.creationTimestamp ?? null,
+      };
+    });
+    return c.json({ nodes: nodesOut, podsByNs: podsByNs, podCount: pods.items?.length ?? 0 });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 502);
+  }
+});
+
+// Per-namespace pod listing (agents + tailscale + sandbox are the interesting ones).
+app.get("/api/cluster/pods", async (c) => {
+  try {
+    const pods = await k8s.listPodsAll();
+    const out = (pods.items ?? []).map((p: any) => ({
+      name: p.metadata?.name,
+      ns: p.metadata?.namespace,
+      node: p.spec?.nodeName,
+      phase: p.status?.phase,
+      restarts: (p.status?.containerStatuses ?? []).reduce(
+        (acc: number, cs: any) => acc + (cs.restartCount ?? 0), 0),
+      started: p.metadata?.creationTimestamp ?? null,
+    }));
+    return c.json({ pods: out });
   } catch (err: any) {
     return c.json({ error: err.message }, 502);
   }
@@ -357,6 +422,42 @@ app.post("/api/factory/run", async (c) => {
   }
 
   return c.json({ queued: true, jobName, issue: issueNum, repo, profile }, 201);
+});
+
+// CronJob suspend/resume + schedule edit from the panel schedules card.
+app.patch("/api/cronjobs/:name", async (c) => {
+  const name = c.req.param("name");
+  let body: { suspended?: boolean; schedule?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const patch: any = { spec: {} };
+  if (body.suspended !== undefined) patch.spec.suspend = body.suspended === true;
+  if (body.schedule !== undefined) {
+    if (!/^[\d*/,-]+$/.test(body.schedule)) return c.json({ error: "invalid cron schedule" }, 400);
+    patch.spec.schedule = body.schedule;
+  }
+  if (!Object.keys(patch.spec).length) return c.json({ error: "nothing to patch" }, 400);
+  try {
+    await k8s.patchCronJob(name, patch);
+    return c.json({ ok: true, name });
+  } catch (err: any) {
+    return c.json({ error: err.message }, err.status === 404 ? 404 : 502);
+  }
+});
+
+// Job cleanup: delete completed/failed jobs by name.
+app.delete("/api/jobs/:name", async (c) => {
+  const name = c.req.param("name");
+  if (!/^[\w-]+$/.test(name)) return c.json({ error: "invalid job name" }, 400);
+  try {
+    await k8s.deleteJob(name);
+    return c.json({ ok: true, name });
+  } catch (err: any) {
+    return c.json({ error: err.message }, err.status === 404 ? 404 : 502);
+  }
 });
 
 app.post("/api/jobs", async (c) => {

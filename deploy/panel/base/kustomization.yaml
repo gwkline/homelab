@@ -10,5 +10,6 @@ labels:
 
 resources:
   - rbac.yaml
+  - nodes-viewer.yaml
   - deployment.yaml
   - service.yaml

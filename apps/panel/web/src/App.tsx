@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, Rocket, Hash, Factory, GitPullRequest } from "lucide-react";
+import { RefreshCw, Rocket, Hash, Factory, GitPullRequest, Play } from "lucide-react";
 import { Card, CardHeader, Badge, Button, Input } from "./components/ui";
+import { JobsTable } from "./components/JobsTable";
+import { ClusterCard } from "./components/ClusterCard";
+import { ScheduleRow } from "./components/ScheduleRow";
 
 interface Job {
   name: string;
@@ -9,12 +12,14 @@ interface Job {
   age: string;
   repo: string | null;
   kind: string;
+  created: string | null;
 }
 interface CronJob {
   name: string;
   schedule: string;
   suspended: boolean;
   lastScheduled: string | null;
+  active: number;
 }
 interface State {
   jobs: Job[];
@@ -169,9 +174,10 @@ export default function App() {
     }
   };
 
-  const runFactory = async () => {
-    if (selectedIssue == null) return;
-    const [repo, numStr] = selectedIssue.split("#");
+  const runFactory = async (issueStr?: string) => {
+    const target = issueStr ?? selectedIssue;
+    if (target == null) return;
+    const [repo, numStr] = target.split("#");
     setFactoryRunning(true);
     setFactoryMsg(null);
     try {
@@ -183,7 +189,7 @@ export default function App() {
       const body = await res.json();
       if (res.ok) {
         setFactoryMsg(`queued ${repo}#${body.issue} [${body.profile ?? selectedProfile}] → ${body.jobName ?? "scheduled (next tick)"} — watching…`);
-        setSelectedIssue(null);
+        if (!issueStr) setSelectedIssue(null);
         refresh();
         refreshFactoryIssues();
       } else {
@@ -253,18 +259,31 @@ export default function App() {
                         const isDone = fi.labels.includes("factory/draft-pr");
                         const disabled = isQueued || isInProgress || isDone;
                         return (
-                          <button
+                          <div
                             key={key}
-                            onClick={() => !disabled && setSelectedIssue(isSelected ? null : key)}
-                            disabled={disabled}
-                            className={`flex w-full items-start justify-between gap-3 px-3 py-2 text-left text-sm transition-colors ${isSelected ? "bg-primary/10" : "hover:bg-muted/50"} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                            className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors ${isSelected ? "bg-primary/10" : "hover:bg-muted/50"}`}
                           >
-                            <span className="min-w-0">
-                              <span className="font-mono font-medium">#{fi.number}</span> {fi.title}
-                              <span className="ml-2 text-xs text-muted-foreground">{fi.labels.join(", ") || "no labels"}</span>
-                            </span>
-                            {disabled && <Badge status={isQueued ? "queued" : isInProgress ? "running" : "complete"} />}
-                          </button>
+                            <button
+                              onClick={() => !disabled && setSelectedIssue(isSelected ? null : key)}
+                              disabled={disabled}
+                              className={`flex min-w-0 flex-1 items-start justify-between gap-3 text-left ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                            >
+                              <span className="min-w-0">
+                                <span className="font-mono font-medium">#{fi.number}</span> {fi.title}
+                                <span className="ml-2 text-xs text-muted-foreground">{fi.labels.join(", ") || "no labels"}</span>
+                              </span>
+                              {disabled && <Badge status={isQueued ? "queued" : isInProgress ? "running" : "complete"} />}
+                            </button>
+                            {!disabled && (
+                              <button
+                                onClick={() => runFactory(key)}
+                                title={`run code-pr on this issue now`}
+                                className="shrink-0 rounded p-1 text-muted-foreground hover:bg-success/10 hover:text-success"
+                              >
+                                <Play size={13} />
+                              </button>
+                            )}
+                          </div>
                         );
                       })}
                     </div>
@@ -435,46 +454,30 @@ export default function App() {
         </div>
       </Card>
 
+      <ClusterCard />
+
       <Card>
-        <CardHeader title="jobs" subtitle={`${state.jobs.length} in sandbox — factory runs + loop agents`} />
-        <div className="divide-y divide-border">
-          {state.jobs.length === 0 && (
-            <p className="px-5 py-6 text-sm text-muted-foreground">
-              {state.error ? `cluster unreachable: ${state.error}` : "no jobs yet"}
-            </p>
+        <CardHeader title="jobs" subtitle={`${state.jobs.length} in sandbox — sort, filter, clean up`} />
+        <div className="p-4">
+          {state.error ? (
+            <p className="text-sm text-destructive">cluster unreachable: {state.error}</p>
+          ) : (
+            <JobsTable
+              jobs={state.jobs}
+              onDelete={async (name) => {
+                await fetch(`/api/jobs/${encodeURIComponent(name)}`, { method: "DELETE" });
+                refresh();
+              }}
+            />
           )}
-          {state.jobs.map((j) => (
-            <div key={j.name} className="flex items-center justify-between gap-3 px-5 py-3">
-              <div className="min-w-0">
-                <p className="truncate font-mono text-xs text-muted-foreground">{j.name}</p>
-                <p className="text-sm">
-                  <span className="mr-2 rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{j.kind}</span>
-                  {j.repo && <span className="mr-1 font-mono text-xs">{j.repo}</span>}
-                  {j.issue && <span className="text-xs">issue #{j.issue}</span>}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-3">
-                <span className="text-xs text-muted-foreground">{j.age}</span>
-                <Badge status={j.status} />
-              </div>
-            </div>
-          ))}
         </div>
       </Card>
 
       <Card>
-        <CardHeader title="schedules" subtitle="cronjobs in sandbox" />
+        <CardHeader title="schedules" subtitle="cronjobs in sandbox — edit schedule, pause/resume" />
         <div className="divide-y divide-border">
           {state.cronjobs.map((cj) => (
-            <div key={cj.name} className="flex items-center justify-between px-5 py-3">
-              <div>
-                <p className="font-mono text-sm">{cj.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {cj.suspended ? "suspended" : `last ${cj.lastScheduled ? new Date(cj.lastScheduled).toLocaleString() : "never"}`}
-                </p>
-              </div>
-              <code className="rounded bg-muted px-2 py-1 text-xs">{cj.schedule}</code>
-            </div>
+            <ScheduleRow key={cj.name} cj={cj} onSaved={refresh} />
           ))}
         </div>
       </Card>
