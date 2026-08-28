@@ -33,7 +33,7 @@ spec:
               image: ghcr.io/gwkline/homelab/factory/orchestrator
               env:
                 - name: FACTORY_REPO
-                  value: gwkline/launchpad       # demo target per operator
+                  value: gwkline/homelab         # self-iteration target per operator
                 - name: OPENCODE_AUTH_B64
                   valueFrom:
                     secretKeyRef: { name: factory-opencode-auth, key: auth-b64 }
