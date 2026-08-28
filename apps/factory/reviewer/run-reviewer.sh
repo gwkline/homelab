@@ -26,6 +26,7 @@ classify_checks() {
     *pending*|*queued*|*in_progress*|*waiting*)                  echo pending ;;
     success)                                                    echo green ;;
     ""|none)                                                    echo green ;;
+    *,*) echo green ;;  # multiple conclusions, none red/pending => all green/skipped
     *)                                                          echo unknown ;;
   esac
 }
