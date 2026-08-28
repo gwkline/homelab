@@ -61,7 +61,7 @@ kubectl apply -k deploy/tailscale          # serve-fixer
 kubectl apply -k deploy/t3code/base
 kubectl apply -k deploy/hermes/base
 kubectl apply -k deploy/loop-agent/base
-kubectl apply -k deploy/panel/base         # admin portal (panel.tailc3cc03.ts.net)
+kubectl apply -k deploy/panel/base         # admin portal (https://panel.$TAILNET_NAME)
 
 # 3b. HTTPS for tailscale-proxied services (one-time tailnet approval already
 # granted; re-run after operator reinstall or proxy pod replacement)
@@ -72,7 +72,9 @@ kubectl exec -n tailscale "$PROXY" -- tailscale serve --bg --https=443 "http://$
 
 # 4. wait & verify
 kubectl get pods -A -w
-curl -s -o /dev/null -w "%{http_code}\n" http://t3code-0.tailc3cc03.ts.net/
+# TAILNET_NAME is the one documented tailnet config value
+# (deploy/tailscale/README.md); scripts/serve-https.sh auto-discovers it.
+curl -s -o /dev/null -w "%{http_code}\n" "http://t3code-0.${TAILNET_NAME:-<tailnet>}/"
 ```
 
 ## PR checklist (this branch)

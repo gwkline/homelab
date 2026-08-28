@@ -10,7 +10,8 @@ fail=0
 
 echo "== 1. manifest conformance (kubectl diff) =="
 for d in deploy/namespaces.yaml deploy/policies/base deploy/t3code/base \
-         deploy/hermes/base deploy/loop-agent/base deploy/tailscale; do
+         deploy/hermes/base deploy/loop-agent/base deploy/panel/base \
+         deploy/homepage/base deploy/tailscale; do
   if [ -f "$d" ] || [ -d "$d" ]; then
     if ! kubectl diff -f "$d" >/dev/null 2>&1 && ! kubectl diff -k "$d" >/dev/null 2>&1; then
       echo "  DRIFT: $d"
@@ -62,6 +63,34 @@ if [ -n "$host" ]; then
 else
   echo "  FAIL: t3code-0 LB address pending"
   fail=1
+fi
+
+echo "== 6. tailscale service annotations =="
+# Every exposed Service must declare its hostname and required tags in the
+# live cluster (mirrors the static check in scripts/verify.sh).
+while IFS=' ' read -r ns name; do
+  [ -n "$name" ] || continue
+  host=$(kubectl get svc "$name" -n "$ns" \
+    -o jsonpath='{.metadata.annotations.tailscale\.com/hostname}' 2>/dev/null)
+  tags=$(kubectl get svc "$name" -n "$ns" \
+    -o jsonpath='{.metadata.annotations.tailscale\.com/tags}' 2>/dev/null)
+  if [ -n "$host" ] && [ "$tags" = "tag:k8s-operator" ]; then
+    echo "  ok: $ns/$name ($host, $tags)"
+  else
+    echo "  FAIL: $ns/$name missing tailscale.com/hostname or tags=tag:k8s-operator (got host='$host' tags='$tags')"
+    fail=1
+  fi
+done < <(kubectl get svc -A -o jsonpath='{range .items[?(@.spec.loadBalancerClass=="tailscale")]}{.metadata.namespace} {.metadata.name}{"\n"}{end}' 2>/dev/null)
+
+echo "== 7. operator default tag (pinned workaround) =="
+# The chart (1.102.3) hardcodes PROXY_TAGS=tag:k8; the documented workaround
+# pins it to tag:k8s-operator via `kubectl set env` (deploy/tailscale/README.md).
+ptags=$(kubectl get deploy operator -n tailscale \
+  -o jsonpath='{.spec.template.spec.containers[*].env[?(@.name=="PROXY_TAGS")].value}' 2>/dev/null)
+if [ "$ptags" = "tag:k8s-operator" ]; then
+  echo "  ok: operator PROXY_TAGS=tag:k8s-operator"
+else
+  echo "  WARN: operator PROXY_TAGS='$ptags' (expected tag:k8s-operator — apply documented workaround)"
 fi
 
 echo
