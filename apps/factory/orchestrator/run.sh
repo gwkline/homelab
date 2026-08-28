@@ -202,10 +202,10 @@ EOF2
   # Poll instead of `kubectl wait`: dash + set -e silently swallowed its
   # non-zero exit in some conditions, skipping the failure path entirely.
   WAIT_OK=0
-  # 150 x 10s = 1500s: matches the worker profile's 1800s activeDeadline
-  # minus overhead. The old 90x10 = 900s wait declared long workers failed
-  # while they were still running (issue #88 attempt 2 hit exactly this).
-  for _i in $(seq 1 150); do
+  # 300 x 10s = 3000s: matches the raised worker budget (3600s activeDeadline
+  # minus overhead). The old 900s wait declared long workers failed while
+  # they were still running (issue #88 attempt 2 hit exactly this).
+  for _i in $(seq 1 300); do
     PHASE=$(kubectl get job "${JOB_NAME}" -n sandbox -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
     if [ "${PHASE}" = "True" ]; then WAIT_OK=1; break; fi
     FAILED=$(kubectl get job "${JOB_NAME}" -n sandbox -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || echo "")

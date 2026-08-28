@@ -9,12 +9,12 @@ metadata:
 spec:
   # Single-instance by construction: overlapping ticks are skipped (ADR-002).
   concurrencyPolicy: Forbid
-  schedule: "0 */6 * * *" # slow drip: 1 run per 6h (~4/day), self-maintaining with human assist as needed (#85)
+  schedule: "0 * * * *" # hourly: work the queue aggressively; concurrency Forbid + backoffLimit keep it safe
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      activeDeadlineSeconds: 2700        # must finish before next tick window
+      activeDeadlineSeconds: 3900        # 65 min: covers 3600s worker + publish overhead
       backoffLimit: 0                    # a failed tick stays failed — visible
       template:
         metadata:

@@ -17,10 +17,10 @@ data:
       "version": 1,
       "image": "ghcr.io/gwkline/homelab/factory/worker:latest",
       "serviceAccount": "factory-worker",
-      "activeDeadlineSeconds": 1800,
+      "activeDeadlineSeconds": 3600,
       "backoffLimit": 1,
       "ttlSecondsAfterFinished": 3600,
-      "resources": { "requests": {"cpu": "500m", "memory": "512Mi"},
+      "resources": { "requests": {"cpu": "1", "memory": "1Gi"},
                      "limits":   {  "cpu": "4",     "memory": "12Gi"} },
       "envAllowlist": ["WORKER_CMD", "VERIFY_COMMAND"],
       "netpolName": "allow-factory-worker"
