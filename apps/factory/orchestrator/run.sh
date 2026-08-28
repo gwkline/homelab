@@ -27,7 +27,14 @@ PROFILE="${FACTORY_PROFILE:-${PROFILE:-code-pr}}"
 # harness-agnostic: code-pr uses opencode/LLM, security uses local scanners (no OPENCODE_AUTH_B64 needed)
 WORKDIR="${HOME}/runs"
 
-gh auth status >/dev/null 2>&1 || { echo "[orch] no gh auth" >&2; exit 1; }
+# Transient DNS/netpol warm-up can fail the first auth probe (seen in
+# sandbox pods); retry a few times before giving up.
+AUTH_OK=0
+for _a in 1 2 3 4 5; do
+  if gh auth status >/dev/null 2>&1; then AUTH_OK=1; break; fi
+  sleep 3
+done
+[ "${AUTH_OK}" = "1" ] || { echo "[orch] no gh auth" >&2; exit 1; }
 
 timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
