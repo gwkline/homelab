@@ -43,8 +43,10 @@ done
 echo '==> no hard-coded personal tailnet DNS suffix'
 # Tailnet suffix must come from the single documented value (see
 # deploy/tailscale/README.md), never be committed. `<tailnet>` placeholders are fine.
+# "e.g. tail<...>.ts.net" doc examples are allowed; only real-looking suffixes
+# outside comment/placeholder contexts fail.
 if grep -rnE '[a-z0-9][a-z0-9-]*\.ts\.net' scripts/ deploy/ apps/ bootstrap/ examples/ docs/ README.md \
-    | grep -v '<tailnet>' | grep .; then
+    | grep -v '<tailnet>' | grep -viE 'e\.g\.|for example|never hard-coded' | grep .; then
   fail 'hard-coded tailnet DNS suffix committed'
 fi
 
