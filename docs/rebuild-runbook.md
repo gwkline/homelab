@@ -66,9 +66,11 @@ kubectl apply -k deploy/panel/base         # admin portal (https://panel.$TAILNE
 # 3b. HTTPS for tailscale-proxied services (one-time tailnet approval already
 # granted; re-run after operator reinstall or proxy pod replacement)
 ./scripts/serve-https.sh                   # t3code
-APP_IP=$(kubectl get pod -n agents -l app=panel -o jsonpath='{.items[0].status.podIP}')
-PROXY=$(kubectl get pods -n tailscale --no-headers | grep ts-panel | awk '{print $1}' | head -1)
-kubectl exec -n tailscale "$PROXY" -- tailscale serve --bg --https=443 "http://${APP_IP}:3000"
+# panel — or any exposed app: serve-refresh.sh <app> <namespace>.
+# Also the one-command fix whenever a replaced app pod leaves its serve
+# entry pointing at a dead IP (502s): it re-points the entry at the current
+# pod IP, idempotently, printing serve status before/after.
+./scripts/serve-refresh.sh panel agents
 
 # 4. wait & verify
 kubectl get pods -A -w
