@@ -1,9 +1,16 @@
-# Default-deny ingress in both namespaces. Egress stays open for now —
-# agents need the internet by design; revisit egress allowlists once
-# workloads are stable (documented decision, see README security section).
+# Network isolation for the two agent namespaces.
 #
-# Per-workload exposure rules live beside each workload (e.g.
-# deploy/t3code/base/netpol.yaml) so one apply brings up everything it needs.
+# INGRESS: default-deny in both namespaces. Per-workload exposure rules live
+# beside each workload (e.g. deploy/t3code/base/netpol.yaml) so one apply
+# brings up everything it needs.
+#
+# EGRESS: sandbox (throwaway loop/factory pods) is default-deny with a narrow
+# allowlist — DNS to kube-dns plus the public internet, with every private
+# range carved out (k8s API/service CIDRs, node CIDRs, RFC1918 LAN,
+# link-local metadata, tailnet CGNAT). Workloads that need private targets
+# get a named allowance beside their manifests — see docs/egress-policy.md.
+# The `agents` namespace (interactive t3code/hermes) keeps egress open:
+# hermes requires the Kubernetes API, and its identity is trusted.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -21,3 +28,60 @@ metadata:
 spec:
   podSelector: {}
   policyTypes: [Ingress]
+---
+# Egress baseline: nothing leaves any sandbox pod unless a policy allows it.
+# Selects every sandbox pod (including factory profile pods) so a future
+# profile that forgets its own netpol fails closed, not open.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: sandbox
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+---
+# Sandbox egress allowlist (#93). Applies to every pod WITHOUT a factory
+# profile label; profile pods are governed by their own stricter netpols
+# (deploy/factory/base/profile-*.yaml) and NetworkPolicy rules are additive,
+# so including them here would silently widen those classes to all-public.
+#
+# Allowed, per the documented destination list (docs/egress-policy.md):
+#   1. DNS — only to kube-dns pods, only port 53.
+#   2. Public internet (git clones, package registries, model APIs) via
+#      0.0.0.0/0 minus every private/special range. This avoids enumerating
+#      SaaS IPs that change without notice; see docs/egress-policy.md for the
+#      trade-off and the criteria for introducing an egress proxy instead.
+# Everything else — Kubernetes API (10.43.0.1), service/pod CIDRs, node IPs,
+# kubelet/panel/database, link-local metadata, tailnet, LAN — is refused.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-egress-public-only
+  namespace: sandbox
+spec:
+  podSelector:
+    matchExpressions:
+      - key: factory.gwkline.io/profile
+        operator: DoesNotExist
+  policyTypes: [Egress]
+  egress:
+    - to: # 1. DNS: kube-dns pods only (k3s coredns carries this label)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to: # 2. Public internet except private/special ranges
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8 # RFC1918 + k3s pod CIDR (10.42/16) + service CIDR (10.43/16, incl. API 10.43.0.1)
+              - 172.16.0.0/12 # RFC1918 (incl. dind docker0 bridge — inner traffic is pod-netns local, unaffected)
+              - 192.168.0.0/16 # RFC1918 — node/LAN addresses
+              - 169.254.0.0/16 # link-local (cloud metadata 169.254.169.254 et al.)
+              - 100.64.0.0/10 # CGNAT — Tailscale tailnet and future private services

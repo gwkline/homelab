@@ -10,3 +10,4 @@ labels:
 resources:
   - rbac.yaml
   - cronjob.yaml
+  - netpol.yaml
