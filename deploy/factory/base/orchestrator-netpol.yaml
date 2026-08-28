@@ -1,0 +1,24 @@
+# Named egress allowance for the orchestrator (#93). The sandbox-wide
+# egress allowlist (deploy/policies/base/networkpolicy.yaml) already grants
+# DNS + public internet to these pods; this adds the one private target they
+# legitimately need: the in-cluster Kubernetes API at the kubernetes.default
+# ClusterIP (10.43.0.1 under k3s defaults — first IP of the service CIDR).
+# Without it the orchestrator cannot spawn worker Jobs. RBAC still scopes
+# what that identity may do (create/watch Jobs + pods in sandbox only).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-orchestrator-k8s-api
+  namespace: sandbox
+spec:
+  podSelector:
+    matchLabels:
+      factory.gwkline.io/component: orchestrator
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.43.0.1/32
+      ports:
+        - protocol: TCP
+          port: 443
