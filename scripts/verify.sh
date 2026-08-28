@@ -21,6 +21,120 @@ for d in deploy/*/base; do
   kubectl kustomize "$d" >/dev/null || fail "kustomize build: $d"
 done
 
+echo '==> factory CronJob schedule collision lint'
+# All factory CronJobs firing on the same minute-of-hour pattern hit the GitHub
+# API simultaneously (rate-limit noise, races — issue #105). Extract
+# spec.schedule from every CronJob in deploy/factory/base/*.yaml and fail when
+# two jobs expand to the same minute/hour pattern. The current stagger
+# (orchestrator "0 */6", reviewer "0 */3", security "15 */3") stays distinct.
+trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s\n' "$s"
+}
+# Expand one cron field ('*', '*/n', 'a', 'a/n', 'a-b', 'a-b/n') into a sorted
+# space-separated integer set. Returns 1 on anything unparseable.
+expand_cron_field() {
+  local field="$1" lo="$2" hi="$3" part range step start end n
+  local -a parts=() out=()
+  IFS=',' read -ra parts <<< "$field"
+  for part in "${parts[@]}"; do
+    step=1
+    range="$part"
+    if [[ "$part" == */* ]]; then
+      range="${part%%/*}"
+      step="${part#*/}"
+      if [[ ! "$step" =~ ^[0-9]+$ ]] || (( 10#$step == 0 )); then return 1; fi
+      step=$((10#$step))
+    fi
+    if [[ "$range" == '*' ]]; then
+      start="$lo"
+      end="$hi"
+    elif [[ "$range" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+      start=$((10#${BASH_REMATCH[1]}))
+      end=$((10#${BASH_REMATCH[2]}))
+    elif [[ "$range" =~ ^[0-9]+$ ]]; then
+      start=$((10#$range))
+      if [[ "$part" == */* ]]; then end="$hi"; else end="$start"; fi
+    else
+      return 1
+    fi
+    if (( start < lo || end > hi || start > end )); then return 1; fi
+    for (( n = start; n <= end; n += step )); do
+      out+=("$n")
+    done
+  done
+  ((${#out[@]})) || return 1
+  printf '%s\n' "${out[@]}" | sort -nu | tr '\n' ' '
+}
+# Fail when two CronJobs under $1 declare spec.schedule values that expand to
+# the same minute/hour pattern (they would fire at exactly the same times).
+check_cronjob_schedule_collisions() {
+  local dir="$1" file line val kind doc_name sched mset hset key m h dom mon dow extra
+  local -A key_owner=()
+  for file in "$dir"/*.yaml; do
+    [[ -f "$file" ]] || continue
+    kind=''
+    doc_name=''
+    sched=''
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in
+        '---'*)
+          kind='' doc_name='' sched=''
+          continue
+          ;;
+        kind:*)
+          if [[ "$line" =~ ^kind:[[:space:]]*CronJob[[:space:]]*$ ]]; then
+            kind='CronJob'
+          fi
+          continue
+          ;;
+      esac
+      [[ "$kind" == 'CronJob' ]] || continue
+      case "$line" in
+        '  name:'*)
+          if [[ -z "$doc_name" ]]; then
+            doc_name="$(trim "${line#*:}")"
+          fi
+          ;;
+        '  schedule:'*)
+          if [[ -z "$sched" ]]; then
+            sched='seen'
+            val="$(trim "${line#*:}")"
+            case "$val" in
+              '"'*) val="${val#\"}" ; val="${val%%\"*}" ;;
+              "'"*) val="${val#\'}" ; val="${val%%\'*}" ;;
+              *'#'*) val="${val%%#*}" ; val="$(trim "$val")" ;;
+            esac
+            [[ -n "$val" ]] || continue
+            read -r m h dom mon dow extra <<< "$val"
+            key="RAW:${val}"
+            if [[ -z "$extra" && -n "${m:-}" && -n "${h:-}" ]] \
+               && mset="$(expand_cron_field "$m" 0 59)" \
+               && hset="$(expand_cron_field "$h" 0 23)"; then
+              key="M[${mset}]H[${hset}]${dom}|${mon}|${dow}"
+            fi
+            if [[ -n "${key_owner[$key]:-}" ]]; then
+              {
+                echo "  CronJob schedule collision — identical minute/hour pattern: ${key}"
+                echo "    first:  ${key_owner[$key]}"
+                echo "    second: ${file}: ${doc_name:-<unnamed>} (schedule: \"${val}\")"
+              } >&2
+              return 1
+            fi
+            key_owner["$key"]="${file}: ${doc_name:-<unnamed>} (schedule: \"${val}\")"
+          fi
+          ;;
+      esac
+    done < "$file"
+  done
+  return 0
+}
+if ! check_cronjob_schedule_collisions deploy/factory/base; then
+  fail 'factory CronJob schedule collision (deploy/factory/base)'
+fi
+
 echo '==> tailscale Services declare hostname + required tags'
 # Every LoadBalancer Service with loadBalancerClass: tailscale must declare
 # tailscale.com/hostname and tailscale.com/tags=tag:k8s-operator (issue #92).
