@@ -25,7 +25,7 @@ spec:
           image: ghcr.io/gwkline/homelab/panel
           env:
             - name: FACTORY_REPO
-              value: gwkline/launchpad
+              value: gwkline/homelab
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
