@@ -37,7 +37,7 @@ spec:
               imagePullPolicy: Always
               env:
                 - name: FACTORY_REPO
-                  value: gwkline/launchpad
+                  value: gwkline/homelab
                 - name: GH_TOKEN
                   valueFrom:
                     secretKeyRef: { name: github-token, key: token, optional: false }
