@@ -24,4 +24,14 @@ else
   echo "configuring HTTPS serve for ${HOST}..."
   kubectl exec -n "$TS_NS" "$PROXY_POD" -- tailscale serve --bg --https=443 "http://${APP_IP}:3773" >/dev/null
 fi
-echo "done: https://${HOST}.tailc3cc03.ts.net -> ${APP_IP}:3773"
+# Tailnet DNS suffix (e.g. tailabc1234.ts.net). One documented value
+# (deploy/tailscale/README.md): override with TAILNET_NAME, otherwise it is
+# discovered from the Service's own operator-assigned LB hostname.
+TAILNET_NAME="${TAILNET_NAME:-}"
+if [ -z "${TAILNET_NAME}" ]; then
+  LB_HOST=$(kubectl get svc "${HOST}" -n "${SVC_NS}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+  TAILNET_NAME=${LB_HOST#"${HOST}."}
+fi
+[ -n "${TAILNET_NAME}" ] || { echo "cannot determine tailnet suffix (set TAILNET_NAME)" >&2; exit 1; }
+
+echo "done: https://${HOST}.${TAILNET_NAME} -> ${APP_IP}:3773"

@@ -52,6 +52,13 @@ spec:
             # gated by tailnet identity + NetworkPolicy, so any host is fine.
             - name: HOMEPAGE_ALLOWED_HOSTS
               value: "*"
+            # Tailnet DNS suffix for service hrefs — the single documented
+            # configuration value (see deploy/tailscale/README.md).
+            - name: HOMEPAGE_VAR_TAILNET_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: homepage-env
+                  key: tailnet-name
           volumeMounts:
             - name: config
               mountPath: /app/config

@@ -5,6 +5,9 @@ metadata:
   namespace: agents
   annotations:
     tailscale.com/hostname: panel
+    # Required so proxy devices carry tag:k8s-operator regardless of the
+    # operator's default tag (see deploy/tailscale/README.md).
+    tailscale.com/tags: tag:k8s-operator
 spec:
   type: LoadBalancer
   loadBalancerClass: tailscale

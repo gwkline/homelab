@@ -17,13 +17,12 @@ data:
         - Factory Panel:
             icon: mdi-view-dashboard
             description: launch runs, watch jobs
-            href: https://panel.<tailnet>.ts.net
+            href: https://panel.${HOMEPAGE_VAR_TAILNET_NAME}
             siteMonitor: http://panel.agents.svc.cluster.local:3000
         - T3 Code:
             icon: mdi-console
             description: Interactive agent servers
-            # Replace <tailnet> once (kubectl get svc -n agents shows it)
-            href: https://t3code-0.<tailnet>.ts.net
+            href: https://t3code-0.${HOMEPAGE_VAR_TAILNET_NAME}
             siteMonitor: http://t3code-headless.agents.svc.cluster.local:3773
         - Hermes:
             icon: mdi-brain
@@ -35,3 +34,16 @@ data:
         cpu: true
         memory: true
         expanded: true
+---
+# The single place the tailnet DNS suffix is configured (homepage substitutes
+# HOMEPAGE_VAR_* env vars into config hrefs). Set it to your tailnet's suffix,
+# e.g. tailabc1234.ts.net (discover with:
+# kubectl get svc t3code-0 -n agents -o jsonpath='{.status.loadBalancer.ingress[0].hostname}').
+# Do not commit a personal tailnet name — scripts/verify.sh rejects it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-env
+  namespace: agents
+data:
+  tailnet-name: "<tailnet>"

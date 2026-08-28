@@ -21,6 +21,33 @@ for d in deploy/*/base; do
   kubectl kustomize "$d" >/dev/null || fail "kustomize build: $d"
 done
 
+echo '==> tailscale Services declare hostname + required tags'
+# Every LoadBalancer Service with loadBalancerClass: tailscale must declare
+# tailscale.com/hostname and tailscale.com/tags=tag:k8s-operator (issue #92).
+for d in deploy/*/base; do
+  if ! kubectl kustomize "$d" | awk '
+      /^---/ { lb = 0; host = 0; tags = 0 }
+      /loadBalancerClass:[[:space:]]*tailscale/ { lb = 1 }
+      /tailscale\.com\/hostname:/ { host = 1 }
+      /tailscale\.com\/tags:/ && /tag:k8s-operator/ { tags = 1 }
+      END {
+        if (lb && (!host || !tags)) {
+          print "  exposed Service missing tailscale.com/hostname or tailscale.com/tags=tag:k8s-operator"
+          exit 1
+        }
+      }'; then
+    fail "tailscale Service annotations: $d"
+  fi
+done
+
+echo '==> no hard-coded personal tailnet DNS suffix'
+# Tailnet suffix must come from the single documented value (see
+# deploy/tailscale/README.md), never be committed. `<tailnet>` placeholders are fine.
+if grep -rnE '[a-z0-9][a-z0-9-]*\.ts\.net' scripts/ deploy/ apps/ bootstrap/ examples/ docs/ README.md \
+    | grep -v '<tailnet>' | grep .; then
+  fail 'hard-coded tailnet DNS suffix committed'
+fi
+
 echo '==> secret patterns (working tree + all reachable history)'
 pattern='(github_pat_|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|tskey-auth-)'
 if git grep --untracked -nIE "$pattern" -- ':!scripts/verify.sh' 2>/dev/null | grep .; then
