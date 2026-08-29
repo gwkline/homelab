@@ -1,0 +1,74 @@
+# Runs the chaos monkey twice a day. One run = one pod deleted + one recovery
+# verified (or a failed Job so the failure is visible). concurrencyPolicy:
+# Forbid keeps overlapping runs apart — a previous run that is still watching
+# a recovery wins over a new deletion.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: chaos-monkey
+  namespace: sandbox
+spec:
+  schedule: "0 7,19 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 900
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: chaos-monkey
+        spec:
+          serviceAccountName: chaos-monkey
+          # Needs the Kubernetes API by design (that IS the experiment), so
+          # the token is mounted — scoped by rbac.yaml to pod deletes in
+          # agents+sandbox only.
+          automountServiceAccountToken: true
+          restartPolicy: Never
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: chaos
+              image: ghcr.io/gwkline/homelab/loop-agent
+              # loop-agent ships kubectl + gh + shuf (coreutils) — no new
+              # image needed. The script comes from the chaos-config
+              # ConfigMap, so behaviour stays in git without a rebuild.
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              command: ["sh", "/etc/chaos/run.sh"]
+              env:
+                - name: HOME
+                  value: /tmp
+                - name: CHAOS_ISSUE
+                  value: "113"
+                - name: GH_REPO
+                  value: "gwkline/homelab"
+              volumeMounts:
+                - name: chaos-config
+                  mountPath: /etc/chaos
+                  readOnly: true
+                - name: github-token
+                  mountPath: /secrets
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: 128Mi
+                limits:
+                  memory: 256Mi
+          volumes:
+            - name: chaos-config
+              configMap:
+                name: chaos-config
+            - name: github-token
+              secret:
+                secretName: github-token
+                optional: true

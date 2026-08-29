@@ -1,0 +1,60 @@
+# The chaos monkey is the one identity allowed to delete pods in `agents`:
+# proving the cluster self-heals (issue #113) requires destructive reads.
+# Scoped hard: pods only, agents+sandbox only, and it cannot see secrets,
+# touch nodes, or reach any other namespace. cnpg, the tailscale operator
+# and everything labelled do-not-chaos: "true" are excluded in the script
+# itself (chaos-config/run.sh), not by RBAC — RBAC is the blast radius,
+# the script is the aim.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: chaos-monkey
+  namespace: sandbox
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: chaos-monkey
+  namespace: agents
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: chaos-monkey
+  namespace: agents
+roleRef:
+  apiGroup: rbac.authorization.k8s.io/v1
+  kind: Role
+  name: chaos-monkey
+subjects:
+  - kind: ServiceAccount
+    name: chaos-monkey
+    namespace: sandbox
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: chaos-monkey
+  namespace: sandbox
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: chaos-monkey
+  namespace: sandbox
+roleRef:
+  apiGroup: rbac.authorization.k8s.io/v1
+  kind: Role
+  name: chaos-monkey
+subjects:
+  - kind: ServiceAccount
+    name: chaos-monkey
+    namespace: sandbox
