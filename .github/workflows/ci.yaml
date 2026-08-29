@@ -16,6 +16,94 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  # Lint/format/typecheck are hard blockers: nothing builds unless this is
+  # green. Ultracite (oxlint + oxfmt) runs at max strictness — every rule is
+  # error-or-off, so there are no warnings to wave through (#115).
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@6044e13b5db4789b3275732c50dd7fe1332a35d7 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install toolchain
+        run: npm ci --no-audit --no-fund
+      - name: oxlint (ultracite core preset, 0 errors 0 warnings)
+        run: npx ultracite check
+      - name: oxfmt --check (refuse unformatted files)
+        run: npx oxfmt --check .
+      - name: tsc --noEmit (max-strict panel tsconfig)
+        run: npx tsc -p apps/panel --noEmit
+      - name: No CommonJS anywhere (require/module.exports)
+        run: |
+          if grep -rn --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.js' \
+              -E '(^|[^.\w])(require\(|module\.exports)' apps examples scripts 2>/dev/null; then
+            echo "::error::CommonJS found — the repo is ESM-only (#115)"
+            exit 1
+          fi
+
+  # Panel smoke test: build the web bundle, serve it, and prove index + an
+  # asset answer 200 through vite preview.
+  panel-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@6044e13b5db4789b3275732c50dd7fe1332a35d7 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/panel/package-lock.json
+      - name: Install panel deps
+        working-directory: apps/panel
+        run: npm ci --no-audit --no-fund
+      - name: Build web bundle
+        working-directory: apps/panel
+        run: npm run build:web
+      - name: vite preview smoke test (index + asset answer 200)
+        working-directory: apps/panel
+        run: |
+          npx vite preview --port 4173 --strictPort &
+          PREVIEW_PID=$!
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:4173/ >/dev/null && break
+            sleep 0.5
+          done
+          curl -sf http://127.0.0.1:4173/ | grep -q '<div id="root">' \
+            || { echo "::error::index.html missing #root"; kill $PREVIEW_PID; exit 1; }
+          ASSET=$(curl -s http://127.0.0.1:4173/ | grep -oE '/assets/[^"]+\.js' | head -1)
+          test -n "$ASSET" || { echo "::error::no JS asset in index.html"; kill $PREVIEW_PID; exit 1; }
+          curl -sf -o /dev/null -w "asset %{http_code}\n" "http://127.0.0.1:4173${ASSET}" \
+            || { echo "::error::asset $ASSET did not answer 200"; kill $PREVIEW_PID; exit 1; }
+          kill $PREVIEW_PID
+
+  # Panel unit/integration tests (node --test against the built server).
+  panel-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@6044e13b5db4789b3275732c50dd7fe1332a35d7 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/panel/package-lock.json
+      - name: Install panel deps
+        working-directory: apps/panel
+        run: npm ci --no-audit --no-fund
+      - name: Build
+        working-directory: apps/panel
+        run: npm run build
+      - name: Test
+        working-directory: apps/panel
+        run: npm test
+
   validate:
     runs-on: ubuntu-latest
     permissions:
@@ -28,7 +116,7 @@ jobs:
         run: ./scripts/verify.sh
 
   build:
-    needs: validate
+    needs: [validate, lint, panel-smoke, panel-test]
     strategy:
       matrix:
         include:

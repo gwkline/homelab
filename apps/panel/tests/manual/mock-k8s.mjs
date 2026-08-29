@@ -1,8 +1,26 @@
 // Mock Kubernetes API for local panel testing (never deployed).
 import { createServer } from "node:http";
 
-const jobs = { items: [{ metadata: { name: "panel-x", creationTimestamp: new Date().toISOString() }, status: { active: 1 } }] };
-const cronjobs = { items: [{ metadata: { name: "loop-example" }, spec: { schedule: "0 9 * * *" }, status: {} }] };
+const jobs = {
+  items: [
+    {
+      metadata: {
+        creationTimestamp: new Date().toISOString(),
+        name: "panel-x",
+      },
+      status: { active: 1 },
+    },
+  ],
+};
+const cronjobs = {
+  items: [
+    {
+      metadata: { name: "loop-example" },
+      spec: { schedule: "0 9 * * *" },
+      status: {},
+    },
+  ],
+};
 
 createServer((req, res) => {
   if (req.method === "POST" && req.url.includes("/jobs")) {
@@ -18,7 +36,7 @@ createServer((req, res) => {
     });
     return;
   }
-  res.writeHead(200, { "content-type": "application/json" }).end(
-    JSON.stringify(req.url.includes("cronjobs") ? cronjobs : jobs),
-  );
+  res
+    .writeHead(200, { "content-type": "application/json" })
+    .end(JSON.stringify(req.url.includes("cronjobs") ? cronjobs : jobs));
 }).listen(process.env.MOCK_PORT ?? 3930, () => console.log("[mock] up"));

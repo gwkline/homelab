@@ -1,10 +1,13 @@
-import { Hono } from "hono";
-import { serve } from "@hono/node-server";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { loadConfig, api } from "./k8s.js";
-import { jobNameFor, jobManifest, viewJob } from "./jobs.js";
+import path from "node:path";
+
+import { serve } from "@hono/node-server";
+import { Hono } from "hono";
+
 import { DEV_TOOLS, discoverTailnet, evaluateTools } from "./devtools.js";
+import { jobNameFor, jobManifest, viewJob } from "./jobs.js";
+import { loadConfig, api } from "./k8s.js";
+import type { K8sObject, JobTemplateSpec } from "./k8s.js";
 
 const root = process.env.PANEL_ROOT ?? process.cwd();
 const app = new Hono();
@@ -31,24 +34,79 @@ const FACTORY_PROFILES = new Set(["code-pr", "security"]);
 const DEFAULT_FACTORY_REPO = process.env.FACTORY_REPO ?? "gwkline/launchpad";
 const DEFAULT_FACTORY_PROFILE = process.env.FACTORY_PROFILE ?? "code-pr";
 
-function ghToken(): string | null {
-  const direct = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? "";
-  if (direct) return direct.trim();
-  for (const p of ["/secrets/token", "/secrets/github-token", "/var/run/secrets/github-token"]) {
-    try {
-      const v = readFileSync(p, "utf8").trim();
-      if (v) return v;
-    } catch {}
-  }
-  return null;
+// ── GitHub API response shapes (structural subset actually dereferenced) ──
+interface GhIssue {
+  html_url: string;
+  labels: { name: string }[] | null;
+  number: number;
+  pull_request?: unknown;
+  state: string;
+  title: string;
+}
+interface GhPull {
+  draft?: boolean;
+  head?: { ref?: string; sha?: string };
+  html_url: string;
+  labels?: { name: string }[] | null;
+  mergeable?: boolean;
+  mergeable_state?: string;
+  number: number;
+  state: string;
+  title: string;
+}
+interface GhCheckRuns {
+  check_runs?: { conclusion?: string | null; status?: string }[] | null;
+}
+interface GhReview {
+  state: string;
+}
+interface GhReviewResult {
+  id?: number;
+  state?: string;
+}
+interface GhMergeResult {
+  merged?: boolean;
+  sha?: string;
 }
 
-const GH_API_BASE = (process.env.GH_API_BASE ?? "https://api.github.com").replace(/\/$/, "");
+const ghToken = (): string | null => {
+  const direct = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? "";
+  if (direct) {
+    return direct.trim();
+  }
+  for (const p of [
+    "/secrets/token",
+    "/secrets/github-token",
+    "/var/run/secrets/github-token",
+  ]) {
+    try {
+      const v = readFileSync(p, "utf-8").trim();
+      if (v) {
+        return v;
+      }
+    } catch {
+      // path not mounted — try the next one
+    }
+  }
+  return null;
+};
 
-async function ghFetch(path: string, init: RequestInit = {}) {
+const GH_API_BASE = (
+  process.env.GH_API_BASE ?? "https://api.github.com"
+).replace(/\/$/u, "");
+
+const ghFetch = async (
+  route: string,
+  init: RequestInit = {}
+): Promise<unknown> => {
   const token = ghToken();
-  if (!token) throw Object.assign(new Error("GH_TOKEN not configured (mount github-token secret)"), { status: 500 });
-  const res = await fetch(`${GH_API_BASE}${path}`, {
+  if (!token) {
+    throw Object.assign(
+      new Error("GH_TOKEN not configured (mount github-token secret)"),
+      { status: 500 }
+    );
+  }
+  const res = await fetch(`${GH_API_BASE}${route}`, {
     ...init,
     headers: {
       accept: "application/vnd.github+json",
@@ -58,44 +116,117 @@ async function ghFetch(path: string, init: RequestInit = {}) {
     },
   });
   const text = await res.text();
-  let json: unknown = undefined;
+  let json;
   try {
     json = text ? JSON.parse(text) : undefined;
-  } catch {}
+  } catch {
+    // non-JSON response body — fall through to the status handling below
+  }
   if (!res.ok) {
-    const msg = (json as { message?: string } | undefined)?.message ?? `${res.status} ${res.statusText}`;
-    throw Object.assign(new Error(msg), { status: res.status, body: json });
+    const msg =
+      (json as { message?: string } | undefined)?.message ??
+      `${res.status} ${res.statusText}`;
+    throw Object.assign(new Error(msg), { body: json, status: res.status });
   }
   return json;
-}
+};
+
+// `error: unknown` accessors — thrown errors carry .message and often .status.
+const errMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const errStatus = (error: unknown): number | null => {
+  if (typeof error === "object" && error !== null && "status" in error) {
+    const { status } = error as { status?: unknown };
+    if (typeof status === "number") {
+      return status;
+    }
+  }
+  return null;
+};
+
+// Map an upstream error to the response status: statuses in `passThrough`
+// surface verbatim (they mean something specific to this route), all else 502.
+// The union is a subset of Hono's ContentfulStatusCode.
+type RespondCode = 400 | 404 | 405 | 409 | 422 | 502;
+const respondStatus = (error: unknown, passThrough: number[]): RespondCode => {
+  const status = errStatus(error);
+  if (status !== null && passThrough.includes(status)) {
+    return status as RespondCode;
+  }
+  return 502;
+};
+
+// Flatten one Node API object into the panel's cluster-card row.
+const nodeSummary = (n: K8sObject, podsByNode: Record<string, number>) => {
+  type NodeMeta = NonNullable<K8sObject["metadata"]>;
+  type NodeStatus = NonNullable<K8sObject["status"]>;
+  type NodeInfo = NonNullable<NodeStatus["nodeInfo"]>;
+  type NodeCapacity = NonNullable<NodeStatus["capacity"]>;
+  const meta: NodeMeta = n.metadata ?? {};
+  const status: NodeStatus = n.status ?? {};
+  const info: NodeInfo = status.nodeInfo ?? {};
+  const capacity: NodeCapacity = status.capacity ?? {};
+  const name = meta.name ?? "";
+  const internal =
+    (status.addresses ?? []).find((a) => a.type === "InternalIP")?.address ??
+    null;
+  const ready = (status.conditions ?? []).some(
+    (x) => x.type === "Ready" && x.status === "True"
+  );
+  return {
+    age: meta.creationTimestamp ?? null,
+    arch: info.architecture ?? null,
+    capacity: { cpu: capacity.cpu ?? null, memory: capacity.memory ?? null },
+    internalIP: internal,
+    name,
+    os: info.osImage ?? null,
+    pods: podsByNode[name] ?? 0,
+    roles: Object.keys(meta.labels ?? {})
+      .filter((l) => l.startsWith("node-role.kubernetes.io/"))
+      .map((l) => l.split("/")[1] ?? ""),
+    status: ready ? "Ready" : "NotReady",
+    version: info.kubeletVersion ?? null,
+  };
+};
 
 app.get("/api/state", async (c) => {
   try {
-    const [jobs, cronjobs] = await Promise.all([k8s.listJobs(), k8s.listCronJobs()]);
+    const [jobs, cronjobs] = await Promise.all([
+      k8s.listJobs(),
+      k8s.listCronJobs(),
+    ]);
     const now = Date.now();
     const jobsOut = (jobs.items ?? [])
       .map(viewJob)
-      .sort((a, b) => new Date(b.created ?? 0).getTime() - new Date(a.created ?? 0).getTime());
+      .toSorted(
+        (a, b) =>
+          new Date(b.created ?? 0).getTime() -
+          new Date(a.created ?? 0).getTime()
+      );
     return c.json({
-      jobs: jobsOut,
-      cronjobs: (cronjobs.items ?? []).map((cj: any) => ({
-        name: cj.metadata.name,
-        schedule: cj.spec.schedule,
-        suspended: cj.spec.suspend === true,
-        lastScheduled: cj.status?.lastScheduleTime ?? null,
+      cronjobs: (cronjobs.items ?? []).map((cj: K8sObject) => ({
         active: cj.status?.active ?? 0,
+        lastScheduled: cj.status?.lastScheduleTime ?? null,
+        name: cj.metadata?.name ?? "",
+        schedule: cj.spec?.schedule ?? "",
+        suspended: cj.spec?.suspend === true,
       })),
-      now: now,
+      jobs: jobsOut,
+      now,
     });
-  } catch (err: any) {
-    return c.json({ error: err.message }, 502);
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, 502);
   }
 });
 
 // Cluster view: nodes, per-namespace pod counts, metrics.
 app.get("/api/cluster", async (c) => {
   try {
-    const [nodes, pods] = await Promise.all([k8s.listNodes(), k8s.listPodsAll()]);
+    const [nodes, pods] = await Promise.all([
+      k8s.listNodes(),
+      k8s.listPodsAll(),
+    ]);
     const podsByNode: Record<string, number> = {};
     const podsByNs: Record<string, number> = {};
     for (const p of pods.items ?? []) {
@@ -104,31 +235,16 @@ app.get("/api/cluster", async (c) => {
       podsByNode[nodeName] = (podsByNode[nodeName] ?? 0) + 1;
       podsByNs[ns] = (podsByNs[ns] ?? 0) + 1;
     }
-    const nodesOut = (nodes.items ?? []).map((n: any) => {
-      const addrs: any[] = n.status?.addresses ?? [];
-      const internal = addrs.find((a) => a.type === "InternalIP")?.address ?? null;
-      const conds: any[] = n.status?.conditions ?? [];
-      const ready = conds.find((x) => x.type === "Ready")?.status === "True";
-      const mem = n.status?.capacity?.memory ?? null;
-      const cpu = n.status?.capacity?.cpu ?? null;
-      return {
-        name: n.metadata?.name,
-        status: ready ? "Ready" : "NotReady",
-        version: n.status?.nodeInfo?.kubeletVersion ?? null,
-        os: n.status?.nodeInfo?.osImage ?? null,
-        arch: n.status?.nodeInfo?.architecture ?? null,
-        internalIP: internal,
-        roles: Object.keys(n.metadata?.labels ?? {})
-          .filter((l) => l.startsWith("node-role.kubernetes.io/"))
-          .map((l) => l.split("/")[1]),
-        pods: podsByNode[n.metadata?.name] ?? 0,
-        capacity: { cpu, memory: mem },
-        age: n.metadata?.creationTimestamp ?? null,
-      };
+    const nodesOut = (nodes.items ?? []).map((n: K8sObject) =>
+      nodeSummary(n, podsByNode)
+    );
+    return c.json({
+      nodes: nodesOut,
+      podCount: pods.items?.length ?? 0,
+      podsByNs,
     });
-    return c.json({ nodes: nodesOut, podsByNs: podsByNs, podCount: pods.items?.length ?? 0 });
-  } catch (err: any) {
-    return c.json({ error: err.message }, 502);
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, 502);
   }
 });
 
@@ -140,9 +256,12 @@ app.get("/api/devtools", async (c) => {
   try {
     const tailnet = await discoverTailnet(process.env, k8s);
     const tools = await evaluateTools(DEV_TOOLS, k8s, tailnet);
-    return c.json({ tailnet: { configured: tailnet != null, name: tailnet }, tools });
-  } catch (err: any) {
-    return c.json({ error: err.message }, 502);
+    return c.json({
+      tailnet: { configured: tailnet !== null, name: tailnet },
+      tools,
+    });
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, 502);
   }
 });
 
@@ -150,18 +269,20 @@ app.get("/api/devtools", async (c) => {
 app.get("/api/cluster/pods", async (c) => {
   try {
     const pods = await k8s.listPodsAll();
-    const out = (pods.items ?? []).map((p: any) => ({
-      name: p.metadata?.name,
-      ns: p.metadata?.namespace,
-      node: p.spec?.nodeName,
-      phase: p.status?.phase,
+    const out = (pods.items ?? []).map((p: K8sObject) => ({
+      name: p.metadata?.name ?? "",
+      node: p.spec?.nodeName ?? "",
+      ns: p.metadata?.namespace ?? "",
+      phase: p.status?.phase ?? "",
       restarts: (p.status?.containerStatuses ?? []).reduce(
-        (acc: number, cs: any) => acc + (cs.restartCount ?? 0), 0),
+        (acc: number, cs) => acc + (cs.restartCount ?? 0),
+        0
+      ),
       started: p.metadata?.creationTimestamp ?? null,
     }));
     return c.json({ pods: out });
-  } catch (err: any) {
-    return c.json({ error: err.message }, 502);
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, 502);
   }
 });
 
@@ -170,251 +291,235 @@ app.get("/api/factory/all-issues", async (c) => {
   const repos = [...FACTORY_REPOS];
   const results = await Promise.allSettled(
     repos.map(async (repo) => {
-      const data = (await ghFetch(`/repos/${repo}/issues?state=open&per_page=30`)) as any[];
+      const data = (await ghFetch(
+        `/repos/${repo}/issues?state=open&per_page=30`
+      )) as GhIssue[];
       return {
-        repo,
         issues: data
-          .filter((i: any) => !i.pull_request)
-          .map((i: any) => ({
+          .filter((i) => !i.pull_request)
+          .map((i) => ({
+            labels: (i.labels ?? []).map((l) => l.name),
             number: i.number,
+            state: i.state,
             title: i.title,
             url: i.html_url,
-            labels: (i.labels ?? []).map((l: any) => l.name),
-            state: i.state,
           })),
+        repo,
       };
-    }),
+    })
   );
-  const reposOut = results.map((r, i) =>
-    r.status === "fulfilled"
-      ? r.value
-      : { repo: repos[i], issues: [], error: String((r as PromiseRejectedResult).reason?.message ?? r.reason) },
-  );
+  const reposOut = repos.map((repo, i) => {
+    const r = results[i];
+    if (r?.status === "fulfilled") {
+      return r.value;
+    }
+    return { error: errMessage(r?.reason), issues: [], repo };
+  });
   return c.json({ repos: reposOut });
 });
 
 app.get("/api/factory/issues", async (c) => {
   const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
-  if (!FACTORY_REPOS.has(repo)) return c.json({ error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` }, 400);
+  if (!FACTORY_REPOS.has(repo)) {
+    return c.json(
+      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
+      400
+    );
+  }
   try {
-    const data = (await ghFetch(`/repos/${repo}/issues?state=open&per_page=50`)) as any[];
+    const data = (await ghFetch(
+      `/repos/${repo}/issues?state=open&per_page=50`
+    )) as GhIssue[];
     const issues = data
-      .filter((i: any) => !i.pull_request)
-      .map((i: any) => ({
+      .filter((i) => !i.pull_request)
+      .map((i) => ({
+        labels: (i.labels ?? []).map((l) => l.name),
         number: i.number,
+        state: i.state,
         title: i.title,
         url: i.html_url,
-        labels: (i.labels ?? []).map((l: any) => l.name),
-        state: i.state,
       }));
-    return c.json({ repo, issues });
-  } catch (err: any) {
-    return c.json({ error: err.message }, err.status === 401 || err.status === 403 ? 502 : 502);
+    return c.json({ issues, repo });
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, 502);
   }
 });
 
-const FACTORY_PR_HEAD_RE = /^factory\/issue-\d+\//;
+const FACTORY_PR_HEAD_RE = /^factory\/issue-\d+\//u;
 
-function checksSummary(checkRuns: any[]): { state: string; conclusion: string | null } {
-  // Aggregate check-run conclusions into one green/pending/red verdict.
-  if (!checkRuns?.length) return { state: "none", conclusion: null };
-  const conclusions = checkRuns.map((c) => c.conclusion ?? c.status ?? "pending");
-  const red = ["failure", "timed_out", "action_required", "cancelled", "startup_failure", "stale"];
-  const pending = ["pending", "queued", "in_progress", "waiting"];
-  if (conclusions.some((x) => red.includes(x))) return { state: "failure", conclusion: "failure" };
-  if (conclusions.some((x) => pending.includes(x))) return { state: "pending", conclusion: null };
-  const allSuccess = conclusions.every((x) => x === "success" || x === "neutral" || x === "skipped");
-  return allSuccess ? { state: "success", conclusion: "success" } : { state: "unknown", conclusion: String(conclusions[0]) };
+interface CheckVerdict {
+  state: string;
+  conclusion: string | null;
 }
+
+const checksSummary = (checkRuns: GhCheckRuns["check_runs"]): CheckVerdict => {
+  // Aggregate check-run conclusions into one green/pending/red verdict.
+  if (!checkRuns?.length) {
+    return { conclusion: null, state: "none" };
+  }
+  const conclusions = checkRuns.map(
+    (c) => c.conclusion ?? c.status ?? "pending"
+  );
+  const red = new Set([
+    "failure",
+    "timed_out",
+    "action_required",
+    "cancelled",
+    "startup_failure",
+    "stale",
+  ]);
+  const pending = new Set(["pending", "queued", "in_progress", "waiting"]);
+  if (conclusions.some((x) => red.has(x))) {
+    return { conclusion: "failure", state: "failure" };
+  }
+  if (conclusions.some((x) => pending.has(x))) {
+    return { conclusion: null, state: "pending" };
+  }
+  const allSuccess = conclusions.every(
+    (x) => x === "success" || x === "neutral" || x === "skipped"
+  );
+  if (allSuccess) {
+    return { conclusion: "success", state: "success" };
+  }
+  return { conclusion: String(conclusions[0]), state: "unknown" };
+};
 
 app.get("/api/factory/prs", async (c) => {
   const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
-  if (!FACTORY_REPOS.has(repo)) return c.json({ error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` }, 400);
+  if (!FACTORY_REPOS.has(repo)) {
+    return c.json(
+      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
+      400
+    );
+  }
   try {
-    const pulls = (await ghFetch(`/repos/${repo}/pulls?state=open&per_page=50`)) as any[];
-    const factoryPrs = pulls.filter((p: any) => FACTORY_PR_HEAD_RE.test(p.head?.ref ?? ""));
+    const pulls = (await ghFetch(
+      `/repos/${repo}/pulls?state=open&per_page=50`
+    )) as GhPull[];
+    const factoryPrs = pulls.filter((p) =>
+      FACTORY_PR_HEAD_RE.test(p.head?.ref ?? "")
+    );
     const prs = await Promise.all(
-      factoryPrs.map(async (p: any) => {
+      factoryPrs.map(async (p) => {
         const num = p.number;
         let checkState: string | null = null;
-        let reviewDecision: string = "PENDING";
+        let reviewDecision = "PENDING";
         try {
-          const cr = (await ghFetch(`/repos/${repo}/commits/${p.head.sha}/check-runs?per_page=100`)) as any;
+          const cr = (await ghFetch(
+            `/repos/${repo}/commits/${p.head?.sha}/check-runs?per_page=100`
+          )) as GhCheckRuns;
           checkState = checksSummary(cr.check_runs ?? []).state;
-        } catch {}
+        } catch {
+          // check-runs unavailable — report as none
+        }
         try {
-          const reviews = (await ghFetch(`/repos/${repo}/pulls/${num}/reviews?per_page=100`)) as any[];
-          if ((reviews ?? []).some((r) => r.state === "CHANGES_REQUESTED")) reviewDecision = "CHANGES_REQUESTED";
-          else if ((reviews ?? []).some((r) => r.state === "APPROVED")) reviewDecision = "APPROVED";
-        } catch {}
-        const m = /factory\/issue-(\d+)\//.exec(p.head.ref);
+          const reviews = (await ghFetch(
+            `/repos/${repo}/pulls/${num}/reviews?per_page=100`
+          )) as GhReview[];
+          if ((reviews ?? []).some((r) => r.state === "CHANGES_REQUESTED")) {
+            reviewDecision = "CHANGES_REQUESTED";
+          } else if ((reviews ?? []).some((r) => r.state === "APPROVED")) {
+            reviewDecision = "APPROVED";
+          }
+        } catch {
+          // reviews unavailable — keep PENDING
+        }
+        const m = /factory\/issue-(?<num>\d+)\//u.exec(p.head?.ref ?? "");
         return {
-          number: num,
-          title: p.title,
-          headRef: p.head.ref,
-          url: p.html_url,
+          checks: checkState ? { state: checkState } : { state: "none" },
+          headRef: p.head?.ref ?? "",
           isDraft: p.draft === true,
+          labels: (p.labels ?? []).map((l) => l.name),
+          linkedIssue: m ? Number(m.groups?.num) : null,
+          number: num,
           reviewDecision,
           state: p.state,
-          checks: checkState ? { state: checkState } : { state: "none" },
-          labels: (p.labels ?? []).map((l: any) => l.name),
-          linkedIssue: m ? Number(m[1]) : null,
+          title: p.title,
+          url: p.html_url,
         };
-      }),
+      })
     );
     prs.sort((a, b) => a.number - b.number);
-    return c.json({ repo, prs });
-  } catch (err: any) {
-    return c.json({ error: err.message }, 502);
+    return c.json({ prs, repo });
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, 502);
   }
 });
 
-const FACTORY_REVIEW_EVENTS = new Set(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
+const FACTORY_REVIEW_EVENTS = new Set([
+  "APPROVE",
+  "REQUEST_CHANGES",
+  "COMMENT",
+]);
 const FACTORY_MERGE_STRATEGIES = new Set(["squash", "merge", "rebase"]);
 
-function parseNum(v: unknown): number | null {
+const parseNum = (v: unknown): number | null => {
   const n = Number(v);
   return Number.isInteger(n) && n >= 1 && n <= 1_000_000 ? n : null;
-}
+};
 
-app.post("/api/factory/review", async (c) => {
-  let body: { repo?: string; pr?: number | string; event?: string; body?: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  const repo = (body.repo ?? DEFAULT_FACTORY_REPO).trim();
-  if (!FACTORY_REPOS.has(repo)) return c.json({ error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` }, 400);
-  const pr = parseNum(body.pr);
-  if (pr == null) return c.json({ error: "pr must be a positive integer" }, 400);
-  const event = String(body.event ?? "").trim();
-  if (!FACTORY_REVIEW_EVENTS.has(event)) return c.json({ error: `event must be one of ${[...FACTORY_REVIEW_EVENTS].join(", ")}` }, 400);
-  const reviewBody = typeof body.body === "string" && body.body.trim() ? body.body.trim().slice(0, 4000) : undefined;
-  try {
-    const review = await ghFetch(`/repos/${repo}/pulls/${pr}/reviews`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(reviewBody ? { event, body: reviewBody } : { event }),
-    });
-    const r = review as any;
-    return c.json({ id: r?.id ?? null, state: r?.state ?? null, pr, repo, event });
-  } catch (err: any) {
-    return c.json({ error: err.message }, err.status === 404 || err.status === 422 ? 404 : 502);
-  }
-});
-
-app.post("/api/factory/merge", async (c) => {
-  let body: { repo?: string; pr?: number | string; strategy?: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  const repo = (body.repo ?? DEFAULT_FACTORY_REPO).trim();
-  if (!FACTORY_REPOS.has(repo)) return c.json({ error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` }, 400);
-  const pr = parseNum(body.pr);
-  if (pr == null) return c.json({ error: "pr must be a positive integer" }, 400);
-  const strategy = FACTORY_MERGE_STRATEGIES.has(body.strategy ?? "") ? body.strategy! : "squash";
-
-  // Guard: only merge factory-generated PRs with green checks + approval.
-  let meta: any;
-  try {
-    meta = await ghFetch(`/repos/${repo}/pulls/${pr}`);
-  } catch (err: any) {
-    return c.json({ error: err.message }, err.status === 404 ? 404 : 502);
-  }
-  if (!FACTORY_PR_HEAD_RE.test(meta.head?.ref ?? "")) {
-    return c.json({ error: `PR #${pr} head '${meta.head?.ref}' is not a factory branch — refusing to merge` }, 409);
+// Merge preconditions on the PR object itself: factory branch, not draft,
+// not blocked. Returns the refusal message, or null when safe to proceed.
+const mergeGuardError = (pr: number, meta: GhPull): string | null => {
+  const headRef = meta.head?.ref ?? "";
+  if (!FACTORY_PR_HEAD_RE.test(headRef)) {
+    return `PR #${pr} head '${headRef}' is not a factory branch — refusing to merge`;
   }
   if (meta.draft === true) {
-    return c.json({ error: `PR #${pr} is still a draft` }, 409);
+    return `PR #${pr} is still a draft`;
   }
-  if ((meta.mergeable_state ?? "").includes("blocked") && !(meta.mergeable === true)) {
-    // fallthrough: attempt anyway only when mergeable is explicitly true
-    return c.json({ error: `PR #${pr} is blocked (branch protection or failing checks)` }, 409);
+  const blocked =
+    (meta.mergeable_state ?? "").includes("blocked") && meta.mergeable !== true;
+  if (blocked) {
+    return `PR #${pr} is blocked (branch protection or failing checks)`;
   }
+  return null;
+};
+
+// Green checks + an approving review, else why the PR cannot merge yet.
+const mergeGateError = async (
+  repo: string,
+  pr: number,
+  meta: GhPull
+): Promise<string | null> => {
   try {
-    const cr = (await ghFetch(`/repos/${repo}/commits/${meta.head.sha}/check-runs?per_page=100`)) as any;
+    const cr = (await ghFetch(
+      `/repos/${repo}/commits/${meta.head?.sha}/check-runs?per_page=100`
+    )) as GhCheckRuns;
     if (checksSummary(cr.check_runs ?? []).state !== "success") {
-      return c.json({ error: `PR #${pr} checks are not green — refusing to merge` }, 409);
+      return `PR #${pr} checks are not green — refusing to merge`;
     }
-    const reviews = (await ghFetch(`/repos/${repo}/pulls/${pr}/reviews?per_page=100`)) as any[];
+    const reviews = (await ghFetch(
+      `/repos/${repo}/pulls/${pr}/reviews?per_page=100`
+    )) as GhReview[];
     const approved = (reviews ?? []).some((r) => r.state === "APPROVED");
     if (!approved) {
-      return c.json({ error: `PR #${pr} has no approving review — approve it first` }, 409);
+      return `PR #${pr} has no approving review — approve it first`;
     }
-  } catch (err: any) {
-    return c.json({ error: `guard check failed: ${err.message}` }, 502);
+    return null;
+  } catch (error: unknown) {
+    return `guard check failed: ${errMessage(error)}`;
   }
+};
 
-  try {
-    const res = await ghFetch(`/repos/${repo}/pulls/${pr}/merge`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        merge_method: strategy,
-        commit_title: `feat(factory): ${meta.title} (#${pr})`.slice(0, 200),
-      }),
-    });
-    const m = res as any;
-    return c.json({ merged: m?.merged === true, sha: m?.sha ?? null, pr, repo, strategy });
-  } catch (err: any) {
-    return c.json({ error: err.message }, err.status === 405 || err.status === 409 ? 409 : 502);
-  }
-});
-
-app.post("/api/factory/run", async (c) => {
-  let body: { issue?: number | string; repo?: string; profile?: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  const repo = (body.repo ?? DEFAULT_FACTORY_REPO).trim();
-  if (!FACTORY_REPOS.has(repo)) return c.json({ error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` }, 400);
-  const profile = (body.profile ?? DEFAULT_FACTORY_PROFILE).trim();
-  if (!FACTORY_PROFILES.has(profile)) return c.json({ error: `profile not allowed (use ${[...FACTORY_PROFILES].join(", ")})` }, 400);
-  const issueNum = Number(body.issue);
-  if (!Number.isInteger(issueNum) || issueNum < 1 || issueNum > 10_000_000) return c.json({ error: "issue must be a positive integer" }, 400);
-
-  let issue: any;
-  try {
-    issue = await ghFetch(`/repos/${repo}/issues/${issueNum}`);
-  } catch (err: any) {
-    if (err.status === 404) return c.json({ error: `issue #${issueNum} not found in ${repo}` }, 404);
-    return c.json({ error: err.message }, 502);
-  }
-  if (issue.pull_request) return c.json({ error: `issue #${issueNum} is a pull request` }, 400);
-  if (issue.state !== "open") return c.json({ error: `issue #${issueNum} is ${issue.state}` }, 409);
-  const labels: string[] = (issue.labels ?? []).map((l: any) => l.name);
-  const has = (name: string) => labels.includes(name);
-  if (has("factory/queued")) return c.json({ error: `issue #${issueNum} is already queued` }, 409);
-  if (has("factory/in-progress")) return c.json({ error: `issue #${issueNum} is already in-progress` }, 409);
-  if (has("factory/draft-pr")) return c.json({ error: `issue #${issueNum} already has a draft PR` }, 409);
-
-  // 1. Label it queued (GitHub is the ledger — orchestrator polls this label)
-  try {
-    await ghFetch(`/repos/${repo}/issues/${issueNum}/labels`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ labels: ["factory/queued"] }),
-    });
-  } catch (err: any) {
-    return c.json({ error: `failed to label issue: ${err.message}` }, 502);
-  }
-
-  // 2. Immediately trigger the orchestrator (create Job from CronJob), so the user doesn't wait 6h.
-  // The CronJob's Job-from-CronJob run is the same path as the scheduled tick, just ad-hoc.
-  let jobName: string | null = null;
+// Kick off a factory run: clone the orchestrator CronJob's pod template into an
+// ad-hoc Job with FACTORY_ISSUE/FACTORY_PROFILE injected. Returns the job name,
+// or the failure message (the queued label is kept either way).
+const triggerFactoryJob = async (
+  repo: string,
+  profile: string,
+  issueNum: number
+): Promise<string | Error> => {
   try {
     const cj = await k8s.getCronJob(FACTORY_CRONJOB);
-    const template = (cj as any).spec?.jobTemplate;
-    if (!template) throw new Error("CronJob has no jobTemplate");
+    const template = cj.spec?.jobTemplate;
+    if (!template) {
+      return new Error("CronJob has no jobTemplate");
+    }
     const ts = Date.now().toString(36);
-    jobName = `factory-issue-${issueNum}-${ts}`.slice(0, 63);
+    const jobName = `factory-issue-${issueNum}-${ts}`.slice(0, 63);
     // Clone the template so we can inject FACTORY_ISSUE (avoids GH label propagation race)
-    const spec = JSON.parse(JSON.stringify(template.spec));
+    const spec = structuredClone(template.spec ?? {}) as JobTemplateSpec;
     const containers = spec.template?.spec?.containers ?? [];
     if (containers[0]) {
       containers[0].env = [
@@ -426,17 +531,231 @@ app.post("/api/factory/run", async (c) => {
     const job = {
       apiVersion: "batch/v1",
       kind: "Job",
-      metadata: { name: jobName, namespace: FACTORY_NS, labels: { "factory.gwkline.io/trigger": "panel", "factory.gwkline.io/issue": String(issueNum), "factory.gwkline.io/profile": profile, "factory.gwkline.io/repo": repo } },
+      metadata: {
+        labels: {
+          "factory.gwkline.io/issue": String(issueNum),
+          "factory.gwkline.io/profile": profile,
+          "factory.gwkline.io/repo": repo,
+          "factory.gwkline.io/trigger": "panel",
+        },
+        name: jobName,
+        namespace: FACTORY_NS,
+      },
       spec,
     };
     await k8s.createJob(job);
-  } catch (err: any) {
-    // Label already applied — surface the k8s error but don't roll back the label (next tick will pick it up anyway).
-    const status = err.status === 409 ? 409 : 502;
-    return c.json({ error: err.message, jobName, queued: true, issue: issueNum, repo }, status);
+    return jobName;
+  } catch (error: unknown) {
+    return error instanceof Error ? error : new Error(errMessage(error));
+  }
+};
+
+app.post("/api/factory/review", async (c) => {
+  let body: {
+    repo?: string;
+    pr?: number | string;
+    event?: string;
+    body?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const repo = (body.repo ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) {
+    return c.json(
+      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
+      400
+    );
+  }
+  const pr = parseNum(body.pr);
+  if (pr === null) {
+    return c.json({ error: "pr must be a positive integer" }, 400);
+  }
+  const event = String(body.event ?? "").trim();
+  if (!FACTORY_REVIEW_EVENTS.has(event)) {
+    return c.json(
+      {
+        error: `event must be one of ${[...FACTORY_REVIEW_EVENTS].join(", ")}`,
+      },
+      400
+    );
+  }
+  const reviewBody =
+    typeof body.body === "string" && body.body.trim()
+      ? body.body.trim().slice(0, 4000)
+      : undefined;
+  try {
+    const review = (await ghFetch(`/repos/${repo}/pulls/${pr}/reviews`, {
+      body: JSON.stringify(
+        reviewBody ? { body: reviewBody, event } : { event }
+      ),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })) as GhReviewResult;
+    return c.json({
+      event,
+      id: review?.id ?? null,
+      pr,
+      repo,
+      state: review?.state ?? null,
+    });
+  } catch (error: unknown) {
+    return c.json(
+      { error: errMessage(error) },
+      respondStatus(error, [404, 422])
+    );
+  }
+});
+
+app.post("/api/factory/merge", async (c) => {
+  let body: { repo?: string; pr?: number | string; strategy?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const repo = (body.repo ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) {
+    return c.json(
+      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
+      400
+    );
+  }
+  const pr = parseNum(body.pr);
+  if (pr === null) {
+    return c.json({ error: "pr must be a positive integer" }, 400);
+  }
+  const strategy = FACTORY_MERGE_STRATEGIES.has(body.strategy ?? "")
+    ? (body.strategy as string)
+    : "squash";
+
+  // Guard: only merge factory-generated PRs with green checks + approval.
+  let meta: GhPull;
+  try {
+    meta = (await ghFetch(`/repos/${repo}/pulls/${pr}`)) as GhPull;
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, respondStatus(error, [404]));
+  }
+  const guardError = mergeGuardError(pr, meta);
+  if (guardError !== null) {
+    return c.json({ error: guardError }, 409);
+  }
+  const gateError = await mergeGateError(repo, pr, meta);
+  if (gateError !== null) {
+    return c.json({ error: gateError }, 502);
   }
 
-  return c.json({ queued: true, jobName, issue: issueNum, repo, profile }, 201);
+  try {
+    const res = (await ghFetch(`/repos/${repo}/pulls/${pr}/merge`, {
+      body: JSON.stringify({
+        commit_title: `feat(factory): ${meta.title} (#${pr})`.slice(0, 200),
+        merge_method: strategy,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "PUT",
+    })) as GhMergeResult;
+    return c.json({
+      merged: res?.merged === true,
+      pr,
+      repo,
+      sha: res?.sha ?? null,
+      strategy,
+    });
+  } catch (error: unknown) {
+    return c.json(
+      { error: errMessage(error) },
+      respondStatus(error, [405, 409])
+    );
+  }
+});
+
+app.post("/api/factory/run", async (c) => {
+  let body: { issue?: number | string; repo?: string; profile?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const repo = (body.repo ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) {
+    return c.json(
+      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
+      400
+    );
+  }
+  const profile = (body.profile ?? DEFAULT_FACTORY_PROFILE).trim();
+  if (!FACTORY_PROFILES.has(profile)) {
+    return c.json(
+      {
+        error: `profile not allowed (use ${[...FACTORY_PROFILES].join(", ")})`,
+      },
+      400
+    );
+  }
+  const issueNum = Number(body.issue);
+  if (!Number.isInteger(issueNum) || issueNum < 1 || issueNum > 10_000_000) {
+    return c.json({ error: "issue must be a positive integer" }, 400);
+  }
+
+  let issue: GhIssue;
+  try {
+    issue = (await ghFetch(`/repos/${repo}/issues/${issueNum}`)) as GhIssue;
+  } catch (error: unknown) {
+    if (errStatus(error) === 404) {
+      return c.json({ error: `issue #${issueNum} not found in ${repo}` }, 404);
+    }
+    return c.json({ error: errMessage(error) }, 502);
+  }
+  if (issue.pull_request) {
+    return c.json({ error: `issue #${issueNum} is a pull request` }, 400);
+  }
+  if (issue.state !== "open") {
+    return c.json({ error: `issue #${issueNum} is ${issue.state}` }, 409);
+  }
+  const labels: ReadonlySet<string> = new Set(
+    (issue.labels ?? []).map((l) => l.name)
+  );
+  const has = (name: string) => labels.has(name);
+  if (has("factory/queued")) {
+    return c.json({ error: `issue #${issueNum} is already queued` }, 409);
+  }
+  if (has("factory/in-progress")) {
+    return c.json({ error: `issue #${issueNum} is already in-progress` }, 409);
+  }
+  if (has("factory/draft-pr")) {
+    return c.json({ error: `issue #${issueNum} already has a draft PR` }, 409);
+  }
+
+  // 1. Label it queued (GitHub is the ledger — orchestrator polls this label)
+  try {
+    await ghFetch(`/repos/${repo}/issues/${issueNum}/labels`, {
+      body: JSON.stringify({ labels: ["factory/queued"] }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+  } catch (error: unknown) {
+    return c.json(
+      { error: `failed to label issue: ${errMessage(error)}` },
+      502
+    );
+  }
+
+  // 2. Immediately trigger the orchestrator (create Job from CronJob), so the user doesn't wait 6h.
+  // The CronJob's Job-from-CronJob run is the same path as the scheduled tick, just ad-hoc.
+  const trigger = await triggerFactoryJob(repo, profile, issueNum);
+  if (typeof trigger === "string") {
+    // Label already applied — surface the k8s error but don't roll back the label (next tick will pick it up anyway).
+    return c.json(
+      { error: trigger, issue: issueNum, jobName: null, queued: true, repo },
+      502
+    );
+  }
+  return c.json(
+    { issue: issueNum, jobName: trigger, profile, queued: true, repo },
+    201
+  );
 });
 
 // CronJob suspend/resume + schedule edit from the panel schedules card.
@@ -448,30 +767,42 @@ app.patch("/api/cronjobs/:name", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  const patch: any = { spec: {} };
-  if (body.suspended !== undefined) patch.spec.suspend = body.suspended === true;
+  const patch: { spec: { suspend?: boolean; schedule?: string } } = {
+    spec: {},
+  };
+  if (body.suspended !== undefined) {
+    patch.spec.suspend = body.suspended === true;
+  }
   if (body.schedule !== undefined) {
-    if (!/^[\d*/,-]+$/.test(body.schedule)) return c.json({ error: "invalid cron schedule" }, 400);
+    if (!/^[\d*/,-]+$/u.test(body.schedule)) {
+      return c.json({ error: "invalid cron schedule" }, 400);
+    }
     patch.spec.schedule = body.schedule;
   }
-  if (!Object.keys(patch.spec).length) return c.json({ error: "nothing to patch" }, 400);
+  if (!Object.keys(patch.spec).length) {
+    return c.json({ error: "nothing to patch" }, 400);
+  }
   try {
     await k8s.patchCronJob(name, patch);
-    return c.json({ ok: true, name });
-  } catch (err: any) {
-    return c.json({ error: err.message }, err.status === 404 ? 404 : 502);
+    return c.json({ name, ok: true });
+  } catch (error: unknown) {
+    const status = errStatus(error);
+    return c.json({ error: errMessage(error) }, status === 404 ? 404 : 502);
   }
 });
 
 // Job cleanup: delete completed/failed jobs by name.
 app.delete("/api/jobs/:name", async (c) => {
   const name = c.req.param("name");
-  if (!/^[\w-]+$/.test(name)) return c.json({ error: "invalid job name" }, 400);
+  if (!/^[\w-]+$/u.test(name)) {
+    return c.json({ error: "invalid job name" }, 400);
+  }
   try {
     await k8s.deleteJob(name);
-    return c.json({ ok: true, name });
-  } catch (err: any) {
-    return c.json({ error: err.message }, err.status === 404 ? 404 : 502);
+    return c.json({ name, ok: true });
+  } catch (error: unknown) {
+    const status = errStatus(error);
+    return c.json({ error: errMessage(error) }, status === 404 ? 404 : 502);
   }
 });
 
@@ -483,36 +814,58 @@ app.post("/api/jobs", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   const command = body.command?.trim();
-  if (!command) return c.json({ error: "command is required" }, 400);
-  if (command.length > 2000) return c.json({ error: "command too long" }, 400);
-  const issue = body.issue !== undefined ? String(body.issue) : undefined;
-  if (issue !== undefined && !/^\d{1,7}$/.test(issue)) {
+  if (!command) {
+    return c.json({ error: "command is required" }, 400);
+  }
+  if (command.length > 2000) {
+    return c.json({ error: "command too long" }, 400);
+  }
+  const issue = body.issue === undefined ? undefined : String(body.issue);
+  if (issue !== undefined && !/^\d{1,7}$/u.test(issue)) {
     return c.json({ error: "issue must be a number" }, 400);
   }
   const name = jobNameFor(command);
   try {
-    await k8s.createJob(jobManifest({ name, command, issue, repo: body.repo }));
+    await k8s.createJob(jobManifest({ command, issue, name, repo: body.repo }));
     return c.json({ name }, 201);
-  } catch (err: any) {
-    return c.json({ error: err.message }, err.status === 409 ? 409 : 502);
+  } catch (error: unknown) {
+    const status = errStatus(error);
+    return c.json({ error: errMessage(error) }, status === 409 ? 409 : 502);
   }
 });
 
-const web = join(root, "web", "dist");
+const web = path.join(root, "web", "dist");
+
+const contentTypeFor = (rel: string): string => {
+  if (rel.endsWith(".js")) {
+    return "text/javascript";
+  }
+  if (rel.endsWith(".css")) {
+    return "text/css";
+  }
+  if (rel.endsWith(".svg")) {
+    return "image/svg+xml";
+  }
+  return "text/html";
+};
+
+// Hono middleware: API paths pass through untouched; everything else serves
+// the built SPA (index.html fallback keeps client-side routes working).
 app.use("*", async (c, next) => {
-  if (c.req.path.startsWith("/api/")) return next();
+  if (c.req.path.startsWith("/api/")) {
+    return await next();
+  }
   try {
     const rel = c.req.path === "/" ? "index.html" : c.req.path.slice(1);
-    const file = readFileSync(join(web, rel));
-    const type = rel.endsWith(".js") ? "text/javascript"
-      : rel.endsWith(".css") ? "text/css"
-      : rel.endsWith(".svg") ? "image/svg+xml"
-      : "text/html";
-    return c.body(file, 200, { "content-type": type });
+    const file = readFileSync(path.join(web, rel));
+    return c.body(file, 200, { "content-type": contentTypeFor(rel) });
   } catch {
-    return c.body(readFileSync(join(web, "index.html")), 200, { "content-type": "text/html" });
+    return c.body(readFileSync(path.join(web, "index.html")), 200, {
+      "content-type": "text/html",
+    });
   }
 });
-
 const port = Number(process.env.PORT ?? 3000);
-serve({ fetch: app.fetch, port }, () => console.log(`[panel] listening on ${port}`));
+serve({ fetch: app.fetch, port }, () =>
+  console.log(`[panel] listening on ${port}`)
+);

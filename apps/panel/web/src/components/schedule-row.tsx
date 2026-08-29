@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Badge, Button } from "./ui";
+
+import { Button } from "./ui";
 
 interface CronJob {
   name: string;
@@ -9,7 +10,13 @@ interface CronJob {
   active: number;
 }
 
-export function ScheduleRow({ cj, onSaved }: { cj: CronJob; onSaved: () => void }) {
+export const ScheduleRow = ({
+  cj,
+  onSaved,
+}: {
+  cj: CronJob;
+  onSaved: () => void;
+}) => {
   const [editing, setEditing] = useState(false);
   const [schedule, setSchedule] = useState(cj.schedule);
   const [busy, setBusy] = useState(false);
@@ -22,15 +29,18 @@ export function ScheduleRow({ cj, onSaved }: { cj: CronJob; onSaved: () => void 
     setErr(null);
     try {
       const res = await fetch(`/api/cronjobs/${encodeURIComponent(cj.name)}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
       });
       const j = await res.json();
-      if (!res.ok) setErr(j.error ?? "failed");
-      else onSaved();
-    } catch (e) {
-      setErr(String(e));
+      if (res.ok) {
+        onSaved();
+      } else {
+        setErr(j.error ?? "failed");
+      }
+    } catch (error) {
+      setErr(String(error));
     } finally {
       setBusy(false);
     }
@@ -41,12 +51,18 @@ export function ScheduleRow({ cj, onSaved }: { cj: CronJob; onSaved: () => void 
       <div className="min-w-0">
         <p className="font-mono text-sm">
           {cj.name}
-          {cj.active > 0 && <span className="ml-2 text-xs text-warning">{cj.active} active</span>}
+          {cj.active > 0 && (
+            <span className="text-warning ml-2 text-xs">
+              {cj.active} active
+            </span>
+          )}
         </p>
-        <p className="text-xs text-muted-foreground">
-          {cj.suspended ? "suspended" : `last ${cj.lastScheduled ? new Date(cj.lastScheduled).toLocaleString() : "never"}`}
+        <p className="text-muted-foreground text-xs">
+          {cj.suspended
+            ? "suspended"
+            : `last ${cj.lastScheduled === null ? "never" : new Date(cj.lastScheduled).toLocaleString()}`}
         </p>
-        {err && <p className="text-xs text-destructive">{err}</p>}
+        {err !== null && <p className="text-destructive text-xs">{err}</p>}
       </div>
       <div className="flex items-center gap-2">
         {editing ? (
@@ -55,10 +71,14 @@ export function ScheduleRow({ cj, onSaved }: { cj: CronJob; onSaved: () => void 
               value={schedule}
               onChange={(e) => setSchedule(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && schedule !== cj.schedule) patch({ schedule });
-                if (e.key === "Escape") setEditing(false);
+                if (e.key === "Enter" && schedule !== cj.schedule) {
+                  patch({ schedule });
+                }
+                if (e.key === "Escape") {
+                  setEditing(false);
+                }
               }}
-              className="w-32 rounded border border-border bg-background px-2 py-1 font-mono text-xs"
+              className="border-border bg-background w-32 rounded border px-2 py-1 font-mono text-xs"
               autoFocus
             />
             <Button
@@ -68,16 +88,25 @@ export function ScheduleRow({ cj, onSaved }: { cj: CronJob; onSaved: () => void 
             >
               save
             </Button>
-            <Button onClick={() => { setEditing(false); setSchedule(cj.schedule); }} disabled={busy} className="h-7 px-2 py-1 text-xs bg-muted text-foreground">
+            <Button
+              onClick={() => {
+                setEditing(false);
+                setSchedule(cj.schedule);
+              }}
+              disabled={busy}
+              className="bg-muted text-foreground h-7 px-2 py-1 text-xs"
+            >
               cancel
             </Button>
           </>
         ) : (
           <>
-            <code className="rounded bg-muted px-2 py-1 text-xs">{cj.schedule}</code>
+            <code className="bg-muted rounded px-2 py-1 text-xs">
+              {cj.schedule}
+            </code>
             <button
               onClick={() => setEditing(true)}
-              className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="text-muted-foreground hover:bg-muted hover:text-foreground rounded px-1.5 py-0.5 text-xs"
               title="edit schedule"
             >
               edit
@@ -87,11 +116,11 @@ export function ScheduleRow({ cj, onSaved }: { cj: CronJob; onSaved: () => void 
         <Button
           onClick={() => patch({ suspended: !cj.suspended })}
           disabled={busy}
-          className={`h-7 px-2 py-1 text-xs ${cj.suspended ? "bg-success/15 text-success border border-success/30 hover:bg-success/25" : "bg-warning/15 text-warning border border-warning/30 hover:bg-warning/25"}`}
+          className={`h-7 px-2 py-1 text-xs ${cj.suspended ? "bg-success/15 text-success border-success/30 hover:bg-success/25 border" : "bg-warning/15 text-warning border-warning/30 hover:bg-warning/25 border"}`}
         >
           {cj.suspended ? "resume" : "pause"}
         </Button>
       </div>
     </div>
   );
-}
+};

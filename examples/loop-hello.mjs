@@ -6,18 +6,24 @@
 
 import { chromium } from "playwright";
 
-const report = { startedAt: new Date().toISOString(), checks: [] };
+const report = { checks: [], startedAt: new Date().toISOString() };
 
 const browser = await chromium.launch({ args: ["--no-sandbox"] });
 try {
   const page = await browser.newPage();
   await page.goto("https://example.com", { waitUntil: "domcontentloaded" });
   const title = await page.title();
-  report.checks.push({ name: "example.com loads", pass: title.length > 0, title });
+  report.checks.push({
+    name: "example.com loads",
+    pass: title.length > 0,
+    title,
+  });
 } finally {
   await browser.close();
 }
 
 console.log(JSON.stringify(report, null, 2));
 // Real loops would push/POST this report here.
-if (report.checks.some((c) => !c.pass)) process.exit(1);
+if (report.checks.some((c) => !c.pass)) {
+  process.exit(1);
+}
