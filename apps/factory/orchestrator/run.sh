@@ -30,9 +30,9 @@ WORKDIR="${HOME}/runs"
 # Transient DNS/netpol warm-up can fail the first auth probe (seen in
 # sandbox pods); retry a few times before giving up.
 AUTH_OK=0
-for _a in 1 2 3 4 5; do
+for _a in 1 2 3 4 5 6 7 8 9 10 11 12; do
   if gh auth status >/dev/null 2>&1; then AUTH_OK=1; break; fi
-  sleep 3
+  sleep 5
 done
 [ "${AUTH_OK}" = "1" ] || { echo "[orch] no gh auth" >&2; exit 1; }
 
