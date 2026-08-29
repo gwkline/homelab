@@ -68,7 +68,7 @@ data:
 
     for ns in $CHAOS_NAMESPACES; do
       # pod|phase|do-not-chaos|ownerKind|ownerName|pod-template-hash|ready
-      kubectl get pods -n "$ns" -o go-template='{{range .items}}{{.metadata.name}}|{{.status.phase}}|{{index .metadata.labels "do-not-chaos"}}|{{if gt (len .metadata.ownerReferences) 0}}{{(index .metadata.ownerReferences 0).kind}}|{{(index .metadata.ownerReferences 0).name}}{{else}}|{{end}}|{{.metadata.labels.pod-template-hash}}|{{range .status.conditions}}{{if eq .type "Ready"}}{{.status}}{{end}}{{end}}{{"\n"}}{{end}}' \
+      kubectl get pods -n "$ns" -o go-template='{{range .items}}{{.metadata.name}}|{{.status.phase}}|{{index .metadata.labels "do-not-chaos"}}|{{if gt (len .metadata.ownerReferences) 0}}{{(index .metadata.ownerReferences 0).kind}}|{{(index .metadata.ownerReferences 0).name}}{{else}}|{{end}}|{{index .metadata.labels "pod-template-hash"}}|{{range .status.conditions}}{{if eq .type "Ready"}}{{.status}}{{end}}{{end}}{{"\n"}}{{end}}' \
         | awk -F'|' -v ns_prefix="$ns" -v exclude="$CHAOS_EXCLUDE" '
             $2 == "Running" && $7 == "True" \
             && ($4 == "ReplicaSet" || $4 == "StatefulSet") \
