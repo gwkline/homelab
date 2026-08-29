@@ -4,6 +4,7 @@ import { Card, CardHeader, Badge, Button, Input } from "./components/ui";
 import { JobsTable } from "./components/JobsTable";
 import { ClusterCard } from "./components/ClusterCard";
 import { ScheduleRow } from "./components/ScheduleRow";
+import { DevToolsCard } from "./components/DevToolsCard";
 
 interface Job {
   name: string;
@@ -213,6 +214,8 @@ export default function App() {
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> refresh
         </Button>
       </header>
+
+      <DevToolsCard />
 
       <Card>
         <CardHeader

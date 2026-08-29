@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, api } from "./k8s.js";
 import { jobNameFor, jobManifest, viewJob } from "./jobs.js";
+import { DEV_TOOLS, discoverTailnet, evaluateTools } from "./devtools.js";
 
 const root = process.env.PANEL_ROOT ?? process.cwd();
 const app = new Hono();
@@ -126,6 +127,20 @@ app.get("/api/cluster", async (c) => {
       };
     });
     return c.json({ nodes: nodesOut, podsByNs: podsByNs, podCount: pods.items?.length ?? 0 });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 502);
+  }
+});
+
+// Dev Tools catalog: the panel's front door for self-hosted developer tools.
+// Read-only — health is derived from cluster state (Services, pod readiness)
+// plus in-cluster endpoint probes through declared Service ports. No
+// credential proxying, no framing; cards link out to tailnet hostnames.
+app.get("/api/devtools", async (c) => {
+  try {
+    const tailnet = await discoverTailnet(process.env, k8s);
+    const tools = await evaluateTools(DEV_TOOLS, k8s, tailnet);
+    return c.json({ tailnet: { configured: tailnet != null, name: tailnet }, tools });
   } catch (err: any) {
     return c.json({ error: err.message }, 502);
   }
