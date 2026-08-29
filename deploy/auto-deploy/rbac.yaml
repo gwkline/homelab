@@ -1,0 +1,41 @@
+# Auto-deploy watcher: polls GHCR for new image digests and rolls workloads
+# whose running digest is stale. Cross-namespace by design — the watchlist
+# names any deployment/statefulset in the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: auto-deploy
+  namespace: agents
+  labels:
+    app.kubernetes.io/part-of: homelab
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: auto-deploy
+  labels:
+    app.kubernetes.io/part-of: homelab
+rules:
+  # rollout restart is a patch on the workload's pod-template annotation.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch", "patch"]
+  # Read running pods to compare their imageID digests against the registry.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: auto-deploy
+  labels:
+    app.kubernetes.io/part-of: homelab
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: auto-deploy
+subjects:
+  - kind: ServiceAccount
+    name: auto-deploy
+    namespace: agents
