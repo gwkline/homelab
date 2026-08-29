@@ -7,6 +7,7 @@ import {
   flexRender,
   useTable,
 } from "@tanstack/react-table";
+import { stockFeatures, tableFeatures } from "@tanstack/table-core";
 import { Badge } from "./ui";
 
 export interface JobRow {
@@ -83,6 +84,12 @@ export function JobsTable({ jobs, onDelete }: { jobs: JobRow[]; onDelete: (name:
   const table = useTable({
     data: jobs,
     columns,
+    features: tableFeatures({
+      sorting: stockFeatures.rowSortingFeature,
+      globalFiltering: stockFeatures.globalFilteringFeature,
+      columnFiltering: stockFeatures.columnFilteringFeature,
+      core: stockFeatures.core,
+    }),
     state: { sorting, globalFilter: filter },
     onSortingChange: setSorting as any,
     onGlobalFilterChange: setFilter,
