@@ -12,6 +12,12 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
+  # Dev Tools catalog: Service existence + declared ports back the tool health
+  # checks, and the panel's own LB hostname discovers the tailnet DNS suffix.
+  # Read-only; no secrets, no proxying — the panel only links out.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list"]
   - apiGroups: ["metrics.k8s.io"]
     resources: ["nodes", "pods"]
     verbs: ["get", "list"]

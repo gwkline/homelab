@@ -94,6 +94,8 @@ export const api = (cfg: K8sConfig) => ({
     k8sFetch(cfg, "PATCH", `/apis/batch/v1/namespaces/${NS}/cronjobs/${encodeURIComponent(name)}`, patch, "application/merge-patch+json"),
   listNodes: (): Promise<{ items?: any[] }> =>
     k8sFetch(cfg, "GET", `/api/v1/nodes`),
+  getService: (name: string, namespace: string): Promise<any> =>
+    k8sFetch(cfg, "GET", `/api/v1/namespaces/${encodeURIComponent(namespace)}/services/${encodeURIComponent(name)}`),
   listNamespaces: (): Promise<{ items?: any[] }> =>
     k8sFetch(cfg, "GET", `/api/v1/namespaces`),
   listPodsAll: (): Promise<{ items?: any[] }> =>

@@ -23,6 +23,11 @@ node can be rebuilt from `bootstrap/bootstrap.sh` in ~15 minutes.
 - **panel**: the factory control panel at `https://panel.<tailnet>.ts.net`.
   Custom Vite + React app (this repo's own code) listing sandbox jobs and
   schedules, with a button to launch runs against a command or issue number.
+  Its dev tools catalog is the front door for self-hosted tools (Grafana,
+  Headlamp, CloudBeaver, Executor, Homepage, T3 Code, …): cards show live
+  health from cluster state and link out to tailnet hostnames. Adding a tool
+  is one entry in `apps/panel/server/devtools.ts` — generic operations stay
+  in the upstream tools.
 - **dispatcher**: watches a repo for issues labeled `run-agent` and turns each
   one into a sandbox Job automatically. The label is the authz gate (only
   collaborators can add it).
