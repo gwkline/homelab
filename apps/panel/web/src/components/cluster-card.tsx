@@ -23,12 +23,16 @@ interface PodInfo {
   restarts: number;
 }
 
-// Ki memory string (e.g. "16374884Ki") → whole GiB.
+// Ki memory string (e.g. "16374884Ki") → whole GiB (e.g. "15Gi"), or null
+// when the value is missing/unparseable.
 const memGi = (memory: string | null): string | null => {
   if (memory === null) {
     return null;
   }
-  return `${Math.trunc(Number(memory) / 1024 / 1024)}Gi`;
+  const m = /^(?<kibi>\d+(?:\.\d+)?)Ki$/u.exec(memory);
+  return m === null
+    ? null
+    : `${Math.trunc(Number(m.groups?.kibi) / 1024 / 1024)}Gi`;
 };
 
 const podPhaseClass = (phase: string): string => {
@@ -125,7 +129,7 @@ export const ClusterCard = () => {
                     {n.pods} pods · {n.capacity.cpu ?? "?"} cpu ·{" "}
                     {n.capacity.memory === null
                       ? "?"
-                      : `${memGi(n.capacity.memory) ?? "?"}Gi`}{" "}
+                      : (memGi(n.capacity.memory) ?? "?")}{" "}
                     mem · {n.version ?? ""}
                   </p>
                 </div>
