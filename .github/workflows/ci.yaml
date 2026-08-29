@@ -44,6 +44,7 @@ jobs:
       - name: No CommonJS anywhere (require/module.exports)
         run: |
           if grep -rn --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.js' \
+              --exclude-dir=node_modules --exclude-dir=dist \
               -E '(^|[^.\w])(require\(|module\.exports)' apps examples scripts 2>/dev/null; then
             echo "::error::CommonJS found — the repo is ESM-only (#115)"
             exit 1
