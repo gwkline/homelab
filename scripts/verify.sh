@@ -179,4 +179,47 @@ while IFS=: read -r file line; do
   [[ "$line" == *"ghcr.io/${owner}/homelab/"* ]] || fail "foreign image ref in ${file}: ${line}"
 done < <(grep -rnE 'image: ghcr\.io/[^/]+/homelab/' deploy/ apps/ examples/ scripts/ || true)
 
+echo '==> image refs on the latest tag are grandfathered, not extended'
+# Digest-pinned images are the end goal (issue #91): a mutable latest tag makes
+# rollbacks and audits ambiguous. Every image ref ending in the latest tag must
+# be in the grandfather allowlist below (path:ref); anything new fails so
+# factory-authored PRs pin a digest instead (issue #109). Grep-only on the
+# working tree — no kubectl. Matches YAML image keys and JSON "image" keys;
+# imagePullPolicy lines are excluded by design.
+grandfathered_latest=(
+  'deploy/tailscale/serve-fixer.yaml:ghcr.io/gwkline/homelab/loop-agent:latest'
+  'deploy/factory/base/reviewer-cronjob.yaml:ghcr.io/gwkline/homelab/factory/reviewer:latest'
+  'deploy/factory/base/security-cronjob.yaml:ghcr.io/gwkline/homelab/factory/security:latest'
+  'deploy/factory/base/profile-security.yaml:ghcr.io/gwkline/homelab/factory/security:latest'
+  'deploy/factory/base/profile-reviewer.yaml:ghcr.io/gwkline/homelab/factory/reviewer:latest'
+  'deploy/factory/base/profile-code-pr.yaml:ghcr.io/gwkline/homelab/factory/worker:latest'
+)
+new_latest=0
+while IFS= read -r hit; do
+  [[ -n "$hit" ]] || continue
+  file="${hit%%:*}"
+  rest="${hit#*:}"
+  rest="${rest#*:}"
+  ref="$(trim "$rest")"
+  ref="${ref#*- }"
+  ref="${ref//[\"\']/}"
+  ref="${ref#image:}"
+  ref="${ref%%#*}"
+  ref="$(trim "$ref")"
+  ref="${ref%,}"
+  grand=''
+  for g in "${grandfathered_latest[@]}"; do
+    if [[ "$g" == "${file}:${ref}" ]]; then grand=1; break; fi
+  done
+  if [[ -n "$grand" ]]; then
+    echo "  grandfathered: ${hit}"
+  else
+    echo "  NEW image ref on the latest tag — pin to a digest: ${hit}" >&2
+    new_latest=1
+  fi
+done < <(grep -rnEI "(^|[[:space:]])\"?image\"?:[[:space:]]*\"?[^[:space:]]+:latest\"?([[:space:]]|,|\$)" deploy/ apps/ examples/ scripts/ || true)
+if (( new_latest )); then
+  fail 'new image ref on the latest tag — pin to an immutable digest (issue #91)'
+fi
+
 echo 'ALL CHECKS PASSED'
