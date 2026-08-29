@@ -14,6 +14,11 @@ sync_repos
 export HERMES_HOME="${HERMES_HOME:-/data/hermes}"
 mkdir -p "${HERMES_HOME}" "${HOME:-/data/home}"
 
+# Skills-sync health announcement (init container writes
+# $HERMES_HOME/skills-sync/status.json). Loud fresh/stale line at boot;
+# never fails the pod — degradation contract in skills-sync.yaml.
+/usr/local/bin/check-skills-sync || true
+
 # Photon sidecar: the adapter expects its runtime dir under HERMES_HOME with
 # ALL sources present (a bare `npm ci` from node_modules alone leaves out
 # sibling .mjs files and fails with ERR_MODULE_NOT_FOUND on first connect).

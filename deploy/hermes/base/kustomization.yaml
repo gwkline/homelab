@@ -11,5 +11,6 @@ resources:
   - configmap.yaml
   - rbac.yaml
   - cluster-guide.yaml
+  - skills-sync.yaml
   - statefulset.yaml
   - service.yaml
