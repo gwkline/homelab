@@ -84,6 +84,18 @@ spec:
               value: /data/home
             - name: GITHUB_TOKEN_FILE
               value: /secrets/token
+            # gh CLI + git credential helpers read GH_TOKEN; the token is the
+            # same fine-grained PAT the factory uses (secret github-token).
+            - name: GH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
             - name: WORKSPACE_REPOS
               valueFrom:
                 configMapKeyRef:
