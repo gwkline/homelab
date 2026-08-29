@@ -38,20 +38,20 @@ spec:
     matchLabels:
       factory.gwkline.io/profile: code-pr
   policyTypes: [Ingress, Egress]
-  ingress: []                       # nothing may connect TO a worker
+  ingress: [] # nothing may connect TO a worker
   egress:
-    - to:                           # GitHub + git clones over HTTPS
-        - ipBlock: { cidr: 140.82.112.0/20 }     # github.com
-        - ipBlock: { cidr: 185.199.108.0/22 }    # raw.githubusercontent
-        - ipBlock: { cidr: 185.199.108.0/22 }     # objects.githubusercontent (fastly)
-    - to:                           # container registries (npm, ghcr, crates.io)
+    - to: # GitHub + git clones over HTTPS
+        - ipBlock: { cidr: 140.82.112.0/20 } # github.com
+        - ipBlock: { cidr: 185.199.108.0/22 } # raw.githubusercontent
+        - ipBlock: { cidr: 185.199.108.0/22 } # objects.githubusercontent (fastly)
+    - to: # container registries (npm, ghcr, crates.io)
         - ipBlock: { cidr: 104.16.0.0/12 }
-        - ipBlock: { cidr: 18.214.0.0/16 }      # index.crates.io
-        - ipBlock: { cidr: 108.138.128.0/17 }    # static.crates.io CDN
-    - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
-    - to:                           # in-cluster Kubernetes API (orchestrator spawns Jobs)
+        - ipBlock: { cidr: 18.214.0.0/16 } # index.crates.io
+        - ipBlock: { cidr: 108.138.128.0/17 } # static.crates.io CDN
+    - ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+    - to: # in-cluster Kubernetes API (orchestrator spawns Jobs)
         - ipBlock: { cidr: 10.43.0.1/32 }
-      ports: [{protocol: TCP, port: 443}]
+      ports: [{ protocol: TCP, port: 443 }]
 ---
 # Least-privilege SA: workers get NO Kubernetes API access at all.
 apiVersion: v1

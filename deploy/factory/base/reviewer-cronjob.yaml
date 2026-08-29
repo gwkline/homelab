@@ -40,14 +40,15 @@ spec:
                   value: gwkline/homelab
                 - name: GH_TOKEN
                   valueFrom:
-                    secretKeyRef: { name: github-token, key: token, optional: false }
+                    secretKeyRef:
+                      { name: github-token, key: token, optional: false }
                 # Write path — ON per operator 2026-08-27: CI-as-gate auto-merge
                 # (factory-authored PRs, green checks required, launchpad only).
                 - name: FACTORY_REVIEWER_AUTO_MERGE
                   value: "true"
               resources:
                 requests: { cpu: 100m, memory: 128Mi }
-                limits:   { cpu: 500m, memory: 512Mi }
+                limits: { cpu: 500m, memory: 512Mi }
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities: { drop: ["ALL"] }

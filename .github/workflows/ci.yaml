@@ -25,13 +25,16 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@6044e13b5db4789b3275732c50dd7fe1332a35d7 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: package-lock.json
       - name: Install toolchain
         run: npm ci --no-audit --no-fund
+      - name: Install panel deps (tsc typecheck needs panel @types/node)
+        run: npm ci --no-audit --no-fund
+        working-directory: apps/panel
       - name: oxlint (ultracite core preset, 0 errors 0 warnings)
         run: npx ultracite check
       - name: oxfmt --check (refuse unformatted files)
@@ -41,6 +44,7 @@ jobs:
       - name: No CommonJS anywhere (require/module.exports)
         run: |
           if grep -rn --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.js' \
+              --exclude-dir=node_modules --exclude-dir=dist \
               -E '(^|[^.\w])(require\(|module\.exports)' apps examples scripts 2>/dev/null; then
             echo "::error::CommonJS found — the repo is ESM-only (#115)"
             exit 1
@@ -54,7 +58,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@6044e13b5db4789b3275732c50dd7fe1332a35d7 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -68,7 +72,7 @@ jobs:
       - name: vite preview smoke test (index + asset answer 200)
         working-directory: apps/panel
         run: |
-          npx vite preview --port 4173 --strictPort &
+          npx vite preview --host 127.0.0.1 --port 4173 --strictPort &
           PREVIEW_PID=$!
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:4173/ >/dev/null && break
@@ -89,7 +93,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@6044e13b5db4789b3275732c50dd7fe1332a35d7 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm

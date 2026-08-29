@@ -11,7 +11,8 @@ RUN apt-get update \
 
 COPY apps/shared/workspace-lib.sh /usr/local/lib/workspace-lib.sh
 COPY apps/hermes/run-hermes.sh /usr/local/bin/run-hermes
-RUN chmod +x /usr/local/bin/run-hermes
+COPY apps/hermes/check-skills-sync.sh /usr/local/bin/check-skills-sync
+RUN chmod +x /usr/local/bin/run-hermes /usr/local/bin/check-skills-sync
 
 # Photon sidecar runtime copy: the adapter resolves its sidecar dir to
 # $HERMES_HOME/photon/sidecar and runs `npm ci` there on first connect, but

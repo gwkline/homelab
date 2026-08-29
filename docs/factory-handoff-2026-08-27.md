@@ -1,7 +1,6 @@
 # HANDOFF: Software Factory (#85) — State as of 2026-08-27
 
-**For:** next agent/engineer picking this up
-**Time to context:** ~10 min read. Everything below is verified live unless marked.
+**For:** next agent/engineer picking this up **Time to context:** ~10 min read. Everything below is verified live unless marked.
 
 ## What exists (all in gwkline/homelab, main branch)
 
@@ -40,22 +39,21 @@ CI note: push triggers are FLAKY — use `gh workflow run ci --ref main` after m
 
 ## The remaining bug 🐛 — last failure before handoff
 
-**Symptom:** orchestrator tick "picked issue #6", spawned worker, worker ran
-`opencode run` which errored intermittently:
+**Symptom:** orchestrator tick "picked issue #6", spawned worker, worker ran `opencode run` which errored intermittently:
+
 - sometimes `Cannot connect to API`
 - sometimes model falls back to wrong provider ("big-pickle" default)
 - sometimes works (`FACTORY-OK` succeeded twice in isolation)
 - tick-spawned Job Pods exit 1 with EMPTY logs; isolated debug pods SUCCEED with identical env
 
 **What we ruled out:**
+
 - NetworkPolicy egress ✅ (openrouter.ai HTTP 200 tested from a labeled pod)
 - Auth encoding ✅ (entrypoint normalizes raw-JSON vs base64)
 - Env ordering ✅ (GH_TOKEN declared before CLONE_URL so $(...) expansion resolves)
 - OOM ✅/⚠️ (fixed 4Gi→12Gi after a rust repo ballooned memory; not the current blocker)
 
-**Most likely cause (untested):** environment drift between `kubectl run` debug
-pods and Job-spawned pods, OR opencode reading config state under /home/node
-that differs between paths. NOT root-caused — needs an interactive session.
+**Most likely cause (untested):** environment drift between `kubectl run` debug pods and Job-spawned pods, OR opencode reading config state under /home/node that differs between paths. NOT root-caused — needs an interactive session.
 
 **Debug recipe:**
 
@@ -86,9 +84,7 @@ EOF
 # 3. opencode run --model openrouter/z-ai/glm-5.3-flash "print hello"
 ```
 
-**Known-bad pattern to avoid:** failure paths MUST remove `factory/in-progress`
-when adding `factory/failed`. Earlier version didn't → combined with repeated
-manual re-labeling this caused the spam loop Gavin saw. Fixed in b18cfb0.
+**Known-bad pattern to avoid:** failure paths MUST remove `factory/in-progress` when adding `factory/failed`. Earlier version didn't → combined with repeated manual re-labeling this caused the spam loop Gavin saw. Fixed in b18cfb0.
 
 ## On resume (order matters)
 
@@ -99,15 +95,14 @@ manual re-labeling this caused the spam loop Gavin saw. Fixed in b18cfb0.
 
 ## Design reference
 
-`docs/factory-v1-github-ledger.md` = ADR-002 GitHub-as-ledger (no DB).
-Labels ARE the state machine:
+`docs/factory-v1-github-ledger.md` = ADR-002 GitHub-as-ledger (no DB). Labels ARE the state machine:
 
-| Label | Meaning |
-|---|---|
-| `factory/queued` | waiting for orchestrator |
-| `factory/in-progress` | worker running |
-| `factory/draft-pr` | published |
-| `factory/failed` | failed |
+| Label                 | Meaning                  |
+| --------------------- | ------------------------ |
+| `factory/queued`      | waiting for orchestrator |
+| `factory/in-progress` | worker running           |
+| `factory/draft-pr`    | published                |
+| `factory/failed`      | failed                   |
 
 Marker comment format is versioned by `<!-- factory:run:ISSUE:TS -->`.
 
