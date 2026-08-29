@@ -68,10 +68,17 @@ RUN_ID=$(python3 -c "import json;print(json.load(open('${BRIEF}'))['run_id'])")
 
 echo "[worker] run=${RUN_ID} repo=${REPO} issue=#${ISSUE_NUM}"
 
-# --- clone (read-only public https or token-injected remote by orchestrator)
-# Private repos need the token; public clones work with the plain URL too.
-CLONE_URL="${CLONE_URL:-https://github.com/${REPO}.git}"
-git clone --depth 20 "${CLONE_URL}" repo
+# --- clone (worker builds the authenticated URL from GH_TOKEN itself) ------
+# Token never rides in the Job manifest (ADR D6); origin is scrubbed after
+# clone so it doesn't leak into the emitted patch either.
+GITGUARD="-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30"
+CLONE_URL="${CLONE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git}"
+# shellcheck disable=SC2086  # word-splitting is intended: GITGUARD is two -c flags
+git ${GITGUARD} clone --depth 20 "${CLONE_URL}" repo || {
+  echo "[worker] FATAL: clone failed (or stalled >30s)" >&2
+  printf '{"success": false, "summary": "clone failed or stalled", "tests": null}\n' > "${OUT}/report.json" 2>/dev/null || true
+  exit 1
+}
 git -C repo remote set-url origin "https://github.com/${REPO}.git"
 cd repo
 BASE_SHA=$(git rev-parse HEAD)
@@ -94,12 +101,26 @@ Rules:
 - {'Run `' + b.get('verify_command','') + '` and make it pass.' if b.get('verify_command') else 'Ensure the project still builds/tests cleanly.'}
 - When done, print a one-paragraph summary of what changed and why.""")
 EOF
-  # shellcheck disable=SC2086
-  ${WORKER_CMD} < /tmp/task-prompt.txt || {
-    echo "[worker] agent command failed" >&2
-    printf '{"success": false, "summary": "agent CLI failed", "tests": null}\n' > "${OUT}/report.json"
+  # Hard ceiling on the agent command: a hung provider/model must not burn
+  # the pod's whole 3600s budget (and a retry on top of it). 45 min leaves
+  # time for clone + verify + artifact emission inside the deadline. The
+  # redirect lives OUTSIDE the pipeline so $? stays the agent's exit code.
+  WORKER_TIMEOUT="${WORKER_TIMEOUT:-2700}"
+  echo "[worker] agent budget: ${WORKER_TIMEOUT}s"
+  # shellcheck disable=SC2086  # word-splitting is intended: WORKER_CMD is a command line
+  timeout "${WORKER_TIMEOUT}" ${WORKER_CMD} < /tmp/task-prompt.txt > /tmp/task-prompt-output.log 2>&1 || RC=$?
+  if [ "${RC:-0}" != "0" ]; then
+    if [ "${RC}" = "124" ]; then
+      echo "[worker] agent command TIMED OUT after ${WORKER_TIMEOUT}s" >&2
+      SUMMARY="agent timed out after ${WORKER_TIMEOUT}s"
+    else
+      echo "[worker] agent command failed (exit ${RC})" >&2
+      SUMMARY="agent CLI failed (exit ${RC})"
+    fi
+    tail -20 /tmp/task-prompt-output.log 2>/dev/null >&2 || true
+    printf '{"success": false, "summary": "%s", "tests": null}\n' "${SUMMARY}" > "${OUT}/report.json"
     exit 1
-  }
+  fi
 else
   echo "[worker] FATAL: WORKER_CMD not set by profile" >&2
   exit 78

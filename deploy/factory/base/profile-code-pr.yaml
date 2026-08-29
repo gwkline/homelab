@@ -18,7 +18,7 @@ data:
       "image": "ghcr.io/gwkline/homelab/factory/worker:latest",
       "serviceAccount": "factory-worker",
       "activeDeadlineSeconds": 3600,
-      "backoffLimit": 1,
+      "backoffLimit": 0,
       "ttlSecondsAfterFinished": 3600,
       "resources": { "requests": {"cpu": "1", "memory": "1Gi"},
                      "limits":   {  "cpu": "4",     "memory": "12Gi"} },

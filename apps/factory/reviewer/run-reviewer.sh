@@ -21,11 +21,13 @@ fi
 
 classify_checks() {
   # $1 = comma-separated check conclusions/statuses (or empty)
+  # Empty = no checks YET (or the API call failed): that is pending, never
+  # green — treating it green let zero-verification PRs get flipped ready.
   case "$1" in
     *failure*|*timed_out*|*action_required*|*stale*|*cancelled*) echo red ;;
+    ""|none)                                                     echo pending ;;
     *pending*|*queued*|*in_progress*|*waiting*)                  echo pending ;;
     success)                                                    echo green ;;
-    ""|none)                                                    echo green ;;
     *,*) echo green ;;  # multiple conclusions, none red/pending => all green/skipped
     *)                                                          echo unknown ;;
   esac
