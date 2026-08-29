@@ -23,7 +23,10 @@ spec:
           type: RuntimeDefault
       containers:
         - name: watcher
-          image: ghcr.io/gwkline/homelab/loop-agent:latest
+          # Digest-pinned per verify.sh's latest-tag rule (issue #91). The
+          # watcher needs only sh/kubectl/curl; bump the digest when loop-agent
+          # ships changes those tools depend on.
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:331ed63c3ff4e781c10c1044c1c5ad475c5d6d8d6a3d3e02bed05a3f6a6e12a3
           command: ["/bin/sh", "/config/watch.sh"]
           securityContext:
             runAsNonRoot: true
