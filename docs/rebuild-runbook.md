@@ -72,6 +72,12 @@ kubectl apply -k deploy/panel/base         # admin portal (https://panel.$TAILNE
 # pod IP, idempotently, printing serve status before/after.
 ./scripts/serve-refresh.sh panel agents
 
+# Auto-heal: a hourly CronJob (deploy/tailscale/serve-refresh-cronjob.yaml,
+# issue #110) re-points stale serve entries for every service listed in its
+# ConfigMap. After exposing a new service, add a line there:
+#   <service>|<namespace>|<pod-label-selector>|<backend-port>
+kubectl get cronjob serve-refresh -n tailscale   # verify it is scheduled
+
 # 4. wait & verify
 kubectl get pods -A -w
 # TAILNET_NAME is the one documented tailnet config value

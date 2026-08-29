@@ -1,0 +1,118 @@
+# Hourly auto-heal for stale tailscale serve entries (issue #110).
+#
+# The operator provisions each proxy's serve config once with the pod IP that
+# existed at provisioning time and never refreshes it, so any pod replacement
+# (rollout, reschedule, node reboot) leaves the entry pointing at a dead IP
+# and every request 502s. The per-workload serve-fixer Deployment covers
+# t3code-0; this CronJob runs the scripts/serve-refresh.sh logic generically
+# for every exposed service listed in its config, so nothing depends on a
+# hand-written fixer per app.
+#
+# Exposed services are declared here as one pipe-separated line each:
+#   <service>|<namespace>|<pod-label-selector>|<backend-port>
+# The list mirrors the services annotated with tailscale.com/hostname
+# (enforced by scripts/verify.sh, checked live by scripts/rebuild-check.sh);
+# when a new service is exposed, add a line here in the same commit.
+#
+# Reuses the serve-fixer ServiceAccount: read-only pod access in agents,
+# exec into proxy pods in tailscale. No new RBAC, no widened access.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: serve-refresh-config
+  namespace: tailscale
+  labels:
+    app.kubernetes.io/part-of: homelab
+data:
+  services.txt: |
+    panel|agents|app=panel|3000
+    t3code-0|agents|app=t3code-0|3773
+  serve-refresh-loop.sh: |
+    #!/bin/bash
+    # One pass: check every listed service's serve entry against its current
+    # pod IP; re-point stale entries (HTTPS, repo convention for every UI).
+    # Correct entries are left untouched; one log line per service checked.
+    set -u
+
+    TS_NS="tailscale"
+    CFG="/config/services.txt"
+    rc=0
+
+    while IFS='|' read -r APP SVC_NS SELECTOR PORT; do
+      case "$APP" in ''|'#'*) continue;; esac
+      APP_IP=$(kubectl get pods -n "$SVC_NS" -l "$SELECTOR" -o jsonpath='{.items[?(@.status.phase=="Running")].status.podIP}' 2>/dev/null | awk 'NR==1{print $1}')
+      if [ -z "$APP_IP" ]; then
+        echo "FAIL: no ready pod for ${APP}/${SVC_NS} (selector ${SELECTOR})"
+        rc=1
+        continue
+      fi
+
+      PROXY_POD=$(kubectl get pods -n "$TS_NS" --no-headers 2>/dev/null | grep "ts-${APP}" | awk '$3=="Running"{print $1}' | head -1)
+      if [ -z "$PROXY_POD" ]; then
+        echo "FAIL: no running tailscale proxy pod matching ts-${APP}"
+        rc=1
+        continue
+      fi
+
+      STATUS=$(kubectl exec -n "$TS_NS" "$PROXY_POD" -- tailscale serve status 2>/dev/null) || { echo "FAIL: cannot exec into proxy pod ${PROXY_POD}"; rc=1; continue; }
+      BACKEND=$(printf '%s\n' "$STATUS" | grep -oE "http://[0-9]{1,3}(\.[0-9]{1,3}){3}:${PORT}" | head -1)
+
+      if [ -z "$BACKEND" ]; then
+        echo "fix: no serve entry for ${APP}; creating https -> ${APP_IP}:${PORT}"
+        kubectl exec -n "$TS_NS" "$PROXY_POD" -- tailscale serve --bg --https=443 "http://${APP_IP}:${PORT}" >/dev/null || { echo "FAIL: serve --bg failed for ${APP}"; rc=1; }
+      elif [ "$BACKEND" = "http://${APP_IP}:${PORT}" ]; then
+        echo "ok: ${APP} serve entry already points at ${APP_IP}:${PORT}"
+      else
+        echo "fix: ${APP} stale entry ${BACKEND} -> re-pointing at ${APP_IP}:${PORT}"
+        kubectl exec -n "$TS_NS" "$PROXY_POD" -- tailscale serve --bg --https=443 "http://${APP_IP}:${PORT}" >/dev/null || { echo "FAIL: serve --bg failed for ${APP}"; rc=1; }
+      fi
+    done < "$CFG"
+
+    exit $rc
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: serve-refresh
+  namespace: tailscale
+  labels:
+    app.kubernetes.io/part-of: homelab
+spec:
+  # Staggered off the factory CronJobs (:00, :15, :20, :45, :50) so nothing
+  # piles onto the same minute (issue #105 pattern).
+  schedule: "40 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app: serve-refresh
+        spec:
+          serviceAccountName: serve-fixer
+          automountServiceAccountToken: true
+          restartPolicy: Never
+          containers:
+            - name: refresh
+              image: ghcr.io/gwkline/homelab/loop-agent:latest
+              command: ["/bin/bash", "/scripts/serve-refresh-loop.sh"]
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 64Mi
+          volumes:
+            - name: scripts
+              configMap:
+                name: serve-refresh-config
+                defaultMode: 0755
