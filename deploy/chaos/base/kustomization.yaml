@@ -10,5 +10,4 @@ labels:
 resources:
   - rbac-sandbox.yaml
   - configmap.yaml
-  - netpol.yaml
   - cronjob.yaml
