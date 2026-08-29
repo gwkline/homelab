@@ -32,6 +32,9 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install toolchain
         run: npm ci --no-audit --no-fund
+      - name: Install panel deps (tsc typecheck needs panel @types/node)
+        run: npm ci --no-audit --no-fund
+        working-directory: apps/panel
       - name: oxlint (ultracite core preset, 0 errors 0 warnings)
         run: npx ultracite check
       - name: oxfmt --check (refuse unformatted files)
