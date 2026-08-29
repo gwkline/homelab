@@ -68,7 +68,7 @@ jobs:
       - name: vite preview smoke test (index + asset answer 200)
         working-directory: apps/panel
         run: |
-          npx vite preview --port 4173 --strictPort &
+          npx vite preview --host 127.0.0.1 --port 4173 --strictPort &
           PREVIEW_PID=$!
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:4173/ >/dev/null && break
