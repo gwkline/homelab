@@ -106,12 +106,19 @@ export function JobsTable({ jobs, onDelete }: { jobs: JobRow[]; onDelete: (name:
               <tr key={hg.id} className="border-b border-border text-xs text-muted-foreground">
                 {hg.headers.map((h: any) => (
                   <th
-                    key={h.id}
-                    onClick={h.column.getToggleSortingHandler()}
+                    onClick={() => {
+                      const id = h.column.id;
+                      setSorting((prev) => {
+                        const cur = prev[0];
+                        if (cur?.id !== id) return [{ id, desc: true }];
+                        if (!cur.desc && cur.desc !== undefined) return [{ id, desc: true }];
+                        return [{ id, desc: false }];
+                      });
+                    }}
                     className="cursor-pointer select-none px-2 py-2 font-medium"
                   >
                     {flexRender(h.column.columnDef.header, h.getContext())}
-                    {{ asc: " ▲", desc: " ▼" }[h.column.getIsSorted() as string] ?? ""}
+                    {sorting[0]?.id === h.column.id ? (sorting[0].desc ? " ▼" : " ▲") : ""}
                   </th>
                 ))}
               </tr>
