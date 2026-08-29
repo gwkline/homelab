@@ -1,0 +1,155 @@
+# Chaos monkey for the homelab cluster (issue #113): periodically delete ONE
+# random workload pod in agents/sandbox and verify the cluster brings it back
+# healthy on its own. Node-level chaos is a full-cluster reboot and stays a
+# manual runbook exercise for now.
+#
+# Kill switch: set key `enabled` to anything but "true" and the next run
+# exits before deleting anything. The run script itself lives in this
+# ConfigMap (key run.sh), so behaviour and switch are both in git.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chaos-config
+  namespace: sandbox
+data:
+  enabled: "true"
+  run.sh: |
+    #!/bin/sh
+    # Delete exactly ONE random workload pod per run, then verify the
+    # controller replaces it and the replacement goes Ready. Targets are
+    # Running+Ready pods in $CHAOS_NAMESPACES owned by a ReplicaSet or
+    # StatefulSet. Deliberately excluded (see issue #113):
+    #   - Job-owned pods (dispatcher/factory/loop runs): killing those
+    #     breaks GitHub side effects rather than testing recovery, and the
+    #     chaos-monkey pod itself is one of them
+    #   - anything whose pod or owner name matches $CHAOS_EXCLUDE
+    #     (cnpg/postgres, tailscale operator, the monkey itself)
+    #   - pods labelled do-not-chaos: "true"
+    #   - standalone pods: nothing recreates them, so they are not a
+    #     self-healing test
+    set -eu
+
+    CHAOS_NAMESPACES="${CHAOS_NAMESPACES:-agents sandbox}"
+    CHAOS_TIMEOUT="${CHAOS_TIMEOUT:-300}"
+    CHAOS_POLL="${CHAOS_POLL:-5}"
+    CHAOS_EXCLUDE="${CHAOS_EXCLUDE:-cnpg|postgres|tailscale|operator|chaos}"
+    CHAOS_ISSUE="${CHAOS_ISSUE:-113}"
+    GH_REPO="${GH_REPO:-gwkline/homelab}"
+    TOKEN_FILE=/secrets/token
+
+    log() { echo "[chaos] $(date -u '+%Y-%m-%dT%H:%M:%SZ') $*"; }
+
+    # ---- kill switch --------------------------------------------------------
+    enabled="$(cat /etc/chaos/enabled 2>/dev/null || true)"
+    if [ "$enabled" != "true" ]; then
+      log "kill switch: chaos-config/enabled='${enabled:-<unset>}' — no deletions"
+      exit 0
+    fi
+
+    # ---- RBAC sanity --------------------------------------------------------
+    for ns in $CHAOS_NAMESPACES; do
+      if ! kubectl auth can-i delete pods -n "$ns" >/dev/null 2>&1; then
+        log "ERROR: no permission to delete pods in '$ns'"
+        exit 1
+      fi
+    done
+
+    # ---- pick exactly one target -------------------------------------------
+    # ready_marker NS SELECTOR: one 'x' per Ready pod matching the selector.
+    # A label-selector count (not a single pod lookup) is what makes the
+    # recovery check correct for multi-replica Deployments.
+    ready_marker() {
+      kubectl get pods -n "$1" -l "$2" -o go-template='{{range .items}}{{range .status.conditions}}{{if eq .type "Ready"}}{{if eq .status "True"}}x{{end}}{{end}}{{end}}{{end}}' 2>/dev/null
+    }
+
+    candidates="$(mktemp)"
+    shuffled="$(mktemp)"
+    trap 'rm -f "$candidates" "$shuffled"' EXIT
+
+    for ns in $CHAOS_NAMESPACES; do
+      # pod|phase|do-not-chaos|ownerKind|ownerName|pod-template-hash|ready
+      kubectl get pods -n "$ns" -o go-template='{{range .items}}{{.metadata.name}}|{{.status.phase}}|{{index .metadata.labels "do-not-chaos"}}|{{if gt (len .metadata.ownerReferences) 0}}{{(index .metadata.ownerReferences 0).kind}}|{{(index .metadata.ownerReferences 0).name}}{{else}}|{{end}}|{{.metadata.labels.pod-template-hash}}|{{range .status.conditions}}{{if eq .type "Ready"}}{{.status}}{{end}}{{end}}{{"\n"}}{{end}}' \
+        | awk -F'|' -v ns_prefix="$ns" -v exclude="$CHAOS_EXCLUDE" '
+            $2 == "Running" && $7 == "True" \
+            && ($4 == "ReplicaSet" || $4 == "StatefulSet") \
+            && $1 !~ exclude && $5 !~ exclude { print ns_prefix "|" $0 }'
+    done > "$candidates"
+
+    if [ ! -s "$candidates" ]; then
+      log "no eligible targets — nothing to do"
+      exit 0
+    fi
+
+    shuf "$candidates" > "$shuffled"
+
+    ns="" pod="" okind="" oname="" phash=""
+    while IFS='|' read -r pns ppod pphase dnc pokind poname phash pready; do
+      if [ "$pready" = "True" ]; then
+        ns=$pns pod=$ppod okind=$pokind oname=$poname phash=$phash
+        break
+      fi
+    done < "$shuffled"
+
+    if [ -z "$pod" ]; then
+      log "no Ready candidate left — skipping run"
+      exit 0
+    fi
+
+    # ---- delete and watch for self-healing ----------------------------------
+    # ReplicaSet pods are replaced under the same pod-template-hash label;
+    # StatefulSet pods have no such hash but the replacement reuses the name
+    # and carries statefulset.kubernetes.io/pod-name. Either way the selector
+    # matches the deleted pod's controller workload only.
+    if [ -n "$phash" ]; then
+      sel="pod-template-hash=$phash"
+    else
+      sel="statefulset.kubernetes.io/pod-name=$pod"
+    fi
+    before="$(ready_marker "$ns" "$sel")"
+
+    log "deleting $ns/$pod (owner $okind/$oname)"
+    started="$(date +%s)"
+    ts_start="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    if ! kubectl delete pod -n "$ns" "$pod" --wait --timeout=180s >/dev/null 2>&1; then
+      # The pod may have vanished between listing and deleting (or hung in
+      # termination): keep going, the recovery watch is what matters.
+      log "WARN: delete returned an error — watching for the replacement anyway"
+    fi
+
+    recovered=0
+    while [ "$(date +%s)" -lt "$((started + CHAOS_TIMEOUT))" ]; do
+      now="$(ready_marker "$ns" "$sel")"
+      if [ -n "$now" ] && [ "${#now}" -ge "${#before}" ]; then
+        recovered=1
+        break
+      fi
+      sleep "$CHAOS_POLL"
+    done
+    ts_end="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    elapsed=$(( $(date +%s) - started ))
+
+    # ---- report -------------------------------------------------------------
+    report() {
+      if [ -r "$TOKEN_FILE" ]; then
+        if GH_TOKEN="$(cat "$TOKEN_FILE")" gh issue comment "$CHAOS_ISSUE" \
+            --repo "$GH_REPO" --body "$1" >/dev/null 2>&1; then
+          log "posted result to issue #$CHAOS_ISSUE"
+        else
+          log "WARN: could not post to issue #$CHAOS_ISSUE (non-fatal)"
+        fi
+      else
+        log "github-token not mounted — result not posted to GitHub"
+      fi
+    }
+
+    if [ "$recovered" -eq 1 ]; then
+      log "recovered: replacement Ready ${elapsed}s after deletion"
+      report "$(printf '⚡ **chaos-monkey** run at %s UTC\n\n- target: `%s/%s` (%s/%s)\n- deleted: %s UTC\n- replacement Ready: %s UTC\n- **recovery time: %ss**' \
+        "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$ns" "$pod" "$okind" "$oname" "$ts_start" "$ts_end" "$elapsed")"
+      exit 0
+    fi
+
+    log "ERROR: no Ready replacement within ${CHAOS_TIMEOUT}s"
+    report "$(printf '❌ **chaos-monkey** run at %s UTC\n\n- target: `%s/%s` (%s/%s)\n- deleted: %s UTC\n- **NOT recovered within %ss — manual attention needed**' \
+      "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$ns" "$pod" "$okind" "$oname" "$ts_start" "$CHAOS_TIMEOUT")"
+    exit 1
