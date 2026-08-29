@@ -46,7 +46,7 @@ spec:
         - ipBlock: { cidr: 104.16.0.0/12 }
         - ipBlock: { cidr: 18.214.0.0/16 }
         - ipBlock: { cidr: 108.138.128.0/17 }
-    - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    - ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
 ---
 # Least-privilege SA — same as code-pr: no k8s API.
 apiVersion: v1

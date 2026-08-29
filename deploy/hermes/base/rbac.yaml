@@ -16,7 +16,16 @@ metadata:
   namespace: agents
 rules:
   - apiGroups: ["", "apps", "batch"]
-    resources: ["pods", "pods/log", "services", "statefulsets", "jobs", "cronjobs", "configmaps"]
+    resources:
+      [
+        "pods",
+        "pods/log",
+        "services",
+        "statefulsets",
+        "jobs",
+        "cronjobs",
+        "configmaps",
+      ]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

@@ -1,87 +1,111 @@
 import { createHash } from "node:crypto";
 
-const IMAGE = process.env.PANEL_LOOP_IMAGE ?? "ghcr.io/gwkline/homelab/loop-agent:latest";
+import type { K8sObject } from "./k8s.js";
+
+const IMAGE =
+  process.env.PANEL_LOOP_IMAGE ?? "ghcr.io/gwkline/homelab/loop-agent:latest";
 const MAX_NAME = 63;
 
 // DNS-1123 safe, deterministic per (command, second). Collisions mean the
 // same launch twice in the same second; k8s rejects and the UI surfaces it.
-export function jobNameFor(command: string, now = Date.now()): string {
+export const jobNameFor = (command: string, now = Date.now()): string => {
   const slug = command
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replaceAll(/[^a-z0-9]+/gu, "-")
+    .replaceAll(/^-+|-+$/gu, "")
     .slice(0, 32);
   const hash = createHash("sha256")
     .update(`${command}:${now}`)
     .digest("hex")
     .slice(0, 6);
-  const name = `panel-${slug || "run"}-${hash}`.slice(0, MAX_NAME).replace(/-+$/, "");
-  return name;
-}
+  return `panel-${slug || "run"}-${hash}`
+    .slice(0, MAX_NAME)
+    .replace(/-+$/u, "");
+};
 
-export function jobManifest(opts: {
+export const jobManifest = (opts: {
   name: string;
   command: string;
-  repo?: string;
-  issue?: string;
-}) {
+  repo?: string | undefined;
+  issue?: string | undefined;
+}) => {
   const repo = opts.repo ?? "gwkline/homelab";
-  const env: Array<{ name: string; value: string }> = [
+  const env: { name: string; value: string }[] = [
     { name: "GITHUB_TOKEN_FILE", value: "/secrets/token" },
     { name: "GITHUB_WRITER_TOKEN_FILE", value: "/secrets-writer/token" },
     { name: "HOME", value: "/tmp" },
     { name: "LOOP_COMMAND", value: opts.command },
   ];
   if (opts.issue !== undefined) {
-    env.push({ name: "WATCHER_ISSUE", value: String(opts.issue) });
-    env.push({ name: "WATCHER_REPO", value: repo });
+    env.push(
+      { name: "WATCHER_ISSUE", value: String(opts.issue) },
+      { name: "WATCHER_REPO", value: repo }
+    );
   }
   return {
     apiVersion: "batch/v1",
     kind: "Job",
-    metadata: { name: opts.name, namespace: "sandbox", labels: { app: "loop-agent", "app.kubernetes.io/part-of": "homelab", "app.kubernetes.io/managed-by": "panel" } },
+    metadata: {
+      labels: {
+        app: "loop-agent",
+        "app.kubernetes.io/managed-by": "panel",
+        "app.kubernetes.io/part-of": "homelab",
+      },
+      name: opts.name,
+      namespace: "sandbox",
+    },
     spec: {
       backoffLimit: 1,
-      ttlSecondsAfterFinished: 604800,
       template: {
         metadata: { labels: { app: "loop-agent" } },
         spec: {
           automountServiceAccountToken: false,
-          restartPolicy: "Never",
-          terminationGracePeriodSeconds: 120,
-          securityContext: { seccompProfile: { type: "RuntimeDefault" } },
           containers: [
             {
-              name: "loop",
+              env,
               image: IMAGE,
+              name: "loop",
+              resources: {
+                limits: { memory: "4Gi" },
+                requests: { cpu: "500m", memory: "1Gi" },
+              },
               securityContext: {
-                runAsNonRoot: true,
-                runAsUser: 1000,
                 allowPrivilegeEscalation: false,
                 capabilities: { drop: ["ALL"] },
+                runAsNonRoot: true,
+                runAsUser: 1000,
               },
-              env,
               volumeMounts: [
-                { name: "data", mountPath: "/data" },
-                { name: "github-token", mountPath: "/secrets", readOnly: true },
-                { name: "github-token-writer", mountPath: "/secrets-writer", readOnly: true },
+                { mountPath: "/data", name: "data" },
+                { mountPath: "/secrets", name: "github-token", readOnly: true },
+                {
+                  mountPath: "/secrets-writer",
+                  name: "github-token-writer",
+                  readOnly: true,
+                },
               ],
-              resources: {
-                requests: { cpu: "500m", memory: "1Gi" },
-                limits: { memory: "4Gi" },
-              },
             },
           ],
+          restartPolicy: "Never",
+          securityContext: { seccompProfile: { type: "RuntimeDefault" } },
+          terminationGracePeriodSeconds: 120,
           volumes: [
-            { name: "data", emptyDir: { sizeLimit: "5Gi" } },
-            { name: "github-token", secret: { secretName: "github-token", optional: true } },
-            { name: "github-token-writer", secret: { secretName: "github-token-writer", optional: true } },
+            { emptyDir: { sizeLimit: "5Gi" }, name: "data" },
+            {
+              name: "github-token",
+              secret: { optional: true, secretName: "github-token" },
+            },
+            {
+              name: "github-token-writer",
+              secret: { optional: true, secretName: "github-token-writer" },
+            },
           ],
         },
       },
+      ttlSecondsAfterFinished: 604_800,
     },
   };
-}
+};
 
 export interface JobView {
   name: string;
@@ -93,26 +117,90 @@ export interface JobView {
   created: string | null;
 }
 
-export function viewJob(j: any): JobView {
-  const conds: any[] = j.status?.conditions ?? [];
-  const complete = conds.some((c) => c.type === "Complete" && c.status === "True");
-  const failed = conds.some((c) => c.type === "Failed" && c.status === "True");
-  const status = complete ? "complete" : failed ? "failed" : j.status?.active ? "running" : "pending";
-  const env: any[] = j.spec?.template?.spec?.containers?.[0]?.env ?? [];
-  const ev = (name: string) => env.find((e: any) => e.name === name)?.value ?? null;
-  const issue = ev("WATCHER_ISSUE") ?? (/^factory-issue-\d+/.test(j.metadata.name) ? (j.metadata.name.match(/^factory-issue-(\d+)/)?.[1] ?? null) : null);
-  const repo = ev("WATCHER_REPO") ?? (issue ? j.metadata.labels?.["factory.gwkline.io/repo"] ?? null : null);
-  const kind = j.metadata.name.startsWith("factory-")
-    ? `factory/${j.metadata.labels?.["factory.gwkline.io/profile"] ?? "worker"}`
-    : j.metadata.name.startsWith("panel-")
-      ? "loop-agent"
-      : "other";
-  const created = new Date(j.metadata.creationTimestamp ?? Date.now());
-  const seconds = Math.max(0, (Date.now() - created.getTime()) / 1000);
-  const age =
-    seconds < 90 ? `${Math.round(seconds)}s`
-    : seconds < 5400 ? `${Math.round(seconds / 60)}m`
-    : seconds < 172800 ? `${Math.round(seconds / 3600)}h`
-    : `${Math.round(seconds / 86400)}d`;
-  return { name: j.metadata.name, status, issue, age, repo, kind, created: j.metadata.creationTimestamp ?? null };
+interface JobCondition {
+  type?: string;
+  status?: string;
 }
+
+const jobStatus = (
+  conds: JobCondition[],
+  active: number
+): JobView["status"] => {
+  if (conds.some((c) => c.type === "Complete" && c.status === "True")) {
+    return "complete";
+  }
+  if (conds.some((c) => c.type === "Failed" && c.status === "True")) {
+    return "failed";
+  }
+  if (active > 0) {
+    return "running";
+  }
+  return "pending";
+};
+
+const jobKind = (
+  name: string,
+  labels: Record<string, string> | undefined
+): string => {
+  if (name.startsWith("factory-")) {
+    return `factory/${labels?.["factory.gwkline.io/profile"] ?? "worker"}`;
+  }
+  if (name.startsWith("panel-")) {
+    return "loop-agent";
+  }
+  return "other";
+};
+
+const formatAge = (seconds: number): string => {
+  if (seconds < 90) {
+    return `${Math.round(seconds)}s`;
+  }
+  if (seconds < 5400) {
+    return `${Math.round(seconds / 60)}m`;
+  }
+  if (seconds < 172_800) {
+    return `${Math.round(seconds / 3600)}h`;
+  }
+  return `${Math.round(seconds / 86_400)}d`;
+};
+
+// WATCHER_* env of the job's first container, or [] when absent.
+const firstContainerEnv = (j: K8sObject): { name: string; value: string }[] =>
+  j.spec?.template?.spec?.containers?.[0]?.env ?? [];
+
+const jobIssue = (j: K8sObject, name: string): string | null => {
+  const env = firstContainerEnv(j);
+  const fromEnv = env.find((e) => e.name === "WATCHER_ISSUE")?.value ?? null;
+  const fromName =
+    name.match(/^factory-issue-(?<num>\d+)/u)?.groups?.num ?? null;
+  return fromEnv ?? fromName;
+};
+
+const jobRepo = (j: K8sObject, issue: string | null): string | null => {
+  const env = firstContainerEnv(j);
+  const fromEnv = env.find((e) => e.name === "WATCHER_REPO")?.value ?? null;
+  const fromLabels =
+    issue === null
+      ? null
+      : (j.metadata?.labels?.["factory.gwkline.io/repo"] ?? null);
+  return fromEnv ?? fromLabels;
+};
+
+export const viewJob = (j: K8sObject): JobView => {
+  const conds = j.status?.conditions ?? [];
+  const name = j.metadata?.name ?? "";
+  const status = jobStatus(conds, j.status?.active ?? 0);
+  const issue = jobIssue(j, name);
+  const createdRaw = j.metadata?.creationTimestamp ?? null;
+  const created = new Date(createdRaw ?? Date.now());
+  const seconds = Math.max(0, (Date.now() - created.getTime()) / 1000);
+  return {
+    age: formatAge(seconds),
+    created: createdRaw,
+    issue,
+    kind: jobKind(name, j.metadata?.labels),
+    name,
+    repo: jobRepo(j, issue),
+    status,
+  };
+};

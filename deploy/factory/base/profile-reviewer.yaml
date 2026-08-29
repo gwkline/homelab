@@ -43,7 +43,7 @@ spec:
         - ipBlock: { cidr: 185.199.108.0/22 }
         # objects.githubusercontent.com (release asset CDN for gh binary is build-time only; runtime needs none)
         - ipBlock: { cidr: 104.16.0.0/12 }
-    - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    - ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
 ---
 # Least-privilege SA — no k8s API access at all.
 apiVersion: v1

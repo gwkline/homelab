@@ -28,20 +28,20 @@ if (!REPO || !COMMAND) {
 }
 
 const sh = (cmd, args, opts = {}) =>
-  execFileSync(cmd, args, { encoding: "utf8", ...opts });
+  execFileSync(cmd, args, { encoding: "utf-8", ...opts });
 
 const ghJson = (path) => JSON.parse(sh("gh", ["api", path]));
 
-function jobName(issueNumber) {
+const jobName = (issueNumber) => {
   const name = `${PREFIX}-issue-${issueNumber}`;
-  if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(name)) {
+  if (!/^[a-z0-9](?<mid>[-a-z0-9]*[a-z0-9])?$/u.test(name)) {
     throw new Error(`invalid job name derived: ${name}`);
   }
   return name;
-}
+};
 
-function jobManifest(name, issueNumber) {
-  return `
+const jobManifest = (name, issueNumber) =>
+  `
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -114,21 +114,22 @@ spec:
             secretName: github-token-writer
             optional: true
 `;
-}
 
 let issues;
 try {
   issues = ghJson(
-    `repos/${REPO}/issues?labels=${encodeURIComponent(LABEL)}&state=open&per_page=30`,
+    `repos/${REPO}/issues?labels=${encodeURIComponent(LABEL)}&state=open&per_page=30`
   );
-} catch (err) {
-  console.error(`[watcher] GitHub query failed: ${err.message}`);
+} catch (error) {
+  console.error(`[watcher] GitHub query failed: ${error.message}`);
   process.exit(1);
 }
 
 let dispatched = 0;
 for (const issue of issues) {
-  if (issue.pull_request) continue;
+  if (issue.pull_request) {
+    continue;
+  }
   const name = jobName(issue.number);
 
   try {
@@ -140,7 +141,9 @@ for (const issue of issues) {
   }
 
   if (DRY_RUN) {
-    console.log(`[watcher] would dispatch ${name} for #${issue.number}: ${issue.title}`);
+    console.log(
+      `[watcher] would dispatch ${name} for #${issue.number}: ${issue.title}`
+    );
     continue;
   }
 
@@ -150,8 +153,8 @@ for (const issue of issues) {
     });
     console.log(`[watcher] dispatched ${name} for #${issue.number}`);
     dispatched += 1;
-  } catch (err) {
-    console.error(`[watcher] failed to dispatch ${name}: ${err.message}`);
+  } catch (error) {
+    console.error(`[watcher] failed to dispatch ${name}: ${error.message}`);
     process.exit(1);
   }
 }
