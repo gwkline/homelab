@@ -36,6 +36,40 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+        # Skills sync: clone gwkline/.dotfiles at SYNC_REF and run the repo's
+        # own `dot install` (allowlist manifest + secret scan) into
+        # $HERMES_HOME/skills. Degrades explicitly on failure (#81): records
+        # skills-sync/status.json and exits 0 — the gateway starts on stale
+        # skills rather than refusing to boot during a GitHub outage.
+        - name: skills-sync
+          image: ghcr.io/gwkline/homelab/hermes
+          imagePullPolicy: Always
+          command: ["/opt/hermes/.venv/bin/python3", "/config/skills-sync.py"]
+          env:
+            - name: HERMES_HOME
+              value: /data/hermes
+            - name: GITHUB_TOKEN_FILE
+              value: /secrets/token
+            - name: SYNC_REF
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-skills-sync
+                  key: ref
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: github-token
+              mountPath: /secrets
+              readOnly: true
+            - name: skills-sync-config
+              mountPath: /config
+              readOnly: true
       containers:
         - name: hermes
           image: ghcr.io/gwkline/homelab/hermes
@@ -84,6 +118,12 @@ spec:
         - name: guide
           configMap:
             name: hermes-cluster-guide
+        - name: skills-sync-config
+          configMap:
+            name: hermes-skills-sync
+            items:
+              - key: sync.py
+                path: skills-sync.py
   volumeClaimTemplates:
     - metadata:
         name: data
