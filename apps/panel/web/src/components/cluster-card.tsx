@@ -29,8 +29,10 @@ const memGi = (memory: string | null): string | null => {
   if (memory === null) {
     return null;
   }
-  const m = /^(\d+(?:\.\d+)?)Ki$/u.exec(memory);
-  return m === null ? null : `${Math.trunc(Number(m[1]) / 1024 / 1024)}Gi`;
+  const m = /^(?<kibi>\d+(?:\.\d+)?)Ki$/u.exec(memory);
+  return m === null
+    ? null
+    : `${Math.trunc(Number(m.groups?.kibi) / 1024 / 1024)}Gi`;
 };
 
 const podPhaseClass = (phase: string): string => {
