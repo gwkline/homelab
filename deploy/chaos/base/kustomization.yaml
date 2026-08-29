@@ -8,7 +8,7 @@ labels:
     includeSelectors: false
 
 resources:
-  - rbac.yaml
+  - rbac-sandbox.yaml
   - configmap.yaml
   - netpol.yaml
   - cronjob.yaml

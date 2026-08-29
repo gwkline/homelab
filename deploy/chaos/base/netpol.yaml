@@ -22,3 +22,4 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]  # DNS — without it kubectl auth can-i / kubernetes.default resolution fail and every check errors

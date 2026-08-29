@@ -15,30 +15,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: chaos-monkey
-  namespace: agents
-rules:
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "watch", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: chaos-monkey
-  namespace: agents
-roleRef:
-  apiGroup: rbac.authorization.k8s.io/v1
-  kind: Role
-  name: chaos-monkey
-subjects:
-  - kind: ServiceAccount
-    name: chaos-monkey
-    namespace: sandbox
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: chaos-monkey
   namespace: sandbox
 rules:
   - apiGroups: [""]
@@ -51,10 +27,11 @@ metadata:
   name: chaos-monkey
   namespace: sandbox
 roleRef:
-  apiGroup: rbac.authorization.k8s.io/v1
+  apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: chaos-monkey
 subjects:
   - kind: ServiceAccount
     name: chaos-monkey
     namespace: sandbox
+
