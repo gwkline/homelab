@@ -39,6 +39,10 @@ done
 
 timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+# gh wrapper with a hard timeout: a hung GitHub connection must not wedge the
+# whole tick (CronJob activeDeadline then kills the pod mid-publish).
+gh() { timeout 60 /usr/local/bin/gh "$@"; }
+
 # ---- 1. find queued issues -------------------------------------------------
 # Panel manual trigger can pin a single issue via FACTORY_ISSUE env (avoids GH label propagation race).
 if [ -n "${FACTORY_ISSUE:-}" ]; then
