@@ -49,6 +49,9 @@ spec:
         - ipBlock: { cidr: 18.214.0.0/16 }      # index.crates.io
         - ipBlock: { cidr: 108.138.128.0/17 }    # static.crates.io CDN
     - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    - to:                           # in-cluster Kubernetes API (orchestrator spawns Jobs)
+        - ipBlock: { cidr: 10.43.0.1/32 }
+      ports: [{protocol: TCP, port: 443}]
 ---
 # Least-privilege SA: workers get NO Kubernetes API access at all.
 apiVersion: v1

@@ -11,6 +11,5 @@ resources:
   - profile-security.yaml
   - profile-reviewer.yaml
   - orchestrator-cronjob.yaml
-  - orchestrator-netpol.yaml
   - security-cronjob.yaml
   - reviewer-cronjob.yaml
