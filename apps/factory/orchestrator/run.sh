@@ -44,7 +44,11 @@ gh() { timeout 60 /usr/local/bin/gh "$@"; }
 kubectl() { timeout 120 /usr/local/bin/kubectl "$@"; }
 # git network ops: 5 min ceiling; clones/pushes either work fast or the tick
 # fails visibly instead of stalling.
-gitt() { timeout 300 /usr/local/bin/git "$@"; }
+# git lives in /usr/bin on debian:bookworm-slim (apt package) — resolve via
+# PATH instead of hardcoding /usr/local/bin (Dockerfile only installs gh and
+# kubectl there). #116 hardcoded the wrong path; every publish tick died with
+# "timeout: failed to run command '/usr/local/bin/git'".
+gitt() { timeout 300 /usr/bin/git "$@"; }
 timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 NUM=""
