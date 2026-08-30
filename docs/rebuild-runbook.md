@@ -58,7 +58,12 @@ kubectl apply -k deploy/panel/base         # admin portal (https://panel.$TAILNE
 # 3b. HTTPS for tailscale-proxied services (one-time tailnet approval already
 # granted; re-run after operator reinstall or proxy pod replacement)
 ./scripts/serve-https.sh                   # t3code
-# panel — or any exposed app: serve-refresh.sh <app> <namespace>.
+# Automatic self-healing: the t3code serve-fixer (deploy/tailscale/) runs a
+# loop in the tailscale namespace that re-points the serve entry at the app
+# pod's current IP within ~30s of a pod replacement, logging one line per
+# check; unreachable proxy pods fail loudly (container restarts, error in
+# `kubectl logs -n tailscale deploy/t3code-serve-fixer`). panel — or any
+# exposed app: serve-refresh.sh <app> <namespace>.
 # Also the one-command fix whenever a replaced app pod leaves its serve
 # entry pointing at a dead IP (502s): it re-points the entry at the current
 # pod IP, idempotently, printing serve status before/after.

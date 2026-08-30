@@ -21,10 +21,17 @@ while true; do
   PROXY_POD=$(kubectl get pods -n "$TS_NS" --no-headers | grep "ts-${SVC_NAME}" | awk '$3=="Running"{print $1}' | head -1)
   if [ -z "$PROXY_POD" ]; then echo "waiting for proxy pod..."; sleep 15; continue; fi
 
-  CURRENT=$(kubectl exec -n "$TS_NS" "$PROXY_POD" -- tailscale serve status 2>/dev/null || true)
+  # Surface exec failures instead of swallowing them: a proxy pod that
+  # cannot be reached must be visible in pod logs (issue #110), so let the
+  # nonzero exit propagate and restart the container rather than loop
+  # silently forever.
+  CURRENT=$(kubectl exec -n "$TS_NS" "$PROXY_POD" -- tailscale serve status 2>/dev/null)
   if ! echo "$CURRENT" | grep -q "proxy http://${APP_IP}:3773"; then
     echo "$(date -u +%H:%M:%S) fixing serve -> ${APP_IP}:3773"
-    kubectl exec -n "$TS_NS" "$PROXY_POD" -- tailscale serve --bg --http=80 "http://${APP_IP}:3773" >/dev/null 2>&1 || true
+    kubectl exec -n "$TS_NS" "$PROXY_POD" -- tailscale serve --bg --http=80 "http://${APP_IP}:3773" >/dev/null
+    echo "$(date -u +%H:%M:%S) re-pointed serve entry for ${SVC_NAME} at ${APP_IP}:3773"
+  else
+    echo "$(date -u +%H:%M:%S) serve entry for ${SVC_NAME} already targets ${APP_IP}:3773; nothing to do"
   fi
   sleep 30
 done
