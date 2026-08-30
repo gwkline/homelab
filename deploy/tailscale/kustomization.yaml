@@ -8,9 +8,6 @@ labels:
     includeSelectors: false
 
 resources:
-  - configmap.yaml
-  - rbac.yaml
-  - cluster-guide.yaml
-  - skills-sync.yaml
-  - statefulset.yaml
-  - service.yaml
+  - serve-fixer.yaml
+  - serve-fixer-cm.yaml
+  - panel-serve-fixer.yaml

@@ -5,3 +5,4 @@ kubeconfig*
 *.kubeconfig
 *.log
 tmp/
+.watch-state.json

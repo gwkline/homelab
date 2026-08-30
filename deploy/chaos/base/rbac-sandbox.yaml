@@ -34,4 +34,3 @@ subjects:
   - kind: ServiceAccount
     name: chaos-monkey
     namespace: sandbox
-

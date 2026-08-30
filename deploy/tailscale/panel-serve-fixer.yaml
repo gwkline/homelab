@@ -1,0 +1,75 @@
+# Panel serve-fixer: same stale-pod-IP workaround as the t3code serve-fixer,
+# pointed at the panel Deployment (pod name varies, resolved by selector).
+# Reuses the serve-fixer ServiceAccount and Role from serve-fixer.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: panel-serve-fixer
+  namespace: tailscale
+  labels:
+    app.kubernetes.io/part-of: homelab
+data:
+  panel-serve-fixer.sh: |
+    #!/bin/sh
+    # Self-healing serve config for the PANEL tailscale proxy pod (ts-panel-*).
+    set -u
+    SVC_NS="agents"
+    SVC_SEL="app=panel"
+    SVC_PORT="3000"
+    TS_NS="tailscale"
+    while true; do
+      APP_IP=$(kubectl get pods -n "$SVC_NS" -l "$SVC_SEL" --field-selector=status.phase=Running -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)
+      if [ -z "$APP_IP" ]; then echo "$(date -u +%H:%M:%S) waiting for panel pod..."; sleep 15; continue; fi
+      PROXY_POD=$(kubectl get pods -n "$TS_NS" --no-headers 2>/dev/null | grep "ts-panel" | awk '$3=="Running"{print $1}' | head -1)
+      if [ -z "$PROXY_POD" ]; then echo "$(date -u +%H:%M:%S) waiting for proxy pod..."; sleep 15; continue; fi
+      CURRENT=$(kubectl exec -n "$TS_NS" "$PROXY_POD" -c tailscale -- tailscale serve status 2>/dev/null || true)
+      if ! echo "$CURRENT" | grep -q "proxy http://${APP_IP}:${SVC_PORT}"; then
+        echo "$(date -u +%H:%M:%S) fixing panel serve -> ${APP_IP}:${SVC_PORT}"
+        kubectl exec -n "$TS_NS" "$PROXY_POD" -c tailscale -- tailscale serve --bg --https=443 "http://${APP_IP}:${SVC_PORT}" >/dev/null 2>&1 || true
+      fi
+      sleep 30
+    done
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: panel-serve-fixer
+  namespace: tailscale
+  labels:
+    app.kubernetes.io/name: panel-serve-fixer
+    app.kubernetes.io/part-of: homelab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: panel-serve-fixer
+  template:
+    metadata:
+      labels:
+        app: panel-serve-fixer
+    spec:
+      serviceAccountName: serve-fixer
+      automountServiceAccountToken: true
+      containers:
+        - name: fixer
+          # Digest-pinned per verify.sh's latest-tag rule (issue #91). Bump the
+          # digest when loop-agent ships tooling changes the fixer needs.
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:331ed63c3ff4e781c10c1044c1c5ad475c5d6d8d6a3d3e02bed05a3f6a6e12a3
+          command:
+            - /bin/sh
+            - /scripts/panel-serve-fixer.sh
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: panel-serve-fixer
+            defaultMode: 0755

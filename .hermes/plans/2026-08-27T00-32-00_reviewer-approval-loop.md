@@ -53,20 +53,18 @@ factory/failed  (CI red / review changes-requested → stays, nudge)
 **Objective:** Nail the label transitions and panel API shapes before code so implementers have a spec to test against.
 
 **Files:**
+
 - Modify: `docs/factory-v1-github-ledger.md:28-42` (add `needs-review`, `approved`, `shipped` rows + `PR isDraft/reviewDecision` mapping)
 - Create: `.hermes/plans/2026-08-27_reviewer-contract.md` (temporary, merged into doc)
 
 **Step 1: Write failing doc test**
 
-Run: `grep -c "needs-review" docs/factory-v1-github-ledger.md`
-Expected: `0` (fails — doc doesn't yet describe reviewer)
+Run: `grep -c "needs-review" docs/factory-v1-github-ledger.md` Expected: `0` (fails — doc doesn't yet describe reviewer)
 
 **Step 2: Add state rows**
 
 ```markdown
-| needs-review | `factory/needs-review` | PR draft→ready or reviewRequested, CI green, awaiting human |
-| approved     | `factory/approved`     | PR approved (`APPROVED`), CI green |
-| shipped      | `factory/shipped` (or label removed + issue closed) | PR merged |
+| needs-review | `factory/needs-review` | PR draft→ready or reviewRequested, CI green, awaiting human | | approved | `factory/approved` | PR approved (`APPROVED`), CI green | | shipped | `factory/shipped` (or label removed + issue closed) | PR merged |
 ```
 
 Also note: `factory/draft-pr` remains until merge; reviewer adds `factory/needs-review` when `isDraft:false` or `reviewRequested`.
@@ -81,8 +79,7 @@ POST /api/factory/merge  {repo, pr, strategy:"squash"|"merge"|"rebase"} → gh p
 
 **Step 4: Verify**
 
-Run: `grep -c "needs-review" docs/factory-v1-github-ledger.md`
-Expected: `>=1` PASS
+Run: `grep -c "needs-review" docs/factory-v1-github-ledger.md` Expected: `>=1` PASS
 
 **Step 5: Commit**
 
@@ -98,14 +95,14 @@ git commit -m "docs(factory): extend ledger with needs-review/approved/shipped"
 **Objective:** Create the reviewer worker image that can poll GH and act, without any LLM.
 
 **Files:**
+
 - Create: `apps/factory/reviewer/Dockerfile`
 - Create: `apps/factory/reviewer/run-reviewer.sh` (stub, `echo not yet`)
 - Modify: `.github/workflows/ci.yaml:30-41` (add `- app: factory/reviewer`)
 
 **Step 1: Failing build test**
 
-Run: `docker build -f apps/factory/reviewer/Dockerfile . 2>&1 | tail -5`
-Expected: FAIL — file missing
+Run: `docker build -f apps/factory/reviewer/Dockerfile . 2>&1 | tail -5` Expected: FAIL — file missing
 
 **Step 2: Minimal Dockerfile (reuse orchestrator base, not worker)**
 
@@ -128,11 +125,9 @@ ENTRYPOINT ["/reviewer/run-reviewer.sh"]
 
 **Step 3: Verify**
 
-Run: `docker build -f apps/factory/reviewer/Dockerfile -t ghcr.io/gwkline/homelab/factory/reviewer:test . 2>&1 | tail -10; echo $?`
-Expected: `0` (image builds, run-reviewer.sh is stub)
+Run: `docker build -f apps/factory/reviewer/Dockerfile -t ghcr.io/gwkline/homelab/factory/reviewer:test . 2>&1 | tail -10; echo $?` Expected: `0` (image builds, run-reviewer.sh is stub)
 
-Run: `grep -c "factory/reviewer" .github/workflows/ci.yaml`
-Expected: `1`
+Run: `grep -c "factory/reviewer" .github/workflows/ci.yaml` Expected: `1`
 
 **Step 4: Commit**
 
@@ -148,11 +143,13 @@ git commit -m "feat(factory): scaffold reviewer image (harness-agnostic)"
 **Objective:** Read-only reviewer that never mutates PRs yet — just observes and comments so you can see the loop working before enabling writes.
 
 **Files:**
+
 - Modify: `apps/factory/reviewer/run-reviewer.sh:1-260`
 
 **Step 1: Failing behavior test**
 
 Create `apps/factory/reviewer/tests/review.test.sh`:
+
 ```bash
 #!/bin/bash
 set -e
@@ -161,12 +158,13 @@ gh() { case "$*" in *"pr list"*) echo '[{"number":8,"isDraft":true,"reviewDecisi
 export -f gh
 ./apps/factory/reviewer/run-reviewer.sh; test $? -eq 0
 ```
-Run: `bash apps/factory/reviewer/tests/review.test.sh`
-Expected: FAIL — script not yet polling `factory/draft-pr`
+
+Run: `bash apps/factory/reviewer/tests/review.test.sh` Expected: FAIL — script not yet polling `factory/draft-pr`
 
 **Step 2: Implement read-only poll**
 
 Key logic (sh, no LLM):
+
 ```sh
 #!/bin/sh
 set -eu
@@ -186,8 +184,7 @@ echo "[reviewer] done"
 
 **Step 3: Verify**
 
-Run: `shellcheck apps/factory/reviewer/run-reviewer.sh` → PASS (add to `scripts/verify.sh` glob)
-Run: `bash apps/factory/reviewer/tests/review.test.sh` → PASS
+Run: `shellcheck apps/factory/reviewer/run-reviewer.sh` → PASS (add to `scripts/verify.sh` glob) Run: `bash apps/factory/reviewer/tests/review.test.sh` → PASS
 
 **Step 4: Commit**
 
@@ -203,6 +200,7 @@ git commit -m "feat(factory): reviewer polls draft-pr and reports status (read-o
 **Objective:** Make `factory-reviewer` schedulable alongside `factory-orchestrator`/`factory-security` without privilege creep.
 
 **Files:**
+
 - Create: `deploy/factory/base/profile-reviewer.yaml` (ConfigMap `factory-profile-reviewer` + `NetworkPolicy allow-factory-reviewer` (github.com + ghcr + DNS only) + `ServiceAccount factory-reviewer automount:false`)
 - Create: `deploy/factory/base/reviewer-cronjob.yaml` (`CronJob factory-reviewer`, `schedule: "0 */12 * * *"` (2/day, after `factory-security 0 4`), `Forbid`, `suspend:true` initially, `serviceAccountName: factory-reviewer`, `readOnlyRootFilesystem:true`, `resources 100m/128Mi`, env `FACTORY_REPO=gwkline/launchpad`, `GH_TOKEN` from `github-token`)
 - Modify: `deploy/factory/base/kustomization.yaml:resources` (add both)
@@ -210,15 +208,13 @@ git commit -m "feat(factory): reviewer polls draft-pr and reports status (read-o
 
 **Step 1: Failing kustomize test**
 
-Run: `kubectl kustomize deploy/factory/base 2>&1 | grep -c "factory-reviewer"`
-Expected: `0`
+Run: `kubectl kustomize deploy/factory/base 2>&1 | grep -c "factory-reviewer"` Expected: `0`
 
 **Step 2: Add files (copy `security-cronjob.yaml` structure, swap `security → reviewer`, image `ghcr.io/gwkline/homelab/factory/reviewer:latest`)**
 
 **Step 3: Verify**
 
-Run: `kubectl kustomize deploy/factory/base 2>&1 | grep -E "kind:|name: factory-"` → should show `factory-orchestrator`, `factory-security`, `factory-reviewer` (3 CronJobs)
-Run: `./scripts/verify.sh` → `ALL CHECKS PASSED`
+Run: `kubectl kustomize deploy/factory/base 2>&1 | grep -E "kind:|name: factory-"` → should show `factory-orchestrator`, `factory-security`, `factory-reviewer` (3 CronJobs) Run: `./scripts/verify.sh` → `ALL CHECKS PASSED`
 
 **Step 4: Commit**
 
@@ -234,20 +230,24 @@ git commit -m "feat(factory): wire reviewer CronJob and profile (kustomize)"
 **Objective:** Panel can list PRs that are `factory/draft-pr` with live CI + review status, so you see what's stuck.
 
 **Files:**
+
 - Modify: `apps/panel/server/index.ts:70-89` (add new endpoint after `/api/factory/issues`)
 - Modify: `apps/panel/tests/panel.test.mjs` (mock new endpoint)
 
 **Step 1: Failing test**
 
 Add to `panel.test.mjs`:
+
 ```js
-const r = await fetch(`http://127.0.0.1:${port}/api/factory/prs?repo=gwkline/launchpad`);
+const r = await fetch(
+  `http://127.0.0.1:${port}/api/factory/prs?repo=gwkline/launchpad`
+);
 assert.equal(r.status, 200);
 const j = await r.json();
 assert.ok(Array.isArray(j.prs));
 ```
-Run: `node --test apps/panel/tests/panel.test.mjs`
-Expected: FAIL — 404
+
+Run: `node --test apps/panel/tests/panel.test.mjs` Expected: FAIL — 404
 
 **Step 2: Implement endpoint**
 
@@ -266,8 +266,7 @@ Use `ghFetch` (already has token + error mapping) + parallel `Promise.all`.
 
 **Step 3: Verify**
 
-Run: `node --test apps/panel/tests/panel.test.mjs` → PASS
-Run: `curl http://127.0.0.1:18082/api/factory/prs?repo=gwkline/launchpad | jq .prs[0]` → shows PR #8 etc with `isDraft`, `reviewDecision`
+Run: `node --test apps/panel/tests/panel.test.mjs` → PASS Run: `curl http://127.0.0.1:18082/api/factory/prs?repo=gwkline/launchpad | jq .prs[0]` → shows PR #8 etc with `isDraft`, `reviewDecision`
 
 **Step 4: Commit**
 
@@ -283,26 +282,31 @@ git commit -m "feat(panel): GET /api/factory/prs — review queue (read-only)"
 **Objective:** One-click approve / request-changes / merge from the panel, reusing the same tailnet trust model as `POST /api/factory/run`.
 
 **Files:**
+
 - Modify: `apps/panel/server/index.ts:159-200` (add two POST handlers)
 
 **Step 1: Failing test**
 
 ```js
-const r = await fetch(`.../api/factory/review`, {method:"POST", body:JSON.stringify({repo, pr:8, event:"APPROVE"})});
+const r = await fetch(`.../api/factory/review`, {
+  method: "POST",
+  body: JSON.stringify({ repo, pr: 8, event: "APPROVE" }),
+});
 assert.equal(r.status, 200);
 ```
+
 Expected: 404
 
 **Step 2: Implement (with profile allowlist parity)**
 
 ```ts
 app.post("/api/factory/review", async (c) => {
-  const {repo, pr, event, body} = await c.req.json();
+  const { repo, pr, event, body } = await c.req.json();
   // validate repo ∈ FACTORY_REPOS, pr ∈ [1,1e6], event ∈ {APPROVE, REQUEST_CHANGES, COMMENT}
   // ghFetch POST /repos/${repo}/pulls/${pr}/reviews {event, body}
 });
 app.post("/api/factory/merge", async (c) => {
-  const {repo, pr, strategy} = await c.req.json();
+  const { repo, pr, strategy } = await c.req.json();
   // strategy ∈ {squash, merge, rebase}, default squash
   // check pr via GET /pulls/${pr} → must be isDraft==false or ready, reviewDecision==APPROVED, statusCheckRollup success
   // then ghFetch PUT /repos/${repo}/pulls/${pr}/merge {merge_method, commit_title}
@@ -313,8 +317,8 @@ Add guard: `pr` must be `factory/issue-*/` head (prevent merging arbitrary PRs).
 
 **Step 3: Verify**
 
-Run: `node --test apps/panel/tests/panel.test.mjs` → PASS
-Live smoke (port-forward 18082):
+Run: `node --test apps/panel/tests/panel.test.mjs` → PASS Live smoke (port-forward 18082):
+
 ```bash
 curl -X POST http://127.0.0.1:18082/api/factory/review -H 'content-type: application/json' -d '{"repo":"gwkline/launchpad","pr":8,"event":"APPROVE","body":"LGTM via panel"}'
 # expect 200 {review_id}
@@ -334,15 +338,18 @@ git commit -m "feat(panel): approve/merge PRs from review queue"
 **Objective:** Show the 6 stale drafts and let you approve/merge without leaving `panel.tailc3cc03.ts.net`.
 
 **Files:**
+
 - Modify: `apps/panel/web/src/App.tsx:130-180` (new `<Card title="review queue">` between Factory and `launch a run`)
 - Modify: `apps/panel/web/src/components/ui.tsx` (optional `Button variant="ghost"` for approve)
 
 **Step 1: Failing visual test**
 
 Run: `npm --prefix apps/panel run build` → works, but UI has no "review queue" string.
+
 ```bash
 grep -q "review queue" apps/panel/web/src/App.tsx || exit 1
 ```
+
 Expected: FAIL
 
 **Step 2: Implement card**
@@ -356,8 +363,7 @@ Re-use `FactoryIssue` fetch pattern (`useEffect` + `setInterval`).
 
 **Step 3: Verify**
 
-Run: `npm --prefix apps/panel run build` → `assets/index-*.js` built.
-Manual: `http://127.0.0.1:18082` (port-forward `agents/deployment/panel 18082:3000`) shows queue with PR #8 etc.
+Run: `npm --prefix apps/panel run build` → `assets/index-*.js` built. Manual: `http://127.0.0.1:18082` (port-forward `agents/deployment/panel 18082:3000`) shows queue with PR #8 etc.
 
 **Step 4: Commit**
 
@@ -373,6 +379,7 @@ git commit -m "feat(panel): review queue card — approve/merge drafts"
 **Objective:** When you opt-in, `factory-reviewer` stops being read-only and posts idempotent comments + flips labels: `draft-pr → needs-review → approved → merge`.
 
 **Files:**
+
 - Modify: `apps/factory/reviewer/run-reviewer.sh:1-100` (add write branch, guarded by `FACTORY_REVIEWER_AUTO_MERGE=false` env)
 
 **Step 1: Add env gate**
@@ -393,8 +400,7 @@ Respect branch protection: `gh pr merge` will fail if `reviewDecision != APPROVE
 
 **Step 3: Verify**
 
-Dry-run: `FACTORY_REVIEWER_AUTO_MERGE=false ./apps/factory/reviewer/run-reviewer.sh` → only echoes, no `gh pr merge`.
-Enable: set env true + `gh pr list --json reviewDecision` returns `APPROVED` → `gh pr merge` called.
+Dry-run: `FACTORY_REVIEWER_AUTO_MERGE=false ./apps/factory/reviewer/run-reviewer.sh` → only echoes, no `gh pr merge`. Enable: set env true + `gh pr list --json reviewDecision` returns `APPROVED` → `gh pr merge` called.
 
 **Step 4: Commit**
 
@@ -410,6 +416,7 @@ git commit -m "feat(factory): reviewer auto-promote behind flag (off by default)
 **Objective:** Prove the loop closes: `factory/queued → draft-pr → needs-review → approved → merged → shipped` for one real issue.
 
 **Files:**
+
 - None (validation only) — optionally `docs/factory-v1-github-ledger.md` final note
 
 **Step 1: Pick a candidate**
@@ -425,8 +432,7 @@ Use `gwkline/launchpad#3` (enhancement, no draft yet) — or create a fresh `tes
 
 **Step 3: Kustomize + verify + CI**
 
-Run: `./scripts/verify.sh` → `ALL CHECKS PASSED`
-Run: `kubectl kustomize deploy/factory/base | grep -E "kind:|name: factory-"` → 3 CronJobs visible
+Run: `./scripts/verify.sh` → `ALL CHECKS PASSED` Run: `kubectl kustomize deploy/factory/base | grep -E "kind:|name: factory-"` → 3 CronJobs visible
 
 PR: `feat(factory): reviewer/approval loop` → CI `validate + build (factory/reviewer, panel, factory/*)` green → `gh pr merge --squash --admin` (branch protection as before).
 

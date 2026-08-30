@@ -15,8 +15,8 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      activeDeadlineSeconds: 3900        # 65 min: covers 3600s worker + publish overhead
-      backoffLimit: 0                    # a failed tick stays failed — visible
+      activeDeadlineSeconds: 3900 # 65 min: covers 3600s worker + publish overhead
+      backoffLimit: 0 # a failed tick stays failed — visible
       template:
         metadata:
           labels:
@@ -24,7 +24,7 @@ spec:
         spec:
           restartPolicy: Never
           serviceAccountName: factory-orchestrator
-          automountServiceAccountToken: true   # needs k8s API to spawn worker Jobs
+          automountServiceAccountToken: true # needs k8s API to spawn worker Jobs
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -34,7 +34,7 @@ spec:
               image: ghcr.io/gwkline/homelab/factory/orchestrator
               env:
                 - name: FACTORY_REPO
-                  value: gwkline/homelab         # self-iteration target per operator
+                  value: gwkline/homelab # self-iteration target per operator
                 - name: OPENCODE_AUTH_B64
                   valueFrom:
                     secretKeyRef: { name: factory-opencode-auth, key: auth-b64 }
@@ -42,10 +42,11 @@ spec:
                   value: "opencode run"
                 - name: GH_TOKEN
                   valueFrom:
-                    secretKeyRef: { name: github-token, key: token, optional: false }
+                    secretKeyRef:
+                      { name: github-token, key: token, optional: false }
               resources:
                 requests: { cpu: 100m, memory: 128Mi }
-                limits:   { cpu: 500m, memory: 512Mi }
+                limits: { cpu: 500m, memory: 512Mi }
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities: { drop: ["ALL"] }
@@ -78,7 +79,7 @@ rules:
     resources: ["pods", "pods/log"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
-    resources: ["pods/exec"]             # kubectl cp for patch retrieval
+    resources: ["pods/exec"] # kubectl cp for patch retrieval
     verbs: ["create", "get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -86,6 +87,11 @@ kind: RoleBinding
 metadata:
   name: factory-orchestrator
   namespace: sandbox
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: factory-orchestrator }
+roleRef:
+  {
+    apiGroup: rbac.authorization.k8s.io,
+    kind: Role,
+    name: factory-orchestrator,
+  }
 subjects:
   - { kind: ServiceAccount, name: factory-orchestrator, namespace: sandbox }

@@ -1,15 +1,14 @@
 # Server cluster runbook
 
-From bare hardware to a working two-node agent cluster. Everything after
-Step 3 happens over SSH — no monitor needed once the OS is installed.
+From bare hardware to a working two-node agent cluster. Everything after Step 3 happens over SSH — no monitor needed once the OS is installed.
 
 Replace throughout:
 
-| Placeholder | Meaning |
-|---|---|
-| `<user>` | your username on the servers |
-| `<node1-ip>` / `<node2-ip>` | LAN IPs of server 1 / 2 |
-| `<github-user>` | GitHub username |
+| Placeholder                 | Meaning                      |
+| --------------------------- | ---------------------------- |
+| `<user>`                    | your username on the servers |
+| `<node1-ip>` / `<node2-ip>` | LAN IPs of server 1 / 2      |
+| `<github-user>`             | GitHub username              |
 
 ---
 
@@ -24,18 +23,15 @@ Replace throughout:
 
 Do this while you still have a monitor attached. Exact names vary by vendor:
 
-- **Restore on AC Power Loss → Power On** (or "Auto Power On") — so machines
-  come back after an outage without you driving across the apartment
+- **Restore on AC Power Loss → Power On** (or "Auto Power On") — so machines come back after an outage without you driving across the apartment
 - **Boot mode → UEFI** (disable CSM/Legacy)
-- Disable **Secure Boot** if present (avoids driver/MOK friction later;
-  optional on Ubuntu but simpler)
+- Disable **Secure Boot** if present (avoids driver/MOK friction later; optional on Ubuntu but simpler)
 - Note the machine's RAM/CPU for capacity planning later
 
 ## 2. Install Ubuntu Server 24.04 LTS (per machine)
 
 1. Download `ubuntu-24.04.x-live-server-amd64.iso`
-2. Flash to USB: [balenaEtcher](https://etcher.balena.io/) (macOS/Win/Linux)
-   or `dd` if you know it
+2. Flash to USB: [balenaEtcher](https://etcher.balena.io/) (macOS/Win/Linux) or `dd` if you know it
 3. Boot from USB, installer choices:
    - Keyboard/locale: yours
    - Type: **Ubuntu Server** (default, no snap extras needed)
@@ -44,8 +40,7 @@ Do this while you still have a monitor attached. Exact names vary by vendor:
    - Profile: name `<user>`, hostname `agent-1` / `agent-2`, your password
    - **[x] Install OpenSSH server** ← the important checkbox
    - Skip all featured snaps
-4. Reboot, remove USB. The installer summary screen shows the IP — write it
-   down (`<node1-ip>`). If you miss it, it's also in your router's client list.
+4. Reboot, remove USB. The installer summary screen shows the IP — write it down (`<node1-ip>`). If you miss it, it's also in your router's client list.
 
 ## 3. Bootstrap both machines (first SSH, from your laptop)
 
@@ -87,9 +82,7 @@ sudo k3s kubectl get nodes   # both nodes Ready within ~60s
 
 ## 4. Drive the cluster from your laptop
 
-Install kubectl if you don't have it (macOS: `brew install kubectl`;
-otherwise see the [official docs](https://kubernetes.io/docs/tasks/tools/)).
-The kubeconfig is root-only on the node, so fetch it with sudo over SSH:
+Install kubectl if you don't have it (macOS: `brew install kubectl`; otherwise see the [official docs](https://kubernetes.io/docs/tasks/tools/)). The kubeconfig is root-only on the node, so fetch it with sudo over SSH:
 
 ```sh
 ssh <user>@<node1-ip> sudo cat /etc/rancher/k3s/k3s.yaml > ~/kubeconfig-homelab
@@ -102,8 +95,7 @@ kubectl get nodes
 
 ## 5. Tailscale operator (tailnet HTTPS for services)
 
-1. Log into https://login.tailscale.com/admin/settings/oauth → generate an
-   OAuth client (no extra scopes needed)
+1. Log into https://login.tailscale.com/admin/settings/oauth → generate an OAuth client (no extra scopes needed)
 2. Install Helm anywhere kubectl works:
 
 ```sh
@@ -118,8 +110,7 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
 
 ## 6. Secrets (private repo access)
 
-Fine-grained PAT: https://github.com/settings/personal-access-tokens/new →
-Repository access: pick your repos → Permissions: Contents **Read-only**.
+Fine-grained PAT: https://github.com/settings/personal-access-tokens/new → Repository access: pick your repos → Permissions: Contents **Read-only**.
 
 ```sh
 ./scripts/create-github-secret.sh agents sandbox   # paste PAT when prompted
@@ -127,11 +118,9 @@ Repository access: pick your repos → Permissions: Contents **Read-only**.
 
 ## 7. Make images pullable
 
-CI built `ghcr.io/<github-user>/homelab/{t3code,loop-agent,hermes}` on push
-(check the Actions tab). Either:
+CI built `ghcr.io/<github-user>/homelab/{t3code,loop-agent,hermes}` on push (check the Actions tab). Either:
 
-- **Easy**: github.com → your profile → Packages → each package →
-  Package settings → Change visibility → Public, **or**
+- **Easy**: github.com → your profile → Packages → each package → Package settings → Change visibility → Public, **or**
 - Private: create pull secrets per namespace (see main README).
 
 If the StatefulSet pods sit in `ImagePullBackoff`, this is why.
@@ -192,9 +181,7 @@ kubectl get svc panel -n agents      # tailnet hostname
 # deploy/homepage/base/configmap.yaml to link it from the dashboard
 ```
 
-**dispatcher** (optional, issue-driven runs): requires hermes' RBAC (applied
-above) and a PAT in secret `github-token` for API reads. Edit the repo and
-command in `deploy/dispatcher/base/cronjob.yaml`, then:
+**dispatcher** (optional, issue-driven runs): requires hermes' RBAC (applied above) and a PAT in secret `github-token` for API reads. Edit the repo and command in `deploy/dispatcher/base/cronjob.yaml`, then:
 
 ```sh
 kubectl apply -k deploy/dispatcher/base
@@ -208,14 +195,12 @@ kubectl apply -k deploy/dispatcher/base
 ./bootstrap/bootstrap.sh agent <node1-ip>   # same token, same cluster
 ```
 
-PVC data on the dead node is gone by definition — everything else converges
-from git. For t3code repos: they re-clone automatically. Unpushed work in an
-agent workspace is unrecoverable, which is the deal you signed up for.
+PVC data on the dead node is gone by definition — everything else converges from git. For t3code repos: they re-clone automatically. Unpushed work in an agent workspace is unrecoverable, which is the deal you signed up for.
 
 ## Troubleshooting quick hits
 
 | Symptom | Fix |
-|---|---|
+| --- | --- |
 | `ImagePullBackoff` | Section 7 |
 | Pod `CreateContainerError` privileged | workload landed in wrong namespace |
 | t3code pairing fails over tailnet | check NetworkPolicy allowed tailscale ns |
@@ -224,9 +209,7 @@ agent workspace is unrecoverable, which is the deal you signed up for.
 
 ## 11. Nightly backups (off until you enable them)
 
-PVC data (agent home dirs, hermes memory) can be backed up encrypted to
-object storage every night at 03:30. Git repos are skipped — they re-clone.
-Nothing runs until both steps below are done.
+PVC data (agent home dirs, hermes memory) can be backed up encrypted to object storage every night at 03:30. Git repos are skipped — they re-clone. Nothing runs until both steps below are done.
 
 One-time setup:
 
@@ -235,11 +218,9 @@ One-time setup:
 kubectl apply -k deploy/backup/base
 ```
 
-Save the restic password somewhere other than this cluster. Losing it means
-losing the backups.
+Save the restic password somewhere other than this cluster. Losing it means losing the backups.
 
-Verify it ran: `kubectl logs job/restic-backup-<id> -n backup`. Restore from
-any machine with the same credentials and bucket access:
+Verify it ran: `kubectl logs job/restic-backup-<id> -n backup`. Restore from any machine with the same credentials and bucket access:
 
 ```sh
 docker run --rm -it -v "$PWD:/restore" -e RESTIC_REPOSITORY=b2:<bucket>/homelab \
@@ -249,10 +230,7 @@ docker run --rm -it -v "$PWD:/restore" -e RESTIC_REPOSITORY=b2:<bucket>/homelab 
 
 ## 12. Experimental: gVisor for sandbox pods
 
-Runs loop-agent containers under gVisor's userspace kernel so kernel-level
-escapes from the privileged dind sidecar get much harder. **Untested on this
-cluster so far** — nested Docker inside gVisor is known to be rough. Verify
-the smoke test passes before relying on it.
+Runs loop-agent containers under gVisor's userspace kernel so kernel-level escapes from the privileged dind sidecar get much harder. **Untested on this cluster so far** — nested Docker inside gVisor is known to be rough. Verify the smoke test passes before relying on it.
 
 Per node, install runsc and register it with k3s containerd:
 

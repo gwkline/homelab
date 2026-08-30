@@ -1,14 +1,16 @@
 {
   "name": "panel",
-  "private": true,
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "scripts": {
     "build:web": "vite build",
     "build:server": "esbuild server/index.ts server/k8s.ts server/jobs.ts server/devtools.ts --bundle --platform=node --format=esm --outdir=dist",
     "build": "npm run build:web && npm run build:server",
-    "test": "node --test tests/*.mjs",
-    "dev": "vite"
+    "test": "npm run build:server && node --experimental-strip-types --test tests/*.test.ts",
+    "dev": "vite",
+    "lint": "cd ../.. && npx oxlint apps/panel",
+    "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",
