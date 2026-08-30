@@ -136,14 +136,34 @@ fi
 git diff --cached --binary > "${OUT}/patch.diff"
 
 # --- verification ----------------------------------------------------------
+# The default verify for repos without a specific command is diff-scoped, not
+# fixed-file: every changed *.sh gets parsed (dash -n is in the base image),
+# so "verify passes" carries signal about the patch, not one arbitrary file.
 TESTS="not-run"
 if [ -n "${VERIFY}" ]; then
   echo "[worker] running verify: ${VERIFY}"
   if sh -c "${VERIFY}"; then TESTS="passed"; else TESTS="failed"; fi
 else
-  TESTS="no-command-configured"
+  CHANGED_SH=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.sh$' || true)
+  if [ -n "${CHANGED_SH}" ]; then
+    RC_VERIFY=0
+    while IFS= read -r f; do
+      echo "[worker] verify (dash -n): ${f}"
+      dash -n "${f}" 2>&1 || RC_VERIFY=1
+    done <<EOF
+${CHANGED_SH}
+EOF
+    if [ "${RC_VERIFY}" = "0" ]; then TESTS="passed"; else TESTS="failed"; fi
+  else
+    TESTS="no-command-configured"
+  fi
 fi
 
+# Audit trail: the agent's full output goes to pod logs on success too (the
+# panel Runs UI and postmortems want the summary; before this it vanished).
+echo "[worker] --- agent output (tail) ---"
+tail -40 /tmp/task-prompt-output.log 2>/dev/null || true
+echo "[worker] --- end agent output ---"
 SUMMARY=$(tail -5 /tmp/task-prompt-output.log 2>/dev/null | head -c 500 || echo "see patch")
 
 python3 - "$TESTS" "$SUMMARY" "$BASE_SHA" << 'EOF' > "${OUT}/report.json"

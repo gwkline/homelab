@@ -84,7 +84,14 @@ done
 RECLAIMED=0
 for LNUM in $(gh api "repos/${REPO}/issues?labels=${LABEL_WIP}&state=open&per_page=20" --jq '.[].number' 2>/dev/null || true); do
   BRANCH="factory/issue-${LNUM}/${PROFILE}"
-  PRS=$(gh pr list -R "${REPO}" --head "${BRANCH}" --state all --json number --jq 'length' 2>/dev/null || echo 1)
+  # "Don't touch labels on uncertain state": an API failure here must neither
+  # treat the PR question as answered nor strip the in-progress label — that
+  # would silently drop the issue from the pipeline (the exact stranding class
+  # this reclaim loop exists to fix). Leave labels alone; next tick retries.
+  if ! PRS=$(gh pr list -R "${REPO}" --head "${BRANCH}" --state all --json number --jq 'length' 2>/dev/null); then
+    echo "[orch] WARN reclaim: PR lookup failed for issue #${LNUM} — skipping this tick" >&2
+    continue
+  fi
   if [ "${PRS}" != "0" ]; then
     # Run completed but the label was never swapped — just clean up.
     gh issue edit "${LNUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" >/dev/null 2>&1 || true
@@ -195,7 +202,10 @@ VERIFY_CMD=""
 case "${REPO}" in
   *launchpad*)    VERIFY_CMD="cargo check --workspace --all-targets" ;;
   *plantry*|*personal-site*|*pr-czar*|*kline-services-bot*|*discord-bot*) VERIFY_CMD="npm run build" ;;
-  *homelab*)      VERIFY_CMD="sh -n apps/factory/orchestrator/run.sh" ;;
+  # Diff-scoped: syntax-check every changed .sh in the worker (shellcheck when
+  # present, dash -n fallback — always available). A fixed single-file check
+  # was near-vacuous; this scales with what the issue actually touches.
+  *homelab*)      VERIFY_CMD="for f in \$(git diff --name-only HEAD -- '*.sh'); do shellcheck -s sh \"\$f\" 2>/dev/null || dash -n \"\$f\" || exit 1; done; echo verify-ok" ;;
 esac
 
 python3 - "${REPO}" "${NUM}" "${VERIFY_CMD}" << 'PYEOF' > /tmp/brief.json
@@ -351,6 +361,7 @@ if [ "${EXTRACTED}" != "1" ]; then
 fi
 if [ "${EXTRACTED}" != "1" ] || [ ! -s "/tmp/patch-${NUM}.diff" ]; then
   update_status "failed" "Could not retrieve patch artifact (pod: ${POD})."
+  echo "[orch] patch artifact missing from worker logs (pod: ${POD})" >&2
   gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
   exit 0
 fi
