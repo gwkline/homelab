@@ -14,6 +14,82 @@ sync_repos
 export HERMES_HOME="${HERMES_HOME:-/data/hermes}"
 mkdir -p "${HERMES_HOME}" "${HOME:-/data/home}"
 
+# ---------------------------------------------------------------------------
+# Self-healing credential hygiene (#gh-token-approvals):
+#
+# GH_TOKEN/GITHUB_TOKEN are injected into the pod by the StatefulSet from
+# secret github-token — every process (and every agent-issued shell command)
+# already inherits them. The agent must NEVER write token exports into shell
+# dotfiles or inline them into commands: exports in command text trip the
+# pre-exec security scanner ("Sensitive credential exported"), require an
+# approval every session, and leak the token into transcripts.
+#
+# The agent has historically written `export GH_TOKEN=...` into .bashrc /
+# .profile when it couldn't see the token in a shell. Two failure modes fed
+# that habit: non-interactive shells don't source .bashrc (so its own advice
+# failed its own tests), and gh used to live only in ad-hoc ~/bin on the PVC
+# (now baked into the image). This scrub runs every boot: any line containing
+# a credential-ish assignment that the agent re-learns is removed at startup.
+# ---------------------------------------------------------------------------
+for _dotfile in "${HOME:-/data/home}/.bashrc" "${HOME:-/data/home}/.profile"; do
+  [ -f "$_dotfile" ] || continue
+  _scrubbed=$(grep -Ev '(GH_TOKEN|GITHUB_TOKEN|GIT_ASKPASS|PASSWORD|SECRET)' "$_dotfile" || true)
+  if [ "$_scrubbed" != "$(cat "$_dotfile")" ]; then
+    printf '%s\n' "$_scrubbed" > "$_dotfile"
+    echo "[hermes] scrubbed credential export from $_dotfile"
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# Boot-time auth verification: fail loudly in pod logs if the injected token
+# is missing or stale, instead of the agent discovering it mid-task and
+# improvising. Failure is non-fatal (token may be intentionally absent in dev)
+# but the log line makes the cause unmissable.
+# ---------------------------------------------------------------------------
+if command -v gh >/dev/null 2>&1 && [ -n "${GH_TOKEN:-}" ]; then
+  _gh_user="$(gh api user -q .login 2>/dev/null || true)"
+  if [ -n "${_gh_user:-}" ]; then
+    echo "[hermes] GitHub auth OK (${_gh_user})"
+  else
+    echo "[hermes] WARNING: GH_TOKEN present but GitHub rejected it — rotate secret github-token (agents ns)" >&2
+  fi
+  unset _gh_user
+elif [ -z "${GH_TOKEN:-}" ]; then
+  echo "[hermes] WARNING: GH_TOKEN not set — git push / gh api will fail until secret github-token is wired" >&2
+fi
+
+# If the agent's working copy of the homelab repo has diverged (its local
+# commits were PR'd/rebased upstream), fast-forward it so the next session
+# starts from origin/main instead of fighting divergence.
+if [ -d /data/home/homelab/.git ]; then
+  git -C /data/home/homelab fetch origin -q || true
+  git -C /data/home/homelab merge --ff-only origin/main >/dev/null 2>&1 \
+    || echo "[hermes] NOTE: /data/home/homelab has local work not on origin/main — left untouched" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# SOUL.md operator contract: SOUL.md is injected into EVERY session regardless
+# of working directory, so the credential rule lives here too — idempotent,
+# marker-guarded, survives PVC recreation (file is on /data).
+# ---------------------------------------------------------------------------
+_soul="${HERMES_HOME}/SOUL.md"
+_marker="operator:credential-contract"
+if ! grep -q "$_marker" "$_soul" 2>/dev/null; then
+  cat >> "$_soul" <<'EOF'
+
+<!-- operator:credential-contract -->
+## Environment contract (operator-managed)
+- GH_TOKEN/GITHUB_TOKEN are already set in your environment. NEVER write
+  `export GH_TOKEN=...` or any token export into terminal commands, scripts,
+  .bashrc, or .profile — inline credentials trip the pre-exec security
+  scanner and force a human approval every session. The export is redundant.
+- gh and git are pre-installed. `git push`, `gh api` work with zero setup.
+- Auth problem? Run `gh api user -q .login` (no exports). If it fails,
+  report it — token rotation is an operator action.
+EOF
+  echo "[hermes] seeded credential contract into SOUL.md"
+fi
+
 # Skills-sync health announcement (init container writes
 # $HERMES_HOME/skills-sync/status.json). Loud fresh/stale line at boot;
 # never fails the pod — degradation contract in skills-sync.yaml.

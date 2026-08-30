@@ -9,6 +9,20 @@ RUN apt-get update \
       "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
   && chmod +x /usr/local/bin/kubectl
 
+# gh CLI baked into the image (pinned + checksum-verified). Before this, gh only
+# existed in the agent's ad-hoc ~/bin on the PVC — a PVC wipe silently removed
+# it, and non-interactive shells couldn't see it, pushing the agent toward
+# hand-rolled credential exports (see run-hermes.sh scrub).
+RUN gh_ver="2.98.0" \
+  && gh_arch="amd64" \
+  && curl -fsSLo /tmp/gh.tar.gz \
+      "https://github.com/cli/cli/releases/download/v${gh_ver}/gh_${gh_ver}_linux_${gh_arch}.tar.gz" \
+  && echo "3b8ac6b30336802fc1a858d7c084e11cdf24ac1a761ca90b68022d7d729208de  /tmp/gh.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/gh.tar.gz -C /tmp \
+  && mv "/tmp/gh_${gh_ver}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh \
+  && rm -rf /tmp/gh.tar.gz "/tmp/gh_${gh_ver}_linux_${gh_arch}" \
+  && gh --version
+
 COPY apps/shared/workspace-lib.sh /usr/local/lib/workspace-lib.sh
 COPY apps/hermes/run-hermes.sh /usr/local/bin/run-hermes
 COPY apps/hermes/check-skills-sync.sh /usr/local/bin/check-skills-sync

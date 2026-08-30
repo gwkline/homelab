@@ -37,6 +37,9 @@ data:
 
     ## Rules
     - Never put credentials in manifests; reference secret github-token.
+    - GH_TOKEN/GITHUB_TOKEN are already in your pod environment — never write
+      token exports into commands, scripts, or dotfiles (trips the security
+      scanner and forces approvals). See AGENTS.md in the homelab repo.
     - Delete finished Jobs you created once their output is captured.
     - If a permission is missing, report it to your operator instead of
       trying workarounds.
