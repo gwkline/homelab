@@ -10,7 +10,7 @@ spec:
   # Single-instance by construction: overlapping ticks are skipped (ADR-002).
   concurrencyPolicy: Forbid
   schedule: "*/10 * * * *" # every 10 min: near-zero-latency pickup (empty tick ≈ 5s);
-                           # one issue per tick, so frequent ticks drain the queue without overlap (Forbid)
+    # one issue per tick, so frequent ticks drain the queue without overlap (Forbid)
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
