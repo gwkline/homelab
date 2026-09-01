@@ -126,6 +126,7 @@ Making this repo public makes its images public and removes this step.
 
 - [Server cluster: bare metal → working cluster](docs/runbook-server-cluster.md)
 - [Gaming desktop: Windows + Linux dual boot](docs/runbook-gaming-dualboot.md)
+- [Media server: hardware inventory + Plex/Jellyfin brief](docs/media-server-brief.md)
 
 ## Access
 
