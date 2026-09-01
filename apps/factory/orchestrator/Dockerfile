@@ -4,7 +4,6 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq python3 openssh-client \
   && rm -rf /var/lib/apt/lists/*
-RUN ln -s /usr/bin/git /usr/local/bin/git
 ARG KUBECTL_VERSION=1.31.3
 RUN curl -fsSL "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
       -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl

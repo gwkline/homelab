@@ -200,7 +200,6 @@ grandfathered_latest=(
   'deploy/factory/base/profile-reviewer.yaml:ghcr.io/gwkline/homelab/factory/reviewer:latest'
   'deploy/factory/base/profile-code-pr.yaml:ghcr.io/gwkline/homelab/factory/worker:latest'
   'deploy/factory/base/collector-cronjob.yaml:ghcr.io/gwkline/homelab/factory/collector:latest'
-  'deploy/factory/base/reconciler-cronjob.yaml:ghcr.io/gwkline/homelab/loop-agent@sha256:331ed63c3ff4e781c10c1044c1c5ad475c5d6d8d6a3d3e02bed05a3f6a6e12a3'
 )
 new_latest=0
 while IFS= read -r hit; do
