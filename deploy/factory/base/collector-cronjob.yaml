@@ -1,16 +1,15 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: factory-reviewer
+  name: factory-collector
   namespace: sandbox
   labels:
     app.kubernetes.io/part-of: homelab
-    factory.gwkline.io/component: reviewer
+    factory.gwkline.io/component: collector
 spec:
-  # Approval-loop poller: observes draft PRs, nudges, reports review queue state.
-  # Phase 1 = read-only (+ idempotent status comments). Auto-promote is behind
-  # FACTORY_REVIEWER_AUTO_MERGE and stays OFF until explicitly enabled.
-  schedule: "35,55 * * * *" # after orchestrator, with room for the next collector.
+  # Every open issue in the allowlisted repos enters the factory unless it is
+  # already in a terminal or active factory state.
+  schedule: "5 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -22,30 +21,30 @@ spec:
       template:
         metadata:
           labels:
-            factory.gwkline.io/profile: reviewer
+            factory.gwkline.io/profile: collector
         spec:
           restartPolicy: Never
-          serviceAccountName: factory-reviewer
+          serviceAccountName: factory-collector
           automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
             seccompProfile: { type: RuntimeDefault }
           containers:
-            - name: reviewer
-              image: ghcr.io/gwkline/homelab/factory/reviewer:latest
+            - name: collector
+              image: ghcr.io/gwkline/homelab/factory/collector:latest
               imagePullPolicy: Always
               env:
-                - name: FACTORY_REPO
+                - name: FACTORY_REPOS
                   value: gwkline/homelab
+                - name: GH_CONFIG_DIR
+                  value: /tmp/gh
+                - name: FACTORY_COLLECTOR_DRY_RUN
+                  value: "false"
                 - name: GH_TOKEN
                   valueFrom:
                     secretKeyRef:
                       { name: github-token, key: token, optional: false }
-                # Write path — ON per operator 2026-08-27: CI-as-gate auto-merge
-                # (factory-authored PRs, green checks required, launchpad only).
-                - name: FACTORY_REVIEWER_AUTO_MERGE
-                  value: "true"
               resources:
                 requests: { cpu: 100m, memory: 128Mi }
                 limits: { cpu: 500m, memory: 512Mi }
@@ -57,3 +56,28 @@ spec:
                 - { name: tmp, mountPath: /tmp }
           volumes:
             - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: factory-collector
+  namespace: sandbox
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: factory-collector
+  namespace: sandbox
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: factory-collector
+  namespace: sandbox
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: factory-collector
+subjects:
+  - { kind: ServiceAccount, name: factory-collector, namespace: sandbox }

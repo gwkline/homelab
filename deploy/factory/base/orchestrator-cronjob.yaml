@@ -32,6 +32,7 @@ spec:
           containers:
             - name: orchestrator
               image: ghcr.io/gwkline/homelab/factory/orchestrator
+              imagePullPolicy: Always
               env:
                 - name: FACTORY_REPO
                   value: gwkline/homelab # self-iteration target per operator

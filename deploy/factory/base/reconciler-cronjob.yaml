@@ -1,0 +1,146 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: factory-reconciler
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+    factory.gwkline.io/component: reconciler
+spec:
+  # Pull the declarative factory manifests and apply them periodically. This
+  # is intentionally a CronJob instead of adding Flux/another control plane.
+  schedule: "2,12,22,32,42,52 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  suspend: false
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            factory.gwkline.io/profile: reconciler
+        spec:
+          restartPolicy: Never
+          serviceAccountName: factory-reconciler
+          automountServiceAccountToken: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: reconciler
+              image: ghcr.io/gwkline/homelab/loop-agent@sha256:331ed63c3ff4e781c10c1044c1c5ad475c5d6d8d6a3d3e02bed05a3f6a6e12a3
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  work=/tmp/homelab
+                  rm -rf "$work"
+                  printf '#!/bin/sh\\nprintf "%s\\\\n" "$GH_TOKEN"\\n' > /tmp/git-askpass
+                  chmod 700 /tmp/git-askpass
+                  export GIT_ASKPASS=/tmp/git-askpass GIT_TERMINAL_PROMPT=0
+                  git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 \
+                    clone --depth 1 "https://github.com/${FACTORY_CONFIG_REPO}.git" "$work"
+                  git -C "$work" remote set-url origin "https://github.com/${FACTORY_CONFIG_REPO}.git"
+                  kubectl apply -k "$work/deploy/factory/base"
+                  echo "[reconciler] applied ${FACTORY_CONFIG_REPO}@$(git -C "$work" rev-parse --short HEAD)"
+              env:
+                - name: FACTORY_CONFIG_REPO
+                  value: gwkline/homelab
+                - name: GH_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      { name: github-token, key: token, optional: false }
+              resources:
+                requests: { cpu: 100m, memory: 128Mi }
+                limits: { cpu: 500m, memory: 512Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+                readOnlyRootFilesystem: true
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: factory-reconciler
+  namespace: sandbox
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: factory-reconciler
+  namespace: sandbox
+rules:
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["create", "get", "list", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps", "serviceaccounts"]
+    verbs: ["create", "get", "list", "patch", "update"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["create", "get", "list", "patch", "update"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "get", "list", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: factory-reconciler
+  namespace: sandbox
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: factory-reconciler
+subjects:
+  - { kind: ServiceAccount, name: factory-reconciler, namespace: sandbox }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-factory-reconciler
+  namespace: sandbox
+spec:
+  podSelector:
+    matchLabels:
+      factory.gwkline.io/profile: reconciler
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - ipBlock: { cidr: 140.82.112.0/20 }
+        - ipBlock: { cidr: 185.199.108.0/22 }
+        - ipBlock: { cidr: 104.16.0.0/12 }
+      ports: [{ protocol: TCP, port: 443 }]
+    - ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+    - to:
+        - ipBlock: { cidr: 10.43.0.1/32 }
+      ports: [{ protocol: TCP, port: 443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-factory-collector
+  namespace: sandbox
+spec:
+  podSelector:
+    matchLabels:
+      factory.gwkline.io/profile: collector
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - ipBlock: { cidr: 140.82.112.0/20 }
+        - ipBlock: { cidr: 185.199.108.0/22 }
+        - ipBlock: { cidr: 104.16.0.0/12 }
+      ports: [{ protocol: TCP, port: 443 }]
+    - ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]

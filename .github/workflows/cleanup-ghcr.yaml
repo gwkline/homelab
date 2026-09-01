@@ -38,6 +38,9 @@ jobs:
             panel,
             factory/worker,
             factory/orchestrator,
+            factory/collector,
+            factory/reviewer,
+            factory/security,
           ]
     steps:
       - name: Purge old versions of ${{ matrix.package }}

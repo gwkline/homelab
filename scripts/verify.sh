@@ -72,7 +72,8 @@ expand_cron_field() {
 # the same minute/hour pattern (they would fire at exactly the same times).
 check_cronjob_schedule_collisions() {
   local dir="$1" file line val kind doc_name sched mset hset key m h dom mon dow extra
-  local -A key_owner=()
+  local -a key_keys=() key_owners=()
+  local idx
   for file in "$dir"/*.yaml; do
     [[ -f "$file" ]] || continue
     kind=''
@@ -115,15 +116,20 @@ check_cronjob_schedule_collisions() {
                && hset="$(expand_cron_field "$h" 0 23)"; then
               key="M[${mset}]H[${hset}]${dom}|${mon}|${dow}"
             fi
-            if [[ -n "${key_owner[$key]:-}" ]]; then
+            idx=-1
+            for i in "${!key_keys[@]}"; do
+              if [[ "${key_keys[$i]}" == "$key" ]]; then idx="$i"; break; fi
+            done
+            if (( idx >= 0 )); then
               {
                 echo "  CronJob schedule collision — identical minute/hour pattern: ${key}"
-                echo "    first:  ${key_owner[$key]}"
+                echo "    first:  ${key_owners[$idx]}"
                 echo "    second: ${file}: ${doc_name:-<unnamed>} (schedule: \"${val}\")"
               } >&2
               return 1
             fi
-            key_owner["$key"]="${file}: ${doc_name:-<unnamed>} (schedule: \"${val}\")"
+            key_keys+=("$key")
+            key_owners+=("${file}: ${doc_name:-<unnamed>} (schedule: \"${val}\")")
           fi
           ;;
       esac
@@ -193,6 +199,7 @@ grandfathered_latest=(
   'deploy/factory/base/profile-security.yaml:ghcr.io/gwkline/homelab/factory/security:latest'
   'deploy/factory/base/profile-reviewer.yaml:ghcr.io/gwkline/homelab/factory/reviewer:latest'
   'deploy/factory/base/profile-code-pr.yaml:ghcr.io/gwkline/homelab/factory/worker:latest'
+  'deploy/factory/base/collector-cronjob.yaml:ghcr.io/gwkline/homelab/factory/collector:latest'
 )
 new_latest=0
 while IFS= read -r hit; do

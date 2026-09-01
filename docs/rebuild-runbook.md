@@ -54,6 +54,7 @@ kubectl apply -k deploy/t3code/base
 kubectl apply -k deploy/hermes/base
 kubectl apply -k deploy/loop-agent/base
 kubectl apply -k deploy/panel/base         # admin portal (https://panel.$TAILNET_NAME)
+kubectl apply -k deploy/factory/base       # unattended issue -> draft PR factory
 
 # 3b. HTTPS for tailscale-proxied services (one-time tailnet approval already
 # granted; re-run after operator reinstall or proxy pod replacement)

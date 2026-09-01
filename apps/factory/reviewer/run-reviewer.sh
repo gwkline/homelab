@@ -33,10 +33,13 @@ classify_checks() {
   esac
 }
 
-# List open PRs that carry factory ledger labels.
+# List open PRs, then filter labels locally. GitHub's REST pulls endpoint does
+# not apply a `labels=` query parameter, so passing it here silently returned
+# every open PR and let the reviewer write on unrelated work.
 # NOTE: use printf, never echo — echo mangles JSON content (parse errors on
 # real payloads with emoji/control chars); printf '%s' round-trips byte-safe.
-PRS_JSON="$(gh api "repos/${REPO}/pulls?state=open&per_page=50&labels=factory/draft-pr")"
+PRS_JSON="$(gh api --paginate --slurp "repos/${REPO}/pulls?state=open&per_page=100" \
+  | jq '[.[][] | select(any((.labels // [])[]; .name == "factory/draft-pr"))]')"
 
 printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
   NUM="$(printf '%s' "$PR" | jq -r '.number')"

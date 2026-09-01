@@ -132,6 +132,7 @@ jobs:
           - app: factory/security
           - app: factory/orchestrator
           - app: factory/reviewer
+          - app: factory/collector
     runs-on: ubuntu-latest
     permissions:
       contents: read
