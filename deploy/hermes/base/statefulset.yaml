@@ -14,9 +14,11 @@ spec:
       labels:
         app: hermes
     spec:
-      # Hermes intentionally holds a ServiceAccount token. Its RBAC (rbac.yaml)
-      # scopes that identity to managing throwaway Jobs/CronJobs in `sandbox`
-      # — nothing else, anywhere.
+      # Hermes' ServiceAccount token is NOT for factory orchestration (#82):
+      # that now goes through the Executor MCP endpoint with its own client
+      # identity (EXECUTOR_* below, credentials host-side in Executor). The
+      # token only backs the read-only RBAC in rbac.yaml — self-visibility
+      # and cluster-health reads.
       serviceAccountName: hermes
       automountServiceAccountToken: true
       securityContext:
@@ -106,6 +108,27 @@ spec:
                 configMapKeyRef:
                   name: hermes-workspaces
                   key: command
+                  optional: true
+            # Executor MCP gateway (#82): factory orchestration happens
+            # through these governed tools — create/inspect/cancel/retry Run
+            # — never through direct Kubernetes writes. The token is
+            # optional so the gateway boots before Executor is deployed;
+            # see deploy/hermes/base/README.md for provisioning.
+            - name: EXECUTOR_MCP_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-executor
+                  key: mcp-url
+            - name: EXECUTOR_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-executor
+                  key: client-id
+            - name: EXECUTOR_CLIENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: executor-client
+                  key: token
                   optional: true
           volumeMounts:
             - name: data

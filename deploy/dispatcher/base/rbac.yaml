@@ -1,7 +1,7 @@
 # Second deliberate exception to "pods cannot talk to Kubernetes": the
 # dispatcher may create Jobs in `sandbox` so labeled GitHub issues become
-# runs without a human or hermes in the loop. Same verbs as hermes' role,
-# different principal, one auditable purpose.
+# runs without a human in the loop. One principal, one auditable purpose.
+# (Hermes lost this write path in #82 — it now goes through Executor.)
 #
 # Depends on hermes/base being applied first (reuses its loop-manager Role).
 apiVersion: v1
