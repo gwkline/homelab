@@ -78,6 +78,60 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+        # Skills sync (#81): apps/shared/skills-lib.sh clones the private
+        # skills repo at the pinned commit from t3code-skills-sync (token
+        # answered via throwaway GIT_ASKPASS — nothing lands in Git config),
+        # verifies the pin, and installs only the allowlisted skill paths
+        # into the generated store /data/skills-generated. Linking into the
+        # CLIs' skill dirs happens in init-workspace.sh AFTER the agent-state
+        # restore, so a snapshot file can never write through a fresh sync
+        # symlink. Degrades explicitly on failure: records
+        # /data/skills-sync/status.json and always exits 0 — the server
+        # starts on stale skills; init-workspace.sh prints the warning.
+        - name: skills-sync
+          image: ghcr.io/gwkline/homelab/t3code
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -c
+            - |
+              if sh /usr/local/lib/skills-lib.sh; then
+                echo "[skills-sync] OK"
+              else
+                echo "[skills-sync] FAILED (degraded) — see ${SKILLS_STATUS_FILE}; pod continues on stale skills" >&2
+              fi
+              exit 0
+          env:
+            - name: HOME
+              value: /tmp
+            - name: GITHUB_TOKEN_FILE
+              value: /secrets/token
+            - name: SKILLS_REF
+              valueFrom:
+                configMapKeyRef:
+                  name: t3code-skills-sync
+                  key: ref
+            - name: SKILLS_ALLOWLIST
+              valueFrom:
+                configMapKeyRef:
+                  name: t3code-skills-sync
+                  key: allowlist
+            - name: SKILLS_TARGET
+              value: /data/skills-generated
+            - name: SKILLS_STATUS_FILE
+              value: /data/skills-sync/status.json
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: github-token
+              mountPath: /secrets
+              readOnly: true
       volumes:
         - name: github-token
           secret:

@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: hermes-skills-sync
+  name: t3code-skills-sync
   namespace: agents
   labels:
     app.kubernetes.io/managed-by: kustomize
@@ -9,22 +9,17 @@ metadata:
 data:
   # Pinned commit of gwkline/.dotfiles (private skills repo, #81). The sync
   # verifies that the fetched HEAD equals this SHA and records both in
-  # $HERMES_HOME/skills-sync/status.json. Updates are opt-in: bumping this
-  # pin (or the allowlist below) is a reviewed PR, never automatic.
-  # A tag or branch name also works (resolved commit is recorded), but a
-  # full SHA is the reproducibility contract.
+  # /data/skills-sync/status.json. Updates are opt-in: bumping this pin (or
+  # the allowlist below) is a reviewed PR, never automatic. A tag or branch
+  # name also works (resolved commit is recorded), but a full SHA is the
+  # reproducibility contract.
   ref: |
     445e4255288732efb00c8878151610c2669f5e93
   # Homelab-side allowlist: only these skill paths (relative to skills/ in
   # the source repo) are installed — fetched code never runs unreviewed
-  # (#69). One <category>/<skill> per line; # comments allowed. The source
-  # repo's own manifest is not trusted on its own.
+  # (#69). One <category>/<skill> per line; # comments allowed.
   allowlist: |
-    autonomous-ai-agents/cron-jobs
-    autonomous-ai-agents/mcp-servers
     autonomous-ai-agents/searching-coding-agent-history
     devops/homelab-cluster-bringup
-    homelab/homelab-appsec
-    homelab/homelab-server-cluster
     software-development/homelab-k3s-ops
     software-development/poteto-mode

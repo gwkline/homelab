@@ -31,6 +31,29 @@ done
 ) &
 echo "[t3code] agent-state sync started (${STATE_SRC})"
 
+# ---------------------------------------------------------------------------
+# Private skills (#81): the skills-sync init container built the generated
+# store at ${DATA_DIR}/skills-generated from the pinned private-repo commit
+# (t3code-skills-sync ConfigMap; updates are opt-in reviewed CM changes).
+# Link it into the coding CLIs' skill dirs here — AFTER the agent-state
+# restore above — so a snapshot file can never write through a fresh sync
+# symlink. The link step only manages its own symlinks; real user files are
+# reported and never overwritten. A failed sync degrades explicitly: loud
+# warning, server keeps running without private skills.
+# ---------------------------------------------------------------------------
+. /usr/local/lib/skills-lib.sh
+SKILLS_STORE="${DATA_DIR}/skills-generated"
+SKILLS_STATUS="${DATA_DIR}/skills-sync/status.json"
+if [ -f "${SKILLS_STATUS}" ] && grep -q '"ok":true' "${SKILLS_STATUS}"; then
+  for _skills_dir in /home/node/.claude/skills; do
+    skills_link_generated "${SKILLS_STORE}" "${_skills_dir}" \
+      || echo "[t3code] WARNING: skills link into ${_skills_dir} incomplete" >&2
+  done
+  echo "[t3code] skills-sync: $(cat "${SKILLS_STATUS}")"
+else
+  echo "[t3code] WARNING: skills-sync did not produce a healthy store this boot — running WITHOUT private skills (see ${SKILLS_STATUS})" >&2
+fi
+
 sync_repos
 
 register_project() {

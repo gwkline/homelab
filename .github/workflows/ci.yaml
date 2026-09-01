@@ -168,6 +168,14 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
       - name: Verify (lint, manifests, secrets, image refs)
         run: ./scripts/verify.sh
+      # Skills-sync fixture tests (#81): a local fixture repo proves
+      # pinned-commit verification, allowlist enforcement, idempotent
+      # install, obsolete-file removal, private>public precedence, and
+      # credential-free Git config. Run beside verify.sh, not inside it:
+      # verify.sh itself is bash and must stay untouched by dash-gated
+      # worker edits.
+      - name: Skills-sync fixture tests
+        run: sh apps/shared/tests/skills-sync.test.sh
 
   build:
     needs:

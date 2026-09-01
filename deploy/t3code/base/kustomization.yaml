@@ -10,6 +10,7 @@ labels:
 resources:
   - t3state-pvc.yaml
   - configmap.yaml
+  - skills-sync.yaml
   - netpol.yaml
   - service.yaml
   - statefulset.yaml
