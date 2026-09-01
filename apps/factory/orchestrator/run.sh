@@ -8,7 +8,7 @@
 #   2. Swap label to factory/in-progress + post run marker comment
 #   3. Spawn a worker Job from the profile
 #   4. Watch it to completion; extract /out artifacts from pod logs
-#   5. Publish: apply patch → push branch → draft PR
+#   5. Publish: apply patch → push branch → approval gate (#83) → draft PR
 #   6. Converge labels on every exit path (success, failure, crash)
 #
 # Stop conditions (why every path terminates):
@@ -50,6 +50,10 @@ kubectl() { timeout 120 /usr/local/bin/kubectl "$@"; }
 # "timeout: failed to run command '/usr/local/bin/git'".
 gitt() { timeout 300 /usr/bin/git "$@"; }
 timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# Durable approval gates (#83): policy table, record I/O, publish gate, resume.
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "${SCRIPT_DIR}/approval.sh"
 
 NUM=""
 # shellcheck disable=SC2329  # invoked via `trap cleanup EXIT` below
@@ -121,6 +125,13 @@ PY
   fi
 done
 [ "${RECLAIMED}" = "0" ] || echo "[orch] reclaimed ${RECLAIMED} stranded issue(s)"
+
+# ---- 0b. resolve durable approval gates (#83) ------------------------------
+# Issues parked on factory/pending-approval carry their approval record on the
+# issue itself, so ANY fresh tick/pod resolves a decision a human made in the
+# panel: open the PR when approved+digest matches; expire/deny/invalidate
+# cleanly otherwise. Nothing here depends on this pod's memory.
+approval_resume "${REPO}" || true
 
 # ---- 1. find ONE queued issue ----------------------------------------------
 # One issue per tick: each queued item gets a full fresh tick budget instead
@@ -384,28 +395,38 @@ if gitt apply --whitespace=nowarn "/tmp/patch-${NUM}.diff" 2>/tmp/apply-err; the
 
 Produced by homelab software factory (${PROFILE} profile).
 Refs #${NUM}"
+  # Stage the branch BEFORE the gate: the staged branch is the durable artifact
+  # the approval binds to (digest = branch head); opening the PR is the gated
+  # sensitive transition. A pending gate parks the issue on
+  # factory/pending-approval and a later tick/pod resumes from the record.
   gitt push -q "${AUTH_CLONE}" "${BRANCH}"
-  PR_URL=$(gh pr create -R "${REPO}" --draft \
-    --head "${BRANCH}" --base main \
-    --title "$(gh issue view "${NUM}" -R "${REPO}" --json title --jq .title)" \
-    --body "$(cat <<EOF
-## Factory Run — ${PROFILE}
-
-Closes #${NUM}
-
-> ⚠️ **Automated draft PR** produced by the homelab software factory.
-> Requires CI green + human review before promotion. Do not auto-merge.
-
-**Verification:** see status comment on the linked issue.
-EOF
-)")
-  update_status "published" "Draft PR: ${PR_URL}
+  HEAD_SHA=$(git rev-parse HEAD)
+  GATE=$(approval_gate_publish "${REPO}" "${NUM}" "${PROFILE}" "${BRANCH}" "main" "/tmp/patch-${NUM}.diff" "${HEAD_SHA}") || true
+  case "${GATE}" in
+    proceed)
+      PR_URL=$(approval_open_pr "${REPO}" "${NUM}" "${PROFILE}" "${BRANCH}" "main")
+      approval_mark_executed "${REPO}" "${NUM}" publish "${PR_URL}" || true
+      update_status "published" "Draft PR: ${PR_URL}
 
 _Comment edited by factory; CI will run on the draft branch._"
-  gh issue edit "${NUM}" -R "${REPO}" \
-      --remove-label "${LABEL_WIP}" --add-label "${LABEL_DONE}" >/dev/null
-  gh issue comment "${NUM}" -R "${REPO}" --body "🏭 Draft PR ready: ${PR_URL}" >/dev/null
-  echo "[orch] published ${PR_URL}"
+      gh issue edit "${NUM}" -R "${REPO}" \
+          --remove-label "${LABEL_WIP}" --add-label "${LABEL_DONE}" >/dev/null
+      gh issue comment "${NUM}" -R "${REPO}" --body "🏭 Draft PR ready: ${PR_URL}" >/dev/null
+      echo "[orch] published ${PR_URL}"
+      ;;
+    awaiting)
+      update_status "awaiting approval" "_Publish paused — a durable approval request was recorded on this issue (digest \`${HEAD_SHA}\`). Approve or deny in the panel; the next tick resumes automatically._"
+      gh issue edit "${NUM}" -R "${REPO}" \
+          --remove-label "${LABEL_WIP}" --add-label "${APPROVAL_LABEL}" >/dev/null
+      echo "[orch] issue #${NUM}: publish gated — awaiting approval (digest ${HEAD_SHA})"
+      ;;
+    *)
+      update_status "failed" "Publish ${GATE} — see the approval record comment on this issue."
+      gh issue edit "${NUM}" -R "${REPO}" \
+          --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
+      echo "[orch] issue #${NUM}: publish ${GATE} — parked in ${LABEL_FAILED}"
+      ;;
+  esac
 else
   ERR=$(cat /tmp/apply-err | head -10)
   update_status "failed" "Patch failed to apply to current base:
