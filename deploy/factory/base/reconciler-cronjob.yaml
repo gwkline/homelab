@@ -45,7 +45,10 @@ spec:
                   git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 \
                     clone --depth 1 "https://github.com/${FACTORY_CONFIG_REPO}.git" "$work"
                   git -C "$work" remote set-url origin "https://github.com/${FACTORY_CONFIG_REPO}.git"
-                  kubectl apply --validate=false -k "$work/deploy/factory/base"
+                  kubectl apply --validate=false -k "$work/deploy/factory/base" || {
+                    echo "[reconciler] apply failed; apiserver may be unavailable" >&2
+                    exit 1
+                  }
                   echo "[reconciler] applied ${FACTORY_CONFIG_REPO}@$(git -C "$work" rev-parse --short HEAD)"
               env:
                 - name: FACTORY_CONFIG_REPO
