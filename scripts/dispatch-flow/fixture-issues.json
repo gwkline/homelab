@@ -1,0 +1,10 @@
+[
+  {
+    "number": 424242,
+    "title": "dispatch-flow-smoke: documented run-agent test issue",
+    "state": "open",
+    "body": "Mocked GitHub API fixture for scripts/dispatch-flow-smoke.sh (issue #30): a documented disposable test issue proving that one open run-agent issue creates exactly one sandbox Job and that a second watcher run does not duplicate it. This issue never exists on real GitHub; the smoke test serves it via scripts/dispatch-flow/mock-gh.sh.",
+    "labels": [{ "name": "run-agent" }],
+    "html_url": "https://github.com/gwkline/homelab/issues/424242"
+  }
+]

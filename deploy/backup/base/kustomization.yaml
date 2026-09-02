@@ -1,6 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: backup
+# Runs in `agents` because PVCs are namespaced: a pod in any other namespace
+# cannot mount t3code/hermes volumes, so the backup job must live where they
+# do. The namespace-scoped `onepassword` SecretStore already exists here.
+namespace: agents
 
 labels:
   - pairs:
@@ -9,4 +12,5 @@ labels:
     includeSelectors: false
 
 resources:
+  - externalsecret.yaml
   - cronjob.yaml
