@@ -110,10 +110,12 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
 
 ## 6. Secrets (private repo access)
 
-Fine-grained PAT: https://github.com/settings/personal-access-tokens/new → Repository access: pick your repos → Permissions: Contents **Read-only**.
+GitHub tokens are synced from 1Password by External Secrets Operator — nothing is created by hand except the least-privilege 1Password service-account token (restricted to the `homelab` vault, issue #41). `scripts/create-github-secret.sh` is deprecated.
+
+Fine-grained PAT: https://github.com/settings/personal-access-tokens/new → Repository access: pick your repos → Permissions: Contents **Read-only**. Store it as the `token` field of the `github-readonly` item in the `homelab` vault (optionally `github-writer` for write-scoped jobs), then:
 
 ```sh
-./scripts/create-github-secret.sh agents sandbox   # paste PAT when prompted
+kubectl apply -k deploy/github-tokens/base   # item contract + rotation: deploy/github-tokens/base/README.md
 ```
 
 ## 7. Make images pullable
@@ -205,7 +207,7 @@ PVC data on the dead node is gone by definition — everything else converges fr
 | Pod `CreateContainerError` privileged | workload landed in wrong namespace |
 | t3code pairing fails over tailnet | check NetworkPolicy allowed tailscale ns |
 | Node NotReady after reboot | `sudo systemctl status k3s` on that node |
-| Clone fails on private repo | PAT expired or missing repo access (Section 6) |
+| Clone fails on private repo | 1Password `github-readonly` item expired or missing repo access (Section 6) |
 
 ## 11. Nightly backups (off until you enable them)
 

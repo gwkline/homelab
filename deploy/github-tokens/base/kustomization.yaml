@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Declarative GitHub credentials (issue #45): ExternalSecrets sync the
+# 1Password homelab vault into the exact Secret names/keys every workload
+# already consumes, replacing scripts/create-github-secret.sh (deprecated).
+resources:
+  - secretstore.yaml
+  - github-token.yaml
+  - github-token-writer.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: homelab
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false

@@ -19,9 +19,10 @@
 
 ## Secrets needed after rebuild (complete list)
 
-1. `github-token` — ns agents (+ sandbox when used). Via existing `scripts/create-github-secret.sh`. PAT scope: fine-grained, Contents:read.
-2. Tailscale OAuth — via `helm upgrade --set oauth.clientId/Secret` (values from Mac Keychain `homelab-tailscale`).
-3. That's it. CNPG/bootstrap secrets self-generate.
+1. 1Password service-account token → Secret `onepassword-service-account` (key `token`), restricted to the `homelab` vault; the only secret entered by hand. Least privilege, via env/stdin, never logged (issue #41).
+2. `github-token` (agents + sandbox) and `github-token-writer` (sandbox, optional) — no manual creation: synced from the 1Password `github-readonly` / `github-writer` items by `kubectl apply -k deploy/github-tokens/base` (issue #45). PAT scope: fine-grained, Contents:read.
+3. Tailscale OAuth — via `helm upgrade --set oauth.clientId/Secret` (values from Mac Keychain `homelab-tailscale`).
+4. That's it. CNPG/bootstrap secrets self-generate.
 
 ## Node prerequisites (agent-1)
 
@@ -43,8 +44,11 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
 kubectl -n tailscale set env deploy/operator PROXY_TAGS=tag:k8s-operator  # chart bug workaround (documented)
 kubectl rollout restart deploy/operator -n tailscale
 
-# 2. secrets
-GITHUB_PAT=... ./scripts/create-github-secret.sh agents sandbox
+# 2. secrets: bootstrap the 1Password service-account token (env/stdin,
+#    never logged), then everything else is declarative
+kubectl -n agents create secret generic onepassword-service-account \
+  --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"   # repeat for sandbox
+kubectl apply -k deploy/github-tokens/base       # syncs github-token(+writer) from 1Password
 
 # 3. workloads
 kubectl apply -f deploy/namespaces.yaml

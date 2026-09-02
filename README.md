@@ -15,10 +15,10 @@ All share `apps/shared/workspace-lib.sh` (git auth + repo sync).
 
 ## Private repos
 
-Workloads read a fine-grained PAT from Secret `github-token` (key `token`), mounted at `/secrets/token`. Create it per namespace:
+Workloads read a fine-grained PAT from Secret `github-token` (key `token`), mounted at `/secrets/token`. The Secret is synced declaratively from 1Password by External Secrets Operator — rotate the token in 1Password and it propagates within ~1h:
 
 ```sh
-scripts/create-github-secret.sh agents   # prompts for token, or set GITHUB_PAT
+kubectl apply -k deploy/github-tokens/base   # prerequisites + rotation: deploy/github-tokens/base/README.md
 ```
 
 Token needs "Contents: read-only" on every repo listed in a ConfigMap.
@@ -46,14 +46,7 @@ Or ask hermes to schedule it for you — same mechanism, conversational. For ful
 
 The software factory is also fully unattended: `deploy/factory/base` runs a collector hourly. Apply it once during cluster bring-up; its small reconciler CronJob reapplies the same manifests from `main` every 10 minutes afterward. Every open issue in each repo listed by `FACTORY_REPOS` that has no factory lifecycle label is given `factory/queued`; the orchestrator then produces a tested draft PR one issue at a time. This means factory code and schedules do not silently drift from the cluster.
 
-Loops can report back into GitHub (PR comments, issue updates) via the `gh` CLI already in the image; create an optional write-scoped secret to enable:
-
-```sh
-# fine-grained PAT: Contents+Pull request write on target repos ONLY
-kubectl create secret generic github-token-writer \
-  --namespace sandbox --from-file=token=/path/to/pat --dry-run=client -o yaml |
-  kubectl apply -f -
-```
+Loops can report back into GitHub (PR comments, issue updates) via the `gh` CLI already in the image. Write access uses a **separate**, write-scoped 1Password item (`github-writer`, Contents+PR write on target repos only) synced into `sandbox/github-token-writer` by the same ExternalSecrets; if the item is absent, write reporting stays off and read-only jobs are unaffected (all mounts are optional). See `deploy/github-tokens/base/README.md`.
 
 ## Layout
 
@@ -73,6 +66,7 @@ deploy/
   panel/            factory control panel (Vite + React, this repo's code)
   dispatcher/base/  label-driven issue -> Job automation
   factory/base/      issue collector -> coding worker -> draft PR
+  github-tokens/base/ ExternalSecrets syncing GitHub tokens from 1Password
   tailscale/        Tailscale operator install notes
   t3code/base/      StatefulSet + per-replica Services
   hermes/base/      StatefulSet + scoped RBAC + cluster guide
@@ -101,7 +95,7 @@ Decisions and their reasons, so future-you can audit them:
 - **No host Docker socket, ever.** The dind daemon owns an emptyDir-scoped unix socket shared within its own pod. A compromised inner container gets that pod's daemon, not the node's.
 - **Pods cannot talk to Kubernetes** — with three deliberate, audited exceptions, all scoped to the same verbs on sandbox Jobs/CronJobs (plus read pods/logs): hermes (conversational orchestration), dispatcher (label-driven issue automation), and panel (the control panel's backend). None can touch secrets, nodes, CRDs, or anything in their own namespace. This is what lets agents and you schedule work. A mounted CLUSTER.md playbook teaches hermes the patterns.
 - **Default-deny ingress** in both namespaces; only Tailscale operator proxies may reach t3code, homepage, and panel (each workload declares its own exposure rule beside its manifests). Hermes has no inbound at all. Egress is open by design — agents need the internet — revisit with allowlists if you start pointing agents at sensitive internal targets.
-- **Secrets**: PAT mounted read-only per namespace, delivered to git via a runtime-generated askpass helper (never in `.git/config`, env, or image layers). Non-dind containers run as uid 1000 with all capabilities dropped.
+- **Secrets**: long-lived credentials are synced from 1Password by External Secrets (`deploy/github-tokens/base/`); the only hand-entered secret is the least-privilege 1Password service-account token at bootstrap. The PAT is mounted read-only per namespace and delivered to git via a runtime-generated askpass helper (never in `.git/config`, env, or image layers). Non-dind containers run as uid 1000 with all capabilities dropped.
 - **Tailscale SSH is enabled on nodes** (`bootstrap.sh` runs `tailscale up --ssh`), gated by your tailnet ACLs. Tighten those before inviting anyone.
 - **Supply chain**: npm packages, upstream images, and GitHub Actions are pinned to exact versions; Renovate keeps them current. Images are rebuilt on every push to `main` and signed keylessly with cosign — verify with `cosign verify <image>` against the GitHub workflow identity.
 - **Known gap**: dind sidecar is privileged by necessity. Next escalation step if wanted: gVisor (`runsc` RuntimeClass) for inner containers. An opt-in variant lives in `deploy/gvisor/base`; see the server runbook.

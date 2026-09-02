@@ -5,7 +5,8 @@ StatefulSet running the homelabby agent gateway. One replica, PVC-backed `/data`
 ## GitHub auth chain (zero human intervention)
 
 ```
-secret github-token (fine-grained PAT, agents ns)
+secret github-token (fine-grained PAT, agents ns — synced from 1Password
+  item `github-readonly` by External Secrets, see deploy/github-tokens/base/)
   └─> StatefulSet env: GH_TOKEN / GITHUB_TOKEN  (statefulset.yaml)
   └─> volume mount: /secrets/token (GITHUB_TOKEN_FILE, for file-based readers)
         └─> entrypoint setup_git_auth → GIT_ASKPASS for plain git https
@@ -20,10 +21,12 @@ Design rule: **no component may place the token in command text, scripts, or dot
 
 ### Token rotation (operator)
 
+The Secret is managed by External Secrets: update the `github-readonly` item's `token` field in 1Password and it syncs into the cluster within ~1h (see deploy/github-tokens/base/README.md). The mounted `/secrets/token` updates automatically, but env vars never do — restart the pod so `GH_TOKEN`/`GITHUB_TOKEN` pick up the new value:
+
 ```sh
-kubectl -n agents delete secret github-token
-# recreate with the new PAT (key: token), then:
 kubectl -n agents rollout restart statefulset hermes
 ```
+
+(Emergency path if 1Password/ESO is unavailable: `kubectl -n agents delete secret github-token`, recreate with the new PAT (key: token), then restart as above — ESO will restore ownership on the next reconcile.)
 
 Rotated tokens must keep at least: Contents read/write on the repos the agent works in. Boot logs show `[hermes] GitHub auth OK (<user>)` when healthy, or a WARNING naming the failed check.
