@@ -1,41 +1,21 @@
 # Runtime secrets inventory & 1Password item contract
 
-Authoritative map from every runtime credential to its least-privilege 1Password
-vault item and field. Migration tickets proceed independently using the
-names/scopes below — never invent new item or field names. **No secret values
-appear in this document, ever** (CI's `scripts/verify.sh` scan enforces the
-same rule for git).
+Authoritative map from every runtime credential to its least-privilege 1Password vault item and field. Migration tickets proceed independently using the names/scopes below — never invent new item or field names. **No secret values appear in this document, ever** (CI's `scripts/verify.sh` scan enforces the same rule for git).
 
-Established: 2026-09-02 (issue #39). Cross-checked against every
-`secretKeyRef`, `envFrom.secretRef`, secret volume, `imagePullSecrets`, and
-`kubectl create secret` invocation in manifests, scripts, image entrypoints,
-and docs at that date.
+Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`, `envFrom.secretRef`, secret volume, `imagePullSecrets`, and `kubectl create secret` invocation in manifests, scripts, image entrypoints, and docs at that date.
 
 ## Vault and service-account contract
 
-- One dedicated 1Password vault: **`homelab`**. No other vault is in scope for
-  this cluster.
-- The ESO service account is limited to that vault only. Its token is the only
-  hand-entered secret (see [bootstrap-only](#bootstrap-only-secrets)).
-- Namespace-scoped `SecretStore` `onepassword` (provider `onepasswordSDK`,
-  vault `homelab`, auth from Secret `onepassword-service-account` key `token`)
-  exists in `agents` and `sandbox`
-  (`deploy/github-tokens/base/secretstore.yaml`). **Gap:** `backup` needs the
-  same store but none is committed (`deploy/backup/base/externalsecret.yaml`
-  documents it as a prerequisite).
-- Naming convention: 1Password item/field names equal the ExternalSecret
-  `remoteRef.key` / `remoteRef.property` values verbatim, and field labels
-  equal the `secretKey` (which equals the consuming env var where `envFrom`
-  is used). One name per value everywhere.
+- One dedicated 1Password vault: **`homelab`**. No other vault is in scope for this cluster.
+- The ESO service account is limited to that vault only. Its token is the only hand-entered secret (see [bootstrap-only](#bootstrap-only-secrets)).
+- Namespace-scoped `SecretStore` `onepassword` (provider `onepasswordSDK`, vault `homelab`, auth from Secret `onepassword-service-account` key `token`) exists in `agents` and `sandbox` (`deploy/github-tokens/base/secretstore.yaml`). **Gap:** `backup` needs the same store but none is committed (`deploy/backup/base/externalsecret.yaml` documents it as a prerequisite).
+- Naming convention: 1Password item/field names equal the ExternalSecret `remoteRef.key` / `remoteRef.property` values verbatim, and field labels equal the `secretKey` (which equals the consuming env var where `envFrom` is used). One name per value everywhere.
 
 ## Sharing classes
 
-- **Shared** — one credential consumed by many workloads; one vault item per
-  scope, synced into each namespace that needs it.
-- **Per-workload** — a credential only one workload (or one workload family)
-  consumes; scoped to a single namespace.
-- **Bootstrap-only** — entered once during cluster bring-up, outside ESO (or
-  not a Kubernetes Secret at all); rotation is manual.
+- **Shared** — one credential consumed by many workloads; one vault item per scope, synced into each namespace that needs it.
+- **Per-workload** — a credential only one workload (or one workload family) consumes; scoped to a single namespace.
+- **Bootstrap-only** — entered once during cluster bring-up, outside ESO (or not a Kubernetes Secret at all); rotation is manual.
 
 ---
 
@@ -121,8 +101,7 @@ and docs at that date.
 
 ## C. Bootstrap-only secrets
 
-Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret
-would be circular) and not part of steady-state GitOps.
+Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret would be circular) and not part of steady-state GitOps.
 
 | # | Credential | Location / Secret | Key(s) | 1Password ref | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -150,29 +129,18 @@ would be circular) and not part of steady-state GitOps.
 
 ## Migration contract (issues #38/#41-#46, #123)
 
-- One `ExternalSecret` per row above, `refreshInterval: 1h`, SDK provider
-  pointed at the 1Password vault item named in the contract column.
-- Target Secret names must stay **exactly** as listed — manifests reference
-  them literally and the factory cronjobs run with `optional: false`.
-- Do not widen token scopes during migration; a scope change is a separate
-  reviewed change.
+- One `ExternalSecret` per row above, `refreshInterval: 1h`, SDK provider pointed at the 1Password vault item named in the contract column.
+- Target Secret names must stay **exactly** as listed — manifests reference them literally and the factory cronjobs run with `optional: false`.
+- Do not widen token scopes during migration; a scope change is a separate reviewed change.
 
 ## Cross-check (verification)
 
 Every runtime secret reference in the repo maps to an entry above:
 
-- `secretKeyRef` / `envFrom.secretRef`: hermes (A1), t3code (A1, optional),
-  panel (A1, optional file), factory orchestrator (A1 + B1), factory
-  security/collector/reviewer/reconciler (A1), loop-agent (A1 + A2, optional),
-  dispatch-watcher (A1 + A2 via examples/jobs.ts patterns), chaos-monkey (A1,
-  optional), backup restic CronJob (B2), orchestrator-generated worker Jobs
-  (A1, B1).
-- Secret volumes: hermes, t3code, panel, loop-agent, dispatcher, chaos-monkey,
-  panel Jobs — all `github-token`/`github-token-writer` (A1/A2).
-- `kubectl create secret`: `onepassword-service-account` (C1),
-  `backup-target` emergency script (B2), `ghcr-pull` (A3/C4).
-- Non-Secret credential flows: Tailscale OAuth (C2), K3s token (C3), t3code
-  `auth.json` (B3).
+- `secretKeyRef` / `envFrom.secretRef`: hermes (A1), t3code (A1, optional), panel (A1, optional file), factory orchestrator (A1 + B1), factory security/collector/reviewer/reconciler (A1), loop-agent (A1 + A2, optional), dispatch-watcher (A1 + A2 via examples/jobs.ts patterns), chaos-monkey (A1, optional), backup restic CronJob (B2), orchestrator-generated worker Jobs (A1, B1).
+- Secret volumes: hermes, t3code, panel, loop-agent, dispatcher, chaos-monkey, panel Jobs — all `github-token`/`github-token-writer` (A1/A2).
+- `kubectl create secret`: `onepassword-service-account` (C1), `backup-target` emergency script (B2), `ghcr-pull` (A3/C4).
+- Non-Secret credential flows: Tailscale OAuth (C2), K3s token (C3), t3code `auth.json` (B3).
 
 To re-verify after changes:
 
@@ -182,5 +150,4 @@ grep -rn "kubectl create secret" scripts/ docs/ README.md bootstrap/
 kubectl get externalsecret -A && kubectl get secretstore -A
 ```
 
-Any new reference must either match an existing item/field pair above or add a
-row here **before** the manifest lands.
+Any new reference must either match an existing item/field pair above or add a row here **before** the manifest lands.
