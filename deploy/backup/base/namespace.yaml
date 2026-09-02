@@ -1,7 +1,0 @@
-# The opt-in backup stack creates its own namespace so a clean cluster can
-# enable it with a single `kubectl apply -k deploy/backup/base` — no
-# interactive secret script needed (runbook section 11).
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: backup
