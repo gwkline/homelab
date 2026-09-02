@@ -1,0 +1,26 @@
+# Digest-pinned PostgreSQL 18 operand catalog with the pgvector extension.
+#
+# Trimmed on 2026-09-02 from the official CloudNativePG catalog
+# (https://github.com/cloudnative-pg/artifacts, image-catalogs-extensions/
+# catalog-minimal-trixie.yaml, dated 20260831): only the major-18 entry and
+# the pgvector extension this repo uses are kept. SHA256 digests make the
+# operand and extension images immutable; update this file only through a
+# reviewed commit (e.g. renovate or a manual refresh from upstream) so
+# rollouts and audits stay reproducible. pg_textsearch is NOT in this catalog
+# — it is defined directly in cluster.yaml (issue #48 image).
+apiVersion: postgresql.cnpg.io/v1
+kind: ClusterImageCatalog
+metadata:
+  name: postgresql-minimal-trixie
+  labels:
+    images.cnpg.io/os: trixie
+    images.cnpg.io/publisher: cnpg.io
+    images.cnpg.io/type: minimal
+spec:
+  images:
+    - major: 18
+      image: ghcr.io/cloudnative-pg/postgresql:18.6-202608310817-minimal-trixie@sha256:5c389b0268d9e637ca55efa41a7fafa3996332b5ea3c6099d0861c5f31acb00e
+      extensions:
+        - name: pgvector
+          image:
+            reference: ghcr.io/cloudnative-pg/pgvector:0.8.6-202608271202-18-trixie@sha256:eb037e7c3244059fe0d6732ba8f6d94cd1e864ee306f5f55f37bcc11713aaa4a

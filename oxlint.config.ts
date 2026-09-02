@@ -34,5 +34,12 @@ export default {
         "unicorn/no-await-expression-member": "off",
       },
     },
+    {
+      // FNV-1a feature hashing (deterministic eval embeddings, #59) is a
+      // bitwise algorithm by definition — the xor/shift path is the hash,
+      // not a mistyped boolean. Every other rule in the file complies.
+      files: ["apps/knowledge/eval/rank.ts"],
+      rules: { "no-bitwise": "off" },
+    },
   ],
 };
