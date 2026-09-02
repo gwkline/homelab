@@ -1,0 +1,116 @@
+# Self-hosted Executor (https://github.com/UsefulSoftwareCo/executor) as the
+# shared MCP/tool gateway for every agent (issue #72).
+#
+# Deployment mode per upstream (executor.sh/docs/hosted/docker): the whole
+# server — typed API, streamable-HTTP MCP endpoint, auth, QuickJS code
+# execution, web UI — is ONE process over a libSQL (SQLite) file. No external
+# database, worker, or proxy to run. Everything that must persist (the
+# database and the generated encryption keys) lives in /data, hence the
+# StatefulSet + PVC: integrations, connections, policies, users, and API keys
+# are all rows in that database, so a restart preserves all of it.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: executor
+  namespace: agents
+spec:
+  serviceName: executor
+  replicas: 1
+  selector:
+    matchLabels:
+      app: executor
+  template:
+    metadata:
+      labels:
+        app: executor
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1000
+      containers:
+        - name: executor
+          # Pinned twice: upstream release tag 1.6.7 AND its immutable
+          # multi-arch digest (repo policy — verify.sh rejects mutable tags
+          # for new images, issue #91). Upgrades are a deliberate, reviewed
+          # change of both.
+          image: ghcr.io/usefulsoftwareco/executor-selfhost:1.6.7@sha256:c8dd83a5dba8ac992dfe1ded4aa65ae4e7f52ec31fddbe2af5b49ffebe5bbfa7
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 4788
+              name: http
+          env:
+            # Browser origin. The tailnet DNS suffix is THE single tailnet
+            # configuration value (deploy/tailscale/README.md) — homepage-env
+            # key tailnet-name, optional so executor still boots (MCP over
+            # the in-cluster Service works) before it is set. Browser logins
+            # are rejected until EXECUTOR_WEB_BASE_URL matches the URL the
+            # browser actually uses (upstream requirement).
+            - name: TAILNET_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: homepage-env
+                  key: tailnet-name
+                  optional: true
+            - name: EXECUTOR_WEB_BASE_URL
+              value: https://executor.$(TAILNET_NAME)
+            # Headless bootstrap admin from a manually bootstrapped Secret
+            # (1Password integration is issue #41). Optional: unset leaves
+            # upstream's in-browser first-run setup. Set it up with:
+            #   kubectl -n agents create secret generic executor-admin \
+            #     --from-literal=email=you@example.com \
+            #     --from-literal=password=<generated>
+            - name: EXECUTOR_BOOTSTRAP_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: executor-admin
+                  key: email
+                  optional: true
+            - name: EXECUTOR_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: executor-admin
+                  key: password
+                  optional: true
+            # Upstream sandbox defaults, pinned here as a statement of intent:
+            # generated tool code must not reach private networks, and
+            # host-executing stdio MCP servers stay off.
+            - name: EXECUTOR_ALLOW_LOCAL_NETWORK
+              value: "false"
+            - name: EXECUTOR_ALLOW_STDIO_MCP
+              value: "false"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          # Upstream's own health endpoint (the image HEALTHCHECK uses it).
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 30
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

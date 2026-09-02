@@ -53,6 +53,54 @@ Record the drill-start timestamp as your **first command** on the clean machine:
 date +%s   # DRILL_START — this is the RTO start line
 git clone https://github.com/gwkline/homelab.git && cd homelab
 ./bootstrap/bootstrap.sh server          # pins k3s per section 2
+
+# 0. node ready per above
+
+# 1. CRDs/operator for tailscale
+helm repo add tailscale https://pkgs.tailscale.com/helmcharts
+helm upgrade --install tailscale-operator tailscale/tailscale-operator \
+  -n tailscale --create-namespace \
+  --set oauth.clientId="$TS_CLIENT_ID" \
+  --set oauth.clientSecret="$TS_CLIENT_SECRET"
+kubectl -n tailscale set env deploy/operator PROXY_TAGS=tag:k8s-operator  # chart bug workaround (documented)
+kubectl rollout restart deploy/operator -n tailscale
+
+# 2. secrets: bootstrap the 1Password service-account token (env/stdin,
+#    never logged), then everything else is declarative
+kubectl -n agents create secret generic onepassword-service-account \
+  --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"   # repeat for sandbox
+kubectl apply -k deploy/github-tokens/base       # syncs github-token(+writer) from 1Password
+
+# 3. workloads
+kubectl apply -f deploy/namespaces.yaml
+kubectl apply -k deploy/policies/base
+kubectl apply -k deploy/tailscale          # serve-fixer
+kubectl apply -k deploy/t3code/base
+kubectl apply -k deploy/hermes/base
+kubectl apply -k deploy/loop-agent/base
+kubectl apply -k deploy/panel/base         # admin portal (https://panel.$TAILNET_NAME)
+kubectl apply -k deploy/headlamp/base      # k8s web UI (https://headlamp.$TAILNET_NAME)
+kubectl apply -k deploy/factory/base       # unattended issue -> draft PR factory
+
+# 3b. HTTPS for tailscale-proxied services (one-time tailnet approval already
+# granted; re-run after operator reinstall or proxy pod replacement)
+./scripts/serve-https.sh                   # t3code
+# Automatic self-healing: the t3code serve-fixer (deploy/tailscale/) runs a
+# loop in the tailscale namespace that re-points the serve entry at the app
+# pod's current IP within ~30s of a pod replacement, logging one line per
+# check; unreachable proxy pods fail loudly (container restarts, error in
+# `kubectl logs -n tailscale deploy/t3code-serve-fixer`). panel — or any
+# exposed app: serve-refresh.sh <app> <namespace>.
+# Also the one-command fix whenever a replaced app pod leaves its serve
+# entry pointing at a dead IP (502s): it re-points the entry at the current
+# pod IP, idempotently, printing serve status before/after.
+./scripts/serve-refresh.sh panel agents
+
+# 4. wait & verify
+kubectl get pods -A -w
+# TAILNET_NAME is the one documented tailnet config value
+# (deploy/tailscale/README.md); scripts/serve-https.sh auto-discovers it.
+curl -s -o /dev/null -w "%{http_code}\n" "http://t3code-0.${TAILNET_NAME:-<tailnet>}/"
 ```
 
 Fetch the kubeconfig to the driver (server runbook §4), confirm `kubectl get nodes` is Ready, and export the four credentials from section 1.
