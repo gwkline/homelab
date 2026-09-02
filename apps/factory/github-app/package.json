@@ -1,0 +1,19 @@
+{
+  "name": "factory-github-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GitHub App installation-token service for the software factory (#70): RS256 app JWT + expiry-aware cached, permission-narrowed installation tokens.",
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc -p . --noEmit",
+    "mint": "node --experimental-strip-types mint.ts"
+  },
+  "devDependencies": {
+    "@types/node": "26.3.0",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=22.6"
+  }
+}
