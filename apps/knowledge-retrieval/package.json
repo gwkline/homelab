@@ -1,0 +1,22 @@
+{
+  "name": "knowledge-retrieval",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild server/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
+    "test": "npm run build && node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.1",
+    "@hono/zod-openapi": "1.6.1",
+    "hono": "4.13.4",
+    "zod": "4.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "26.3.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}
