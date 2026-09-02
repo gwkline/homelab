@@ -17,6 +17,6 @@ RUN ARCH=$(dpkg --print-architecture) \
   && rm -rf /tmp
 
 WORKDIR /orch
-COPY apps/factory/orchestrator/run.sh /orch/run.sh
-RUN chmod +x /orch/run.sh
+COPY apps/factory/orchestrator/run.sh apps/factory/orchestrator/approval.sh /orch/
+RUN chmod +x /orch/run.sh /orch/approval.sh
 ENTRYPOINT ["/orch/run.sh"]
