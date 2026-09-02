@@ -21,7 +21,17 @@ rules:
   # ConfigMaps are read (not secret material by design) so workload config
   # views render; Secrets are deliberately absent.
   - apiGroups: [""]
-    resources: ["pods", "pods/status", "pods/log", "events", "namespaces", "nodes", "services", "configmaps"]
+    resources:
+      [
+        "pods",
+        "pods/status",
+        "pods/log",
+        "events",
+        "namespaces",
+        "nodes",
+        "services",
+        "configmaps",
+      ]
     verbs: ["get", "list", "watch"]
   # Controllers behind the pods, for inspecting a failed rollout/Job.
   - apiGroups: ["apps"]
