@@ -40,7 +40,7 @@ cat > "$FIX/prs.json" <<'EOF'
  {"number":10,"title":"ready two","head":{"ref":"factory/issue-9/code-pr"},"draft":false,
   "labels":[{"name":"factory/draft-pr"},{"name":"factory/needs-review"}],"body":"Closes #9"},
  {"number":11,"title":"unrelated PR","head":{"ref":"feature/unrelated"},"draft":false,
-  "labels":[],"body":"Not a factory run"}
+  "labels":[{"name":"factory/draft-pr"}],"body":"Not a factory run"}
 ]
 EOF
 echo '{"state":"success","statuses":[],"check_runs":[{"status":"completed","conclusion":"success"}]}' > "$FIX/checks.json"

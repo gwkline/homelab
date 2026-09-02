@@ -3,8 +3,8 @@
 set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/../../../../"
-grep -q 'gitt() { timeout 300 /usr/local/bin/git' apps/factory/orchestrator/run.sh || {
-  echo "FAIL: expected orchestrator Git wrapper was changed unexpectedly"
+grep -q 'gitt() { timeout 300 /usr/bin/git' apps/factory/orchestrator/run.sh || {
+  echo "FAIL: orchestrator Git wrapper must use Debian's /usr/bin/git"
   exit 1
 }
 grep -q 'ln -s /usr/bin/git /usr/local/bin/git' apps/factory/orchestrator/Dockerfile || {
