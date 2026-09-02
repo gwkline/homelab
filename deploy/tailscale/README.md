@@ -72,6 +72,21 @@ Retry-with-fix after a failed upgrade: because SSA recorded the failed attempt, 
 
 ## serve-fixer (deploy/tailscale/serve-fixer*.yaml)
 
-The operator writes the proxy's serve config once with the app pod's IP and does not refresh it when the StatefulSet pod is replaced → 502s after every rollout. The serve-fixer Deployment notices pod-IP drift within ~30s and re-applies `tailscale serve --bg --http=80 http://<pod-ip>:3773` in the proxy.
+The operator writes the proxy's serve config once with the app pod's IP and does not refresh it when the StatefulSet pod is replaced → 502s after every rollout. The serve-fixer Deployments notice pod-IP drift within ~30s and re-apply `tailscale serve` in the proxy (`scripts/serve-retest.sh` checks whether a newer operator still needs this).
 
-**Removal trigger:** when an operator release refreshes serve config on pod replacement (test: restart t3code-0, watch LB URL stay 200 without fixer), delete this directory.
+### Least privilege (issue #32)
+
+Each fixer has its **own** ServiceAccount and Role so the two mechanisms are independently revocable:
+
+- **t3code** (`serve-fixer`): the loop selects the proxy pod via the operator's own `tailscale.com/parent-resource` labels plus a name guard, so it can only ever exec into the t3code proxy — never the operator pod or another service's proxy. Its `agents`-namespace read is `resourceNames`-pinned to the `t3code-0` pod.
+- **panel** (`panel-serve-fixer`): same scoping for the panel proxy; its app IP is read from the `panel` Service's Endpoints object (name-pinned) instead of listing pods.
+- Both Roles dropped `pods/log`; the only write verb is `pods/exec create`. Both containers run non-root (uid 1000) with a read-only root filesystem, dropped capabilities, RuntimeDefault seccomp, and a digest-pinned image (tag-swap compromise impossible).
+
+**Residual risk (documented, deliberate):** `create pods/exec` in the `tailscale` namespace cannot be scoped by RBAC to one pod — the operator names proxy StatefulSets via `GenerateName` (`ts-<parent>-<rand>`, see `reconcileHeadlessService` in the operator source), so RBAC `resourceNames` cannot pin the exec target. A compromised fixer image could therefore exec into unrelated operator/proxy pods in that namespace (it cannot create/delete/patch pods, touch secrets, read `pods/log`, or read any pod outside `tailscale` beyond the pinned app pod). Compensating controls: digest-pinned image, non-root + read-only rootfs, label+name-guarded selection, and the split SAs above. The image is the repo's loop-agent build rather than a minimal kubectl image; swapping in a minimal image later only requires bumping the digest.
+
+### Retesting whether the workaround is still necessary
+
+- `scripts/serve-retest.sh` — disables the fixer, replaces the t3code-0 pod, and watches the proxy's serve config: exit 0 = operator self-heals (workaround obsolete — delete this directory), exit 3 = workaround still necessary, exit 1 = environment failure. It restores the fixer and re-verifies HTTPS 200 either way.
+- `scripts/serve-fixer-check.sh` — static manifest checks (digest pins, no `pods/log`, non-root settings, name-pinned reads) plus, against a live cluster with an impersonating kubeconfig, the RBAC matrix (may touch only its own target; denied elsewhere).
+
+**Removal trigger:** when an operator release refreshes serve config on pod replacement (test: `scripts/serve-retest.sh` exits 0), delete this directory.

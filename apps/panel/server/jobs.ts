@@ -115,6 +115,8 @@ export interface JobView {
   repo: string | null;
   kind: string;
   created: string | null;
+  // Machine-sortable creation epoch (ms). Never NaN: see viewJob.
+  createdMs: number;
 }
 
 interface JobCondition {
@@ -192,11 +194,17 @@ export const viewJob = (j: K8sObject): JobView => {
   const status = jobStatus(conds, j.status?.active ?? 0);
   const issue = jobIssue(j, name);
   const createdRaw = j.metadata?.creationTimestamp ?? null;
-  const created = new Date(createdRaw ?? Date.now());
-  const seconds = Math.max(0, (Date.now() - created.getTime()) / 1000);
+  const parsedMs =
+    createdRaw === null ? Number.NaN : new Date(createdRaw).getTime();
+  // Missing/invalid timestamps collapse to the epoch so placement is
+  // deterministic (always last, newest-first) instead of NaN-poisoning the
+  // comparator or rendering "NaNs".
+  const createdMs = Number.isFinite(parsedMs) ? parsedMs : 0;
+  const seconds = Math.max(0, (Date.now() - createdMs) / 1000);
   return {
     age: formatAge(seconds),
     created: createdRaw,
+    createdMs,
     issue,
     kind: jobKind(name, j.metadata?.labels),
     name,
