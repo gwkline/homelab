@@ -7,6 +7,7 @@ Two-node k3s cluster built from old servers that could die at any second. Everyt
 - **t3code**: T3 Code (`t3 serve`) as a StatefulSet — one isolated agent server per replica, each with its own PVC, repos auto-cloned from a ConfigMap. Interactive: you attach to it. Exposed to the tailnet via the Tailscale Kubernetes operator.
 - **loop-agent**: unattended agents as Jobs/CronJobs — throwaway pods with the same repo-sync plumbing plus Chromium and a nested Docker daemon (dind sidecar, pod-scoped socket). Contract: do work, export results, exit. Pods are garbage-collected after finishing.
 - **hermes**: Nous Research's self-improving agent as a StatefulSet — persistent memory/skills on its own PVC, reachable via its messaging gateway or `kubectl exec`. It holds scoped RBAC to spawn/inspect/delete loop jobs in `sandbox`, so you can ask _it_ to schedule cluster work from inside a chat.
+- **executor**: self-hosted Executor as the single MCP/tool gateway — every MCP-compatible agent (T3 Code, hermes, Cursor, Claude, Codex, future factory jobs) shares one catalog of integrations with central credentials and allow/approval/block policies. Pinned image, PVC-backed state, tailnet-internal only.
 - **homepage**: dashboard for every tailnet service at `https://homepage.<tailnet>.ts.net` — live status cards, config in git.
 - **panel**: the factory control panel at `https://panel.<tailnet>.ts.net`. Custom Vite + React app (this repo's own code) listing sandbox jobs and schedules, with a button to launch runs against a command or issue number. Its dev tools catalog is the front door for self-hosted tools (Grafana, Headlamp, CloudBeaver, Executor, Homepage, T3 Code, …): cards show live health from cluster state and link out to tailnet hostnames. Adding a tool is one entry in `apps/panel/server/devtools.ts` — generic operations stay in the upstream tools.
 - **cloudbeaver**: browser database client at `https://cloudbeaver.<tailnet>.ts.net` — inspect the factory PostgreSQL schemas and run harmless reads with a least-privilege, non-superuser role. Tailnet-only (Tailscale operator + NetworkPolicy), state on a small workspace PVC; credential and backup contract in `deploy/cloudbeaver/base/README.md`.
@@ -70,9 +71,10 @@ deploy/
   factory/base/      issue collector -> coding worker -> draft PR
   github-tokens/base/ ExternalSecrets syncing GitHub tokens from 1Password
   tailscale/        Tailscale operator install notes
-  t3code/base/      StatefulSet + per-replica Services
-  hermes/base/      StatefulSet + scoped RBAC + cluster guide
-  loop-agent/base/  CronJob example + task ConfigMap
+   t3code/base/      StatefulSet + per-replica Services
+   hermes/base/      StatefulSet + scoped RBAC + cluster guide
+   executor/base/    shared MCP gateway (pinned upstream image + PVC)
+   loop-agent/base/  CronJob example + task ConfigMap
 docs/               hardware runbooks
 .github/workflows/  image builds + validation
 examples/           sample loop script target
