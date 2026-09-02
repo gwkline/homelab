@@ -73,6 +73,41 @@ export const metricsFor = (
   recall: recallAtK(ranked, relevant, k),
 });
 
+/**
+ * Citation/source accuracy: fraction of the top-k returned chunks that resolve
+ * to a known corpus chunk whose document is in the relevant doc set. Measures
+ * provenance (did we cite a supporting source), which is weaker than chunk
+ * relevance — the right doc with the wrong chunk still counts as a correct
+ * citation. Returns 0 when nothing was returned (no citation, no credit).
+ */
+export const citationAccuracyAtK = (
+  ranked: string[],
+  relevantDocIds: string[],
+  docOfChunk: (chunkId: string) => string | undefined,
+  k: number
+): number => {
+  const top = ranked.slice(0, k);
+  if (top.length === 0) {
+    return 0;
+  }
+  const wanted = new Set(relevantDocIds);
+  let correct = 0;
+  for (const chunkId of top) {
+    const docId = docOfChunk(chunkId);
+    if (docId !== undefined && wanted.has(docId)) {
+      correct += 1;
+    }
+  }
+  return correct / top.length;
+};
+
+/**
+ * No-answer behavior: an unanswerable query is handled correctly when the
+ * strategy abstains (returns nothing) instead of presenting a fabricated hit.
+ */
+export const noAnswerCorrectness = (returnedCount: number): number =>
+  returnedCount === 0 ? 1 : 0;
+
 export const meanMetricSet = (sets: MetricSet[]): MetricSet => {
   if (sets.length === 0) {
     return { mrr: 0, precision: 0, recall: 0 };
