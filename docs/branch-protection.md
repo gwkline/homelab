@@ -31,6 +31,6 @@
 
 ## Factory identity
 
-- Single fine-grained PAT in k8s secret `github-token` (sandbox + agents ns).
-- Scopes: Contents RW + Pull requests RW + Metadata R on homelab + launchpad.
-- Rotation: ./scripts/create-github-secret.sh agents sandbox
+- Read-only credential: 1Password item `homelab/github-readonly` (field `token`) → k8s Secret `github-token` (agents + sandbox ns) via ExternalSecrets. Scopes: Contents R + Metadata R on homelab + launchpad.
+- Writer credential: separate 1Password item `homelab/github-writer` (field `token`) → k8s Secret `github-token-writer` (sandbox ns). Scopes: Contents RW + Pull requests RW on target repos only. Transitional: writer PATs should later become GitHub App installation tokens.
+- Rotation: update the item's `token` field in 1Password; it syncs into the cluster within ~1h and env-var consumers pick it up on restart (procedure: deploy/github-tokens/base/README.md).
