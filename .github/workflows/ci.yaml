@@ -108,6 +108,33 @@ jobs:
         working-directory: apps/panel
         run: npm test
 
+  # Knowledge retrieval eval (#59): the cheap deterministic subset runs on
+  # every PR — fully offline, no paid API — and the threshold gate blocks
+  # obvious retrieval regressions via non-zero exit code.
+  knowledge-eval:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/knowledge/package-lock.json
+      - name: Install knowledge deps
+        working-directory: apps/knowledge
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        working-directory: apps/knowledge
+        run: npm run typecheck
+      - name: Unit tests (fusion + eval harness)
+        working-directory: apps/knowledge
+        run: npm test
+      - name: Retrieval eval gate (deterministic subset, machine-readable)
+        working-directory: apps/knowledge
+        run: npm run eval -- --json --subset
+
   validate:
     runs-on: ubuntu-latest
     permissions:
@@ -120,7 +147,7 @@ jobs:
         run: ./scripts/verify.sh
 
   build:
-    needs: [validate, lint, panel-smoke, panel-test]
+    needs: [validate, lint, panel-smoke, panel-test, knowledge-eval]
     strategy:
       matrix:
         include:

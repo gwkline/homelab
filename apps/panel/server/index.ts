@@ -199,11 +199,7 @@ app.get("/api/state", async (c) => {
     const now = Date.now();
     const jobsOut = (jobs.items ?? [])
       .map(viewJob)
-      .toSorted(
-        (a, b) =>
-          new Date(b.created ?? 0).getTime() -
-          new Date(a.created ?? 0).getTime()
-      );
+      .toSorted((a, b) => b.createdMs - a.createdMs);
     return c.json({
       cronjobs: (cronjobs.items ?? []).map((cj: K8sObject) => ({
         active: cj.status?.active ?? 0,
