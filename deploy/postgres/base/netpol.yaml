@@ -1,0 +1,98 @@
+# Network isolation for the database namespace. Default-deny both directions;
+# every allowance below is named and scoped. Ingress rules are additive with
+# the workload-owned pattern used across this repo (see deploy/t3code/base).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: database
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# CNPG operator management plane. The operator polls the instance manager's
+# status API (8000) and scrapes postgres metrics (9187). If issue #49 installs
+# the operator into a namespace other than cnpg-system, update the selector.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cnpg-operator
+  namespace: database
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: pg-primary
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+      ports:
+        - { protocol: TCP, port: 8000 }
+        - { protocol: TCP, port: 9187 }
+---
+# SQL clients: factory and knowledge consumers. Today that is the agents
+# namespace (knowledge retrieval lives there); sandbox pods are pre-allowed
+# because factory v1 will move onto this database — note NetworkPolicies are
+# stateful, so sandbox pods additionally need an egress rule beside their own
+# manifests (deploy/factory profile netpols) before connections succeed.
+# Same-namespace pods are included for the -rw/-ro services and future
+# streaming replication when instances scale past 1.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-sql-clients
+  namespace: database
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: pg-primary
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agents
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: sandbox
+        - podSelector: {}
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+# Instance egress: DNS, the Kubernetes API (instance manager leases and
+# status reporting), and peer instances on 5432 for streaming replication.
+# Image pulls (operand + ImageVolume extensions) are done by the kubelet and
+# are not affected by pod-level egress policy. The 10.43.0.1/32 API service IP
+# matches the k3s CIDR documented in deploy/policies/base/networkpolicy.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-instance-egress
+  namespace: database
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: pg-primary
+  policyTypes: [Egress]
+  egress:
+    - to: # DNS: kube-dns pods only (k3s coredns carries this label)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to: # Kubernetes API (k3s service IP)
+        - ipBlock:
+            cidr: 10.43.0.1/32
+      ports:
+        - { protocol: TCP, port: 443 }
+    - to: # Peer instances (streaming replication, basebackup when scaling)
+        - podSelector: {}
+      ports:
+        - { protocol: TCP, port: 5432 }
