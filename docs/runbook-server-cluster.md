@@ -139,10 +139,22 @@ kubectl apply -k deploy/homepage/base
 kubectl apply -k deploy/panel/base
 kubectl apply -k deploy/cloudbeaver/base
 
+# database (prereqs: CNPG operator from #49 in cnpg-system, pg-textsearch
+# digest from #48 pinned in deploy/postgres/base/cluster.yaml — see
+# deploy/postgres/README.md for secrets and bring-up)
+kubectl apply -k deploy/postgres/base
+
 kubectl get pods -A -w    # watch it settle; ^C when Running
 ```
 
 ## 9. First contact
+
+**postgres** (durable state for factory + knowledge):
+
+```sh
+kubectl get cluster -n database pg-primary      # "Cluster in healthy state"
+scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart && scripts/pg-smoke.sh verify
+```
 
 **t3code** (interactive coding agents):
 
