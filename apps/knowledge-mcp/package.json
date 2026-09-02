@@ -1,0 +1,21 @@
+{
+  "name": "knowledge-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild server.ts --bundle --platform=node --format=esm --outfile=dist/server.js",
+    "test": "npm run build && node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc -p . --noEmit",
+    "lint": "cd ../.. && npx oxlint apps/knowledge-mcp"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.20.2",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "26.3.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}

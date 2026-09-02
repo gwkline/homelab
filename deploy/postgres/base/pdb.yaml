@@ -1,0 +1,19 @@
+# Explicit PDB (CNPG only creates its own for clusters with >= 3 instances —
+# pkg/specs/poddisruptionbudget.go). With one instance this budget means:
+#   - the healthy primary MAY be evicted (node drains and planned maintenance
+#     are never blocked on a single-node dataset), and
+#   - an UNHEALTHY primary may not (a broken database pod is not waved through
+#     a drain; delete the pod deliberately to force recovery).
+# Scaling to 3+: delete this object before bumping spec.instances — the
+# operator then manages its own budget (named pg-primary) keeping n-2
+# replicas available.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pg-primary-pdb
+  namespace: database
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      cnpg.io/cluster: pg-primary
