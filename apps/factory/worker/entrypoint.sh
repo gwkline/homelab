@@ -1,10 +1,10 @@
 #!/bin/sh
 # Factory worker entrypoint (#74).
 # Contract (ADR-002 / factory-v1-github-ledger.md):
-#   /task/brief.json   input: run_id, repository, issue, verify_command
+#   /task/brief.json   input: run_id, repository, issue, profile, verify_command
 #   /work/<repo>       clone, make changes here
 #   /out/patch.diff    git diff of the change
-#   /out/report.json   structured result {success, summary, tests}
+#   /out/report.json   structured result {success, summary, tests, base_sha, run_id, profile}
 #   exit 0             success; non-zero = failed attempt
 set -eu
 
@@ -65,6 +65,7 @@ REPO=$(python3 -c "import json;print(json.load(open('${BRIEF}'))['repository'])"
 VERIFY=$(python3 -c "import json;print(json.load(open('${BRIEF}')).get('verify_command',''))" 2>/dev/null || echo "")
 ISSUE_NUM=$(python3 -c "import json;print(json.load(open('${BRIEF}'))['issue']['number'])")
 RUN_ID=$(python3 -c "import json;print(json.load(open('${BRIEF}'))['run_id'])")
+PROFILE=$(python3 -c "import json;print(json.load(open('${BRIEF}')).get('profile','unknown'))" 2>/dev/null || echo "unknown")
 
 echo "[worker] run=${RUN_ID} repo=${REPO} issue=#${ISSUE_NUM}"
 
@@ -80,6 +81,11 @@ git ${GITGUARD} clone --depth 20 "${CLONE_URL}" repo || {
   exit 1
 }
 git -C repo remote set-url origin "https://github.com/${REPO}.git"
+# Credential boundary: the clone was the only authenticated operation. Drop
+# the long-lived token BEFORE the agent runs so the coding CLI (and anything
+# it executes) can never read or reuse it — publishing happens in the
+# orchestrator, which holds the writer role.
+unset GH_TOKEN GITHUB_TOKEN CLONE_URL
 cd repo
 BASE_SHA=$(git rev-parse HEAD)
 
@@ -166,13 +172,15 @@ tail -40 /tmp/task-prompt-output.log 2>/dev/null || true
 echo "[worker] --- end agent output ---"
 SUMMARY=$(tail -5 /tmp/task-prompt-output.log 2>/dev/null | head -c 500 || echo "see patch")
 
-python3 - "$TESTS" "$SUMMARY" "$BASE_SHA" << 'EOF' > "${OUT}/report.json"
+python3 - "$TESTS" "$SUMMARY" "$BASE_SHA" "$RUN_ID" "$PROFILE" << 'EOF' > "${OUT}/report.json"
 import json, sys
 print(json.dumps({
     "success": sys.argv[1] in ("passed", "no-command-configured"),
     "summary": sys.argv[2],
     "tests": sys.argv[1],
     "base_sha": sys.argv[3],
+    "run_id": sys.argv[4],
+    "profile": sys.argv[5],
 }, indent=2))
 EOF
 

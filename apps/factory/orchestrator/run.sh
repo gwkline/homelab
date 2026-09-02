@@ -33,6 +33,9 @@ LABEL_WIP="factory/in-progress"
 LABEL_DONE="factory/draft-pr"
 LABEL_FAILED="factory/failed"
 PROFILE="${FACTORY_PROFILE:-${PROFILE:-code-pr}}"
+# Workflow identity recorded on the run (marker comment + worker brief):
+# profile@version pins which orchestrator behavior stack produced the Run.
+WORKFLOW_VERSION="${FACTORY_WORKFLOW_VERSION:-v1}"
 # An in-progress issue with no draft PR older than this is reclaimed to queued.
 STALE_HOURS="${FACTORY_STALE_HOURS:-2}"
 
@@ -50,6 +53,16 @@ kubectl() { timeout 120 /usr/local/bin/kubectl "$@"; }
 # "timeout: failed to run command '/usr/local/bin/git'".
 gitt() { timeout 300 /usr/bin/git "$@"; }
 timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+# Redact the GitHub token from anything destined for a comment or report:
+# worker log tails and reports echo agent output, and an agent could have
+# printed its env. Everything else on these paths is already token-free.
+redact() {
+  if [ -n "${GH_TOKEN:-}" ]; then
+    sed "s#${GH_TOKEN}#***#g"
+  else
+    cat
+  fi
+}
 
 # Durable approval gates (#83): policy table, record I/O, publish gate, resume.
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -171,7 +184,23 @@ if [ "${EXISTING}" != "0" ]; then
   exit 0
 fi
 
-# ---- 2. swap labels + post marker comment --------------------------------
+# ---- 2. resolve profile stack (image/SA/resources) ------------------------
+# Resolved before the marker comment so the Run records the exact stack that
+# will execute it (acceptance: RunProfile + workflow/version recorded).
+case "${PROFILE}" in
+  security)
+    WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/security:latest"
+    WORKER_SA="factory-security"
+    WORKER_CPU="500m"; WORKER_MEM="4Gi"
+    ;;
+  code-pr|*)
+    WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/worker:latest"
+    WORKER_SA="factory-worker"
+    WORKER_CPU="500m"; WORKER_MEM="12Gi"
+    ;;
+esac
+
+# ---- 3. swap labels + post marker comment --------------------------------
 gh issue edit "${NUM}" -R "${REPO}" \
     --remove-label "${LABEL_QUEUED}" --add-label "${LABEL_WIP}" >/dev/null
 COMMENT_URL=$(gh issue comment "${NUM}" -R "${REPO}" --body "$(cat <<EOF
@@ -183,6 +212,7 @@ COMMENT_URL=$(gh issue comment "${NUM}" -R "${REPO}" --body "$(cat <<EOF
 | Status | running |
 | Started | ${RUN_TS} |
 | Profile | ${PROFILE} |
+| Workflow | ${PROFILE}@${WORKFLOW_VERSION} (${WORKER_IMAGE}) |
 
 _Worker dispatched — this comment updates live._
 EOF
@@ -203,6 +233,7 @@ update_status() {  # $1=status, $2=extra detail markdown
 | Started | ${RUN_TS} |
 | Updated | $(timestamp) |
 | Profile | ${PROFILE} |
+| Workflow | ${PROFILE}@${WORKFLOW_VERSION} (${WORKER_IMAGE}) |
 
 ${2:-_Worker dispatched._}
 EOF
@@ -228,33 +259,23 @@ case "${REPO}" in
   *homelab*)      VERIFY_CMD="for f in \$(git diff --name-only HEAD -- '*.sh'); do shellcheck -s sh \"\$f\" 2>/dev/null || dash -n \"\$f\" || exit 1; done; echo verify-ok" ;;
 esac
 
-python3 - "${REPO}" "${NUM}" "${VERIFY_CMD}" << 'PYEOF' > /tmp/brief.json
+python3 - "${REPO}" "${NUM}" "${VERIFY_CMD}" "issue${NUM}-${RUN_TS}" "${PROFILE}" "${WORKFLOW_VERSION}" << 'PYEOF' > /tmp/brief.json
 import json, sys
-repo, num, verify = sys.argv[1], sys.argv[2], sys.argv[3]
+repo, num, verify, run_id, profile, workflow = sys.argv[1:7]
 d = json.load(open("/tmp/issue.json"))
 print(json.dumps({
-    "run_id": f"issue{num}-{num}",
+    # run_id maps 1:1 to the run marker (factory:run:<issue>:<ts>) so logs,
+    # reports and PRs can be traced back to exactly one Run attempt.
+    "run_id": run_id,
     "repository": repo,
     "issue": d,
+    "profile": profile,
+    "workflow_version": workflow,
     "constraints": ["draft PR only", "minimal diff"],
     "verify_command": verify
 }))
 PYEOF
 BRIEF_B64=$(base64 -w0 /tmp/brief.json)
-
-# Resolve profile-aware image/SA/resources (harness-agnostic).
-case "${PROFILE}" in
-  security)
-    WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/security:latest"
-    WORKER_SA="factory-security"
-    WORKER_CPU="500m"; WORKER_MEM="4Gi"
-    ;;
-  code-pr|*)
-    WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/worker:latest"
-    WORKER_SA="factory-worker"
-    WORKER_CPU="500m"; WORKER_MEM="12Gi"
-    ;;
-esac
 
 # Single-shot creation via generated manifest (kubectl create job has no
 # --env/--labels flags; a here-doc manifest needs no patch verbs).
@@ -327,7 +348,7 @@ for _i in $(seq 1 340); do
   sleep 10
 done
 if [ "${WAIT_OK}" != "1" ]; then
-  LOGTAIL=$(kubectl logs "job/${JOB_NAME}" -n sandbox --tail=40 2>/dev/null || true)
+  LOGTAIL=$(kubectl logs "job/${JOB_NAME}" -n sandbox --tail=40 2>/dev/null | redact || true)
   # Bounded auto-retry: one extra attempt for transient failures (flaky
   # provider, netpol blip). 2 run markers max, then park in failed for a human.
   ATTEMPTS=$(gh api "repos/${REPO}/issues/${NUM}/comments?per_page=100" --jq '[.[] | select(.body | contains("<!-- factory:run:"))] | length' 2>/dev/null || echo 2)
@@ -370,10 +391,13 @@ if [ -z "${POD}" ]; then
   exit 0
 fi
 # Try log-based extraction; fallback to cp for old image compat during rollout.
+# Logs are fetched once: both the patch and the structured worker report ride
+# the same base64 blocks (worker emits PATCH_B64 + REPORT_B64).
+POD_LOGS="/tmp/pod-logs-${NUM}.txt"
+kubectl logs -n sandbox "${POD}" > "${POD_LOGS}" 2>/dev/null || true
 EXTRACTED=0
-if kubectl logs -n sandbox "${POD}" 2>/dev/null | grep -q "PATCH_B64_BEGIN"; then
-  kubectl logs -n sandbox "${POD}" 2>/dev/null \
-    | sed -n '/---PATCH_B64_BEGIN---/,/---PATCH_B64_END---/p' \
+if grep -q "PATCH_B64_BEGIN" "${POD_LOGS}"; then
+  sed -n '/---PATCH_B64_BEGIN---/,/---PATCH_B64_END---/p' "${POD_LOGS}" \
     | grep -v -- "---PATCH" | tr -d '\n\r ' | base64 -d > "/tmp/patch-${NUM}.diff" 2>/dev/null && EXTRACTED=1
 fi
 if [ "${EXTRACTED}" != "1" ]; then
@@ -384,6 +408,19 @@ if [ "${EXTRACTED}" != "1" ] || [ ! -s "/tmp/patch-${NUM}.diff" ]; then
   echo "[orch] patch artifact missing from worker logs (pod: ${POD})" >&2
   gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
   exit 0
+fi
+
+# Structured worker report (ADR-002 artifact): embedded in the run comment so
+# the PR's verification story survives the pod. Redacted like log tails.
+REPORT_JSON=""
+if grep -q "REPORT_B64_BEGIN" "${POD_LOGS}"; then
+  REPORT_JSON=$(sed -n '/---REPORT_B64_BEGIN---/,/---REPORT_B64_END---/p' "${POD_LOGS}" \
+    | grep -v -- "---REPORT" | tr -d '\n\r ' | base64 -d 2>/dev/null | redact || true)
+fi
+TESTS_VAL=$(printf '%s' "${REPORT_JSON}" | jq -r '.tests // "not-reported"' 2>/dev/null || echo "not-reported")
+REPORT_BLOCK=""
+if [ -n "${REPORT_JSON}" ]; then
+  REPORT_BLOCK=$(printf '<details><summary>worker report</summary>\n\n```json\n%s\n```\n\n</details>' "${REPORT_JSON}")
 fi
 
 # ---- 6. publish phase (publisher responsibilities, inline for v1) ---------
@@ -412,6 +449,8 @@ Refs #${NUM}"
       PR_URL=$(approval_open_pr "${REPO}" "${NUM}" "${PROFILE}" "${BRANCH}" "main")
       approval_mark_executed "${REPO}" "${NUM}" publish "${PR_URL}" || true
       update_status "published" "Draft PR: ${PR_URL}
+
+${REPORT_BLOCK}
 
 _Comment edited by factory; CI will run on the draft branch._"
       gh issue edit "${NUM}" -R "${REPO}" \
