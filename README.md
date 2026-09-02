@@ -25,14 +25,15 @@ Token needs "Contents: read-only" on every repo listed in a ConfigMap.
 
 ## Backups
 
-Off by default. Nothing is scheduled until you set up a bucket:
+Off by default. Nothing is scheduled until the credentials exist in 1Password:
 
 ```sh
-scripts/create-backup-secret.sh <bucket-name>   # B2 keys + repo password
+# 1Password: add item `restic-backup` to the Homelab vault with fields
+# RESTIC_REPOSITORY, B2_ACCOUNT_ID, B2_ACCOUNT_KEY, RESTIC_PASSWORD
 kubectl apply -k deploy/backup/base             # enables nightly 03:30 runs
 ```
 
-A nightly restic CronJob then snapshots the stateful PVCs (agent homes, hermes memory) encrypted to any S3-compatible store. Restore instructions live in the server runbook. Losing the restic password means losing the backups.
+A nightly restic CronJob then snapshots the stateful PVCs (agent homes, hermes memory) encrypted to any S3-compatible store. The `backup-target` secret is materialized from 1Password by External Secrets, so a clean cluster needs no interactive secret script (`scripts/create-backup-secret.sh` remains only as a documented emergency fallback). Rotation and restore instructions live in the server runbook. Losing the restic password means losing the backups.
 
 ## Launching one-off jobs
 

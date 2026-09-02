@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
-# Creates the backup-target Secret used by the restic CronJob.
+# EMERGENCY FALLBACK for the ExternalSecret-managed backup-target Secret
+# (deploy/backup/base/externalsecret.yaml). The normal path is 1Password +
+# External Secrets Operator: put the values in the `restic-backup` vault item
+# and `kubectl apply -k deploy/backup/base`.
+#
+# Use this script only when ESO or the vault is unavailable (e.g. a cold
+# rebuild before the operator is installed). It creates the same Secret
+# imperatively; once ESO is healthy again it reconciles the Secret back to
+# the vault state (creationPolicy: Owner), so hand-made values do not stick.
+# Re-store the values in the 1Password item as soon as you can.
 #
 # You need a Backblaze B2 (or any S3-compatible) bucket. For S3 set
 # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY instead of the B2 pair and use an
