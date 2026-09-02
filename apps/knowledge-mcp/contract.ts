@@ -16,24 +16,24 @@ export const NAMESPACE_MAX_LENGTH = 128;
 
 // ---- tool inputs ----
 
-export const SearchToolInput = z.object({
-  query: z
-    .string()
-    .min(1)
-    .max(QUERY_MAX_LENGTH)
-    .describe(`Free-text search query, ${QUERY_MAX_LENGTH} characters max.`),
-  namespace: z
-    .string()
-    .min(1)
-    .max(NAMESPACE_MAX_LENGTH)
-    .optional()
-    .describe("Optional namespace/collection to restrict the search to."),
+export const SearchToolInputSchema = z.object({
   mode: z
     .enum(["bm25", "vector", "hybrid"])
     .optional()
     .describe(
       "Retrieval mode. Defaults to hybrid (rank-based reciprocal rank fusion) upstream."
     ),
+  namespace: z
+    .string()
+    .min(1)
+    .max(NAMESPACE_MAX_LENGTH)
+    .optional()
+    .describe("Optional namespace/collection to restrict the search to."),
+  query: z
+    .string()
+    .min(1)
+    .max(QUERY_MAX_LENGTH)
+    .describe(`Free-text search query, ${QUERY_MAX_LENGTH} characters max.`),
   top_k: z
     .number()
     .int()
@@ -45,7 +45,7 @@ export const SearchToolInput = z.object({
     ),
 });
 
-export const GetSourceToolInput = z.object({
+export const GetSourceToolInputSchema = z.object({
   source_id: z
     .string()
     .regex(SOURCE_ID_PATTERN)
@@ -54,15 +54,15 @@ export const GetSourceToolInput = z.object({
     ),
 });
 
-export type SearchToolInput = z.infer<typeof SearchToolInput>;
-export type GetSourceToolInput = z.infer<typeof GetSourceToolInput>;
+export type SearchToolInput = z.infer<typeof SearchToolInputSchema>;
+export type GetSourceToolInput = z.infer<typeof GetSourceToolInputSchema>;
 
 // ---- HTTP API contract (#64) ----
 
 export const SEARCH_ENDPOINT = "/v1/search";
 export const SOURCE_ENDPOINT = "/v1/sources";
 
-export const SourceVersion = z
+export const SourceVersionSchema = z
   .object({
     commit: z.string().min(1),
     created_at: z.string().min(1),
@@ -71,51 +71,51 @@ export const SourceVersion = z
   })
   .passthrough();
 
-export const Citation = z
+export const CitationSchema = z
   .object({
-    source_id: z.string().min(1),
+    citation_anchor: z.string().min(1),
     document_id: z.string().min(1),
     namespace: z.string().min(1),
-    title: z.string().min(1),
-    url: z.string().min(1),
-    path: z.string().optional(),
-    citation_anchor: z.string().min(1),
     offsets: z
       .object({
-        start: z.number().int().min(0),
         end: z.number().int().min(0),
+        start: z.number().int().min(0),
       })
       .passthrough()
       .optional(),
-    version: SourceVersion,
+    path: z.string().optional(),
+    source_id: z.string().min(1),
+    title: z.string().min(1),
+    url: z.string().min(1),
+    version: SourceVersionSchema,
   })
   .passthrough();
 
-export const ScoreBreakdown = z
+export const ScoreBreakdownSchema = z
   .object({
     // RRF fused score; bm25/vector ranks explain the fusion (#63).
-    fused: z.number(),
     bm25_rank: z.number().int().min(1).optional(),
+    fused: z.number(),
     vector_rank: z.number().int().min(1).optional(),
   })
   .passthrough();
 
-export const SearchHit = z
+export const SearchHitSchema = z
   .object({
     chunk_id: z.string().min(1),
+    citation: CitationSchema,
+    score: ScoreBreakdownSchema,
     text: z.string().min(1),
-    score: ScoreBreakdown,
-    citation: Citation,
   })
   .passthrough();
 
-export const SearchResponse = z
+export const SearchResponseSchema = z
   .object({
-    results: z.array(SearchHit).max(TOP_K_MAX),
+    results: z.array(SearchHitSchema).max(TOP_K_MAX),
   })
   .passthrough();
 
-export const SourceDetail = Citation.extend({
+export const SourceDetailSchema = CitationSchema.extend({
   chunks: z
     .array(
       z
@@ -129,9 +129,9 @@ export const SourceDetail = Citation.extend({
     .optional(),
 });
 
-export type SourceVersion = z.infer<typeof SourceVersion>;
-export type Citation = z.infer<typeof Citation>;
-export type ScoreBreakdown = z.infer<typeof ScoreBreakdown>;
-export type SearchHit = z.infer<typeof SearchHit>;
-export type SearchResponse = z.infer<typeof SearchResponse>;
-export type SourceDetail = z.infer<typeof SourceDetail>;
+export type SourceVersion = z.infer<typeof SourceVersionSchema>;
+export type Citation = z.infer<typeof CitationSchema>;
+export type ScoreBreakdown = z.infer<typeof ScoreBreakdownSchema>;
+export type SearchHit = z.infer<typeof SearchHitSchema>;
+export type SearchResponse = z.infer<typeof SearchResponseSchema>;
+export type SourceDetail = z.infer<typeof SourceDetailSchema>;

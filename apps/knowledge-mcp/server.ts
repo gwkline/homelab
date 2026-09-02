@@ -10,14 +10,15 @@ import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { KnowledgeApiError, KnowledgeClient } from "./client.js";
+import { KnowledgeClient } from "./client.js";
 import {
+  GetSourceToolInputSchema,
   QUERY_MAX_LENGTH,
-  SearchToolInput,
-  GetSourceToolInput,
+  SearchToolInputSchema,
   TOP_K_DEFAULT,
   TOP_K_MAX,
 } from "./contract.js";
+import { KnowledgeApiError } from "./errors.js";
 
 const TIMEOUT_DEFAULT_MS = 10_000;
 const TIMEOUT_MAX_MS = 120_000;
@@ -74,7 +75,7 @@ const readTimeoutMs = (): number => {
   if (!raw) {
     return TIMEOUT_DEFAULT_MS;
   }
-  const value = Number.parseInt(raw, 10);
+  const value = Math.trunc(Number(raw));
   if (!Number.isInteger(value) || value <= 0) {
     return fail(
       `KNOWLEDGE_API_TIMEOUT_MS must be a positive integer, got "${raw}"`
@@ -88,23 +89,23 @@ const readTimeoutMs = (): number => {
 };
 
 const toolError = (
-  err: unknown
+  error: unknown
 ): {
+  content: { text: string; type: "text" }[];
   isError: true;
-  content: { type: "text"; text: string }[];
 } => {
   const text =
-    err instanceof KnowledgeApiError
-      ? err.message
-      : `knowledge tool failed: ${err instanceof Error ? err.message : String(err)}`;
-  return { isError: true, content: [{ type: "text", text }] };
+    error instanceof KnowledgeApiError
+      ? error.message
+      : `knowledge tool failed: ${error instanceof Error ? error.message : String(error)}`;
+  return { content: [{ text, type: "text" }], isError: true };
 };
 
 const run = async (): Promise<void> => {
   const client = new KnowledgeClient({
     baseUrl: readBaseUrl(),
-    token: readToken(),
     timeoutMs: readTimeoutMs(),
+    token: readToken(),
   });
 
   const server = new McpServer({ name: "knowledge-mcp", version: "0.1.0" });
@@ -112,7 +113,11 @@ const run = async (): Promise<void> => {
   server.registerTool(
     "search_knowledge",
     {
-      title: "Search cited knowledge",
+      annotations: {
+        idempotentHint: true,
+        openWorldHint: true,
+        readOnlyHint: true,
+      },
       description: [
         "Search the homelab knowledge base. Returns ranked chunks, each with full",
         `provenance: source_id, document_id, namespace, title, url, path, citation_anchor,`,
@@ -125,21 +130,17 @@ const run = async (): Promise<void> => {
         "knowledge base has no support instead of filling gaps from memory; never",
         "invent, alter, or paraphrase citations into unsupported claims.",
       ].join(" "),
-      inputSchema: SearchToolInput.shape,
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
+      inputSchema: SearchToolInputSchema.shape,
+      title: "Search cited knowledge",
     },
     async (input) => {
       try {
         const payload = await client.search(input);
         return {
-          content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+          content: [{ text: JSON.stringify(payload, null, 2), type: "text" }],
         };
-      } catch (err) {
-        return toolError(err);
+      } catch (error) {
+        return toolError(error);
       }
     }
   );
@@ -147,7 +148,11 @@ const run = async (): Promise<void> => {
   server.registerTool(
     "get_source",
     {
-      title: "Inspect a knowledge source",
+      annotations: {
+        idempotentHint: true,
+        openWorldHint: true,
+        readOnlyHint: true,
+      },
       description: [
         "Fetch full provenance for one knowledge source by source_id: identity,",
         "namespace, title, url/path, immutable version (commit, created_at), and",
@@ -156,21 +161,17 @@ const run = async (): Promise<void> => {
         "a citation before relying on it. Do not cite a source you have not",
         "inspected, and do not claim facts the retrieved text does not support.",
       ].join(" "),
-      inputSchema: GetSourceToolInput.shape,
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
+      inputSchema: GetSourceToolInputSchema.shape,
+      title: "Inspect a knowledge source",
     },
     async (input) => {
       try {
         const payload = await client.getSource(input.source_id);
         return {
-          content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+          content: [{ text: JSON.stringify(payload, null, 2), type: "text" }],
         };
-      } catch (err) {
-        return toolError(err);
+      } catch (error) {
+        return toolError(error);
       }
     }
   );
@@ -181,7 +182,9 @@ const run = async (): Promise<void> => {
   );
 };
 
-run().catch((err: unknown) => {
-  log(`fatal: ${err instanceof Error ? err.message : String(err)}`);
+try {
+  await run();
+} catch (error: unknown) {
+  log(`fatal: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
-});
+}

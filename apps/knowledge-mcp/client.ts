@@ -5,36 +5,18 @@
 // never copied into error text or results.
 import type { ZodType } from "zod";
 
+import type {
+  SearchResponse,
+  SearchToolInput,
+  SourceDetail,
+} from "./contract.js";
 import {
   SEARCH_ENDPOINT,
   SOURCE_ENDPOINT,
-  SearchResponse,
-  SourceDetail,
-  type SearchToolInput,
+  SearchResponseSchema,
+  SourceDetailSchema,
 } from "./contract.js";
-
-export type KnowledgeErrorKind =
-  | "invalid_request"
-  | "auth"
-  | "not_found"
-  | "rate_limited"
-  | "upstream"
-  | "timeout"
-  | "network"
-  | "malformed"
-  | "contract";
-
-export class KnowledgeApiError extends Error {
-  readonly kind: KnowledgeErrorKind;
-  readonly status?: number;
-
-  constructor(kind: KnowledgeErrorKind, message: string, status?: number) {
-    super(message);
-    this.name = "KnowledgeApiError";
-    this.kind = kind;
-    this.status = status;
-  }
-}
+import { KnowledgeApiError } from "./errors.js";
 
 const ERROR_SNIPPET_MAX = 200;
 
@@ -68,7 +50,7 @@ export class KnowledgeClient {
     this.fetchImpl = fetchImpl;
   }
 
-  async search(input: SearchToolInput): Promise<SearchResponse> {
+  search(input: SearchToolInput): Promise<SearchResponse> {
     const body: Record<string, unknown> = { query: input.query };
     if (input.namespace !== undefined) {
       body.namespace = input.namespace;
@@ -80,17 +62,17 @@ export class KnowledgeClient {
       body.top_k = input.top_k;
     }
     return this.request(SEARCH_ENDPOINT, {
-      method: "POST",
       body: JSON.stringify(body),
-      schema: SearchResponse,
+      method: "POST",
+      schema: SearchResponseSchema,
     });
   }
 
-  async getSource(sourceId: string): Promise<SourceDetail> {
+  getSource(sourceId: string): Promise<SourceDetail> {
     return this.request(`${SOURCE_ENDPOINT}/${encodeURIComponent(sourceId)}`, {
       method: "GET",
-      schema: SourceDetail,
       notFoundSubject: sourceId,
+      schema: SourceDetailSchema,
     });
   }
 
@@ -110,29 +92,29 @@ export class KnowledgeClient {
     let res: Response;
     try {
       res = await this.fetchImpl(`${this.baseUrl}${route}`, {
-        method: opts.method,
         headers: {
-          authorization: `Bearer ${this.token}`,
           accept: "application/json",
+          authorization: `Bearer ${this.token}`,
           ...(opts.body === undefined
             ? {}
             : { "content-type": "application/json" }),
         },
+        method: opts.method,
         ...(opts.body === undefined ? {} : { body: opts.body }),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
-    } catch (err) {
-      throw this.networkError(err);
+    } catch (error) {
+      throw this.networkError(error);
     }
 
     if (!res.ok) {
       throw await this.httpError(res, opts.notFoundSubject);
     }
 
-    const raw: unknown = await this.parseJson(res);
+    const raw: unknown = await KnowledgeClient.parseJson(res);
     const parsed = opts.schema.safeParse(raw);
     if (!parsed.success) {
-      const issue = parsed.error.issues[0];
+      const [issue] = parsed.error.issues;
       const where = issue ? issue.path.join(".") : "(root)";
       const why = issue ? issue.message : "unknown";
       throw new KnowledgeApiError(
@@ -145,14 +127,14 @@ export class KnowledgeClient {
     return raw as T;
   }
 
-  private networkError(err: unknown): KnowledgeApiError {
-    if (err instanceof Error && err.name === "TimeoutError") {
+  private networkError(error: unknown): KnowledgeApiError {
+    if (error instanceof Error && error.name === "TimeoutError") {
       return new KnowledgeApiError(
         "timeout",
         `knowledge API request timed out after ${this.timeoutMs}ms`
       );
     }
-    const reason = err instanceof Error ? err.message : String(err);
+    const reason = error instanceof Error ? error.message : String(error);
     return new KnowledgeApiError(
       "network",
       this.redact(`knowledge API unreachable: ${truncate(reason)}`)
@@ -163,7 +145,7 @@ export class KnowledgeClient {
     res: Response,
     notFoundSubject?: string
   ): Promise<KnowledgeApiError> {
-    const status = res.status;
+    const { status } = res;
     if (status === 404) {
       const subject = notFoundSubject ?? "resource";
       return new KnowledgeApiError(
@@ -228,12 +210,12 @@ export class KnowledgeClient {
     return this.redact(truncate(text)) || "(no body)";
   }
 
-  private async parseJson(res: Response): Promise<unknown> {
+  private static async parseJson(res: Response): Promise<unknown> {
     let text: string;
     try {
       text = await res.text();
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
       throw new KnowledgeApiError(
         "malformed",
         `knowledge API response body unreadable: ${truncate(reason)}`
