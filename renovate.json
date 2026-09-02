@@ -36,7 +36,10 @@
     {
       "description": "Agent CLIs: weekly, grouped, auto-merge patch/minor after CI passes",
       "groupName": "agent CLIs (codex/claude-code/opencode/t3)",
-      "matchFileNames": ["apps/t3code/Dockerfile", "apps/factory/worker/Dockerfile"],
+      "matchFileNames": [
+        "apps/t3code/Dockerfile",
+        "apps/factory/worker/Dockerfile"
+      ],
       "matchDatasources": ["npm"],
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true,
@@ -47,7 +50,10 @@
     {
       "description": "Major bumps of agent CLIs: separate PR, no automerge — review breaking changes",
       "groupName": "agent CLI majors",
-      "matchFileNames": ["apps/t3code/Dockerfile", "apps/factory/worker/Dockerfile"],
+      "matchFileNames": [
+        "apps/t3code/Dockerfile",
+        "apps/factory/worker/Dockerfile"
+      ],
       "matchDatasources": ["npm"],
       "matchUpdateTypes": ["major"],
       "automerge": false
@@ -68,7 +74,12 @@
     {
       "description": "Third-party base/runtime images: keep tag+digest pins current, automerge digest/pin once CI is green",
       "matchDatasources": ["docker"],
-      "matchPackagePatterns": ["^library/", "^restic/", "^gethomepage/", "^nousresearch/"],
+      "matchPackagePatterns": [
+        "^library/",
+        "^restic/",
+        "^gethomepage/",
+        "^nousresearch/"
+      ],
       "matchUpdateTypes": ["digest", "pin", "patch", "minor"],
       "automerge": true,
       "automergeType": "pr",
