@@ -41,11 +41,11 @@ Remove even the possibility — e.g. freeze the reconciler pattern as permanent 
 | Apply manifests | ~10 `kubectl apply -k` lines in a fixed order | one root `Kustomization`; Flux reconciles |
 | Verify | `scripts/rebuild-check.sh` | same + `flux get kustomizations` |
 
-Net: Flux replaces ten apply lines with one bootstrap command but adds the flux-system namespace, its CRDs, and a second credential to the recovery path. Total recovery time is roughly unchanged (~15 min today; k3s install and image pulls dominate, not applies). If #34 shows applies are *not* the slow part of recovery — the expected result — Flux buys nothing for the dead-disk scenario.
+Net: Flux replaces ten apply lines with one bootstrap command but adds the flux-system namespace, its CRDs, and a second credential to the recovery path. Total recovery time is roughly unchanged (~15 min today; k3s install and image pulls dominate, not applies). If #34 shows applies are _not_ the slow part of recovery — the expected result — Flux buys nothing for the dead-disk scenario.
 
 ### D2. External Secrets and the one bootstrap token
 
-The secret model is identical under both options: exactly one hand-entered value, the least-privilege 1Password service-account token (issue #41), after which ESO syncs `github-token`/`github-token-writer`/`backup-target` from the vault. Flux never manages secret *values* — it would only apply the ExternalSecret manifests that already exist in `deploy/github-tokens/base`. Order matters under Flux too: flux → ESO → token secret → ExternalSecrets sync. Flux's additions are its own git credential (bootstrap key/PAT) and, if image automation is ever used, a write-scoped token — both are *new* credentials the current model doesn't need.
+The secret model is identical under both options: exactly one hand-entered value, the least-privilege 1Password service-account token (issue #41), after which ESO syncs `github-token`/`github-token-writer`/`backup-target` from the vault. Flux never manages secret _values_ — it would only apply the ExternalSecret manifests that already exist in `deploy/github-tokens/base`. Order matters under Flux too: flux → ESO → token secret → ExternalSecrets sync. Flux's additions are its own git credential (bootstrap key/PAT) and, if image automation is ever used, a write-scoped token — both are _new_ credentials the current model doesn't need.
 
 ### D3. Steady-state resource estimate (8 GB node, actual workloads)
 
@@ -62,7 +62,7 @@ kubectl top pods -n flux-system --sum
 kubectl get pods -n flux-system -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[*].resources}{"\n"}{end}'
 ```
 
-Recorded results: __not yet measured — no trial install performed (this issue installs nothing)__
+Recorded results: **not yet measured — no trial install performed (this issue installs nothing)**
 
 ### D4. Drift correction: what each layer actually fixes
 
