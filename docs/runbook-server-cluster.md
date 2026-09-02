@@ -209,23 +209,97 @@ PVC data on the dead node is gone by definition — everything else converges fr
 
 ## 11. Nightly backups (off until you enable them)
 
-PVC data (agent home dirs, hermes memory) can be backed up encrypted to object storage every night at 03:30. Git repos are skipped — they re-clone. Nothing runs until both steps below are done.
+PVC data (agent home dirs, hermes memory) can be backed up encrypted to object storage every night at 03:30. Git repos are skipped — they re-clone. Nothing runs until the steps below are done.
 
-One-time setup:
+Credentials live in the Homelab vault in 1Password; the cluster only ever holds a synced copy. One-time setup:
+
+1. External Secrets Operator must be installed and connected to the vault (service-account token bootstrapped, store healthy).
+2. Create the 1Password item `restic-backup` in the Homelab vault with four text fields named exactly: `RESTIC_REPOSITORY` (e.g. `b2:<bucket-name>/homelab`), `B2_ACCOUNT_ID`, `B2_ACCOUNT_KEY`, `RESTIC_PASSWORD`. Values are entered only in 1Password — never in git, issues, or logs.
+3. Enable backups and watch the sync:
 
 ```sh
-./scripts/create-backup-secret.sh <bucket-name>   # prompts for B2 keys + repo password
 kubectl apply -k deploy/backup/base
+kubectl get externalsecret backup-target -n backup   # must show SecretSynced=True
 ```
 
-Save the restic password somewhere other than this cluster. Losing it means losing the backups.
+Applying the directory creates the `backup` namespace, materializes Secret `backup-target` with the exact keys the restic CronJob reads via `envFrom`, and schedules the job. Verify a run with `kubectl logs job/restic-backup-<id> -n backup`.
 
-Verify it ran: `kubectl logs job/restic-backup-<id> -n backup`. Restore from any machine with the same credentials and bucket access:
+### Rotation and replacement
+
+- **B2 keyID / applicationKey**: rotate in Backblaze, then update the two fields in the 1Password item. The Secret re-syncs within the hour (`refreshInterval: 1h`); the next nightly run picks up the new key. Nothing else to do — the repository is not tied to a specific key.
+- **`RESTIC_PASSWORD` is different.** It is the encryption password of the restic repository. Changing the field in 1Password does NOT change the repository's password — it only makes restic present the wrong one: nightly backups fail with a wrong-password error, and existing snapshots cannot be restored until the field is corrected. To actually rotate the repository password, run `restic key passwd` against the repository first (with the old password still in place), then set the field in 1Password to the new value. If the real password is ever lost outright, every existing snapshot is unrecoverable — that is why its only authoritative copy lives in 1Password, outside the cluster.
+- **Recovering a bad sync**: fix the fields in the 1Password item and let the refresh converge, or force it immediately by deleting the generated Secret (`kubectl delete secret backup-target -n backup`) — ESO recreates it from the vault. Because the ExternalSecret uses `creationPolicy: Owner`, hand edits to `backup-target` are also reconciled back to the vault state within the refresh interval.
+
+### Scratch restore drill (using the generated Secret)
+
+Run a one-off restore into scratch storage; credentials stay in the cluster's Secret, so nothing touches your shell or logs:
 
 ```sh
-docker run --rm -it -v "$PWD:/restore" -e RESTIC_REPOSITORY=b2:<bucket>/homelab \
-  -e B2_ACCOUNT_ID=... -e B2_ACCOUNT_KEY=... -e RESTIC_PASSWORD=... \
-  restic/restic:0.18.0 restore latest --target /restore --include /mnt/t3code
+kubectl apply -f - <<'EOF'
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: scratch-restore
+  namespace: backup
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: scratch-restore
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: restic
+          image: restic/restic:0.18.0
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              restic restore latest --target /restore --include /mnt/t3code
+              echo "restored $(find /restore -type f | wc -l) files into scratch"
+          envFrom:
+            - secretRef:
+                name: backup-target
+          volumeMounts:
+            - name: scratch
+              mountPath: /restore
+          resources:
+            requests:
+              cpu: "200m"
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: scratch
+          emptyDir:
+            sizeLimit: 5Gi
+EOF
+kubectl -n backup wait --for=condition=complete job/scratch-restore --timeout=30m
+kubectl -n backup logs job/scratch-restore | tail -1   # file count, no credentials
+kubectl -n backup delete job scratch-restore
+```
+
+Read a known non-secret file from `/restore` inside the pod if you want proof beyond the count. The drill never overwrites live PVCs: it restores into an `emptyDir` that dies with the job.
+
+### Emergency fallback
+
+`scripts/create-backup-secret.sh <bucket-name>` still works and creates the same Secret imperatively. Use it only when ESO or the vault is unavailable (e.g. a cold rebuild before the operator is installed): while ESO is healthy it reconciles `backup-target` back to the vault state within the refresh interval, so hand-made values do not stick. After using the fallback, copy the values into the `restic-backup` 1Password item and re-apply `deploy/backup/base` to hand control back to ESO.
+
+Restore from any machine (1Password CLI keeps values out of shell history and logs):
+
+```sh
+export RESTIC_REPOSITORY="$(op read 'op://Homelab/restic-backup/RESTIC_REPOSITORY')"
+export B2_ACCOUNT_ID="$(op read 'op://Homelab/restic-backup/B2_ACCOUNT_ID')"
+export B2_ACCOUNT_KEY="$(op read 'op://Homelab/restic-backup/B2_ACCOUNT_KEY')"
+export RESTIC_PASSWORD="$(op read 'op://Homelab/restic-backup/RESTIC_PASSWORD')"
+docker run --rm -it -v "$PWD:/restore" -e RESTIC_REPOSITORY -e B2_ACCOUNT_ID \
+  -e B2_ACCOUNT_KEY -e RESTIC_PASSWORD restic/restic:0.18.0 \
+  restore latest --target /restore --include /mnt/t3code
 ```
 
 ## 12. Experimental: gVisor for sandbox pods
