@@ -89,8 +89,8 @@ spec:
       ports:
         - { protocol: TCP, port: 5432 }
     - to: # Same destinations via pod/service CIDRs (k3s defaults, see
-          # deploy/policies/base/networkpolicy.yaml) - covers CNIs that
-          # evaluate egress before DNAT, i.e. connections to ClusterIPs.
+        # deploy/policies/base/networkpolicy.yaml) - covers CNIs that
+        # evaluate egress before DNAT, i.e. connections to ClusterIPs.
         - ipBlock:
             cidr: 10.42.0.0/16
         - ipBlock:
