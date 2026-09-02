@@ -37,8 +37,8 @@ skills/<name>/<reviewed files>   # optional, must be listed under files:
 skills:
   - name: tailnet-etiquette
     description: Naming and phrasing etiquette for tailnet services
-    allow: true          # human review gate; false = not reviewed yet
-    files: []            # non-markdown files a human has reviewed, e.g. [lookup.sh]
+    allow: true # human review gate; false = not reviewed yet
+    files: [] # non-markdown files a human has reviewed, e.g. [lookup.sh]
 ```
 
 `SKILL.md` with `name`/`description` frontmatter is the emerging cross-harness agent-skill convention — Claude Code and OpenCode read it natively, so no per-harness generation step is needed; the remaining harnesses get thin copy/render adapters (D3).
@@ -69,7 +69,7 @@ The skills repo gets a dedicated fine-grained PAT with **Contents: read on the s
 
 ### D6. Skill content hygiene
 
-Skill content contains **no secret values and no machine-specific credentials** — no tokens, no real tailnet hostnames, no host paths, no per-machine config. Two enforcement layers: the installer secret-scans every skill before install (same pattern set as `scripts/verify.sh`) and refuses failing skills; authors write skills assuming they will be public ("assume public" rule). `SKILL.md` should teach *where credentials come from* (e.g. "the token is already in your environment"), never their values.
+Skill content contains **no secret values and no machine-specific credentials** — no tokens, no real tailnet hostnames, no host paths, no per-machine config. Two enforcement layers: the installer secret-scans every skill before install (same pattern set as `scripts/verify.sh`) and refuses failing skills; authors write skills assuming they will be public ("assume public" rule). `SKILL.md` should teach _where credentials come from_ (e.g. "the token is already in your environment"), never their values.
 
 ### D7. Idempotency — never overwrite user state
 
@@ -81,7 +81,7 @@ Skill content contains **no secret values and no machine-specific credentials** 
 ### D8. Allowlist and trust gates (default-deny, three gates)
 
 1. **Manifest review gate** — a skill installs only if `allow: true` in `skills.yaml`. Flipping that flag is the human review act and happens via PR in the skills repo. New skills are deny-by-default.
-2. **Consumer allowlist** — `SKILLS_ALLOWLIST` (space-separated names) per workload (ConfigMap/env). A skill must be reviewed *and* explicitly allowlisted for that consumer; nothing installs otherwise.
+2. **Consumer allowlist** — `SKILLS_ALLOWLIST` (space-separated names) per workload (ConfigMap/env). A skill must be reviewed _and_ explicitly allowlisted for that consumer; nothing installs otherwise.
 3. **File review gate** — any file in a skill directory that is not `SKILL.md` and not listed under `files:` marks the whole skill unreviewed; the installer refuses it. Fetched code therefore never ships or executes without a listed human review.
 
 Skills are injected as instructions (markdown); the installer executes nothing from the skills repo at install time.
@@ -107,11 +107,11 @@ Example consumer wiring (once the operator creates the repo — human gate), e.g
 env:
   - name: SKILLS_SOURCE
     value: https://github.com/gwkline/.agent-skills
-  - name: SKILLS_REF            # pin: tag or full SHA — never main
+  - name: SKILLS_REF # pin: tag or full SHA — never main
     value: "2026.09.0"
   - name: SKILLS_ALLOWLIST
     value: "tailnet-etiquette"
-  - name: SKILLS_ADAPTERS       # e.g. "claude codex" in t3code; "hermes" in hermes
+  - name: SKILLS_ADAPTERS # e.g. "claude codex" in t3code; "hermes" in hermes
     value: "claude hermes"
 ```
 
