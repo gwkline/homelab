@@ -74,13 +74,13 @@ RUN (pip3 install --no-cache-dir --break-system-packages "semgrep==${SEMGREP_VER
 # instead of the floating apt repo (#35).
 # renovate: datasource=github-releases depName=aquasecurity/trivy extractVersion=^v(?<version>.+)$
 ARG TRIVY_VERSION=0.74.0
-RUN curl -fsSLo /tmp/trivy.deb \
+RUN curl -fsSLo "/tmp/trivy_${TRIVY_VERSION}_Linux-64bit.deb" \
       "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.deb" \
   && (cd /tmp \
       && curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt" \
           | grep "trivy_${TRIVY_VERSION}_Linux-64bit.deb" | sha256sum -c -) \
-  && (dpkg -i /tmp/trivy.deb \
-      && rm -f /tmp/trivy.deb \
+  && (dpkg -i "/tmp/trivy_${TRIVY_VERSION}_Linux-64bit.deb" \
+      && rm -f "/tmp/trivy_${TRIVY_VERSION}_Linux-64bit.deb" \
       && trivy --version \
       || echo "trivy install best-effort")
 
