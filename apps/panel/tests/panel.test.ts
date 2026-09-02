@@ -514,7 +514,10 @@ test("server serves SPA and proxies k8s with locked-down manifests", async () =>
           return {
             items: [
               {
-                metadata: { creationTimestamp: ago(10 * 60_000), name: "panel-10m" },
+                metadata: {
+                  creationTimestamp: ago(10 * 60_000),
+                  name: "panel-10m",
+                },
                 status: { active: 1 },
               },
               {
@@ -526,7 +529,10 @@ test("server serves SPA and proxies k8s with locked-down manifests", async () =>
                 status: { active: 1 },
               },
               {
-                metadata: { creationTimestamp: ago(7_200_000), name: "panel-2h" },
+                metadata: {
+                  creationTimestamp: ago(7_200_000),
+                  name: "panel-2h",
+                },
                 status: { active: 1 },
               },
               {
@@ -534,19 +540,31 @@ test("server serves SPA and proxies k8s with locked-down manifests", async () =>
                 status: { active: 1 },
               },
               {
-                metadata: { creationTimestamp: "not-a-date", name: "panel-bad" },
+                metadata: {
+                  creationTimestamp: "not-a-date",
+                  name: "panel-bad",
+                },
                 status: { active: 1 },
               },
               {
-                metadata: { creationTimestamp: ago(9 * 60_000), name: "panel-9m" },
+                metadata: {
+                  creationTimestamp: ago(9 * 60_000),
+                  name: "panel-9m",
+                },
                 status: { active: 1 },
               },
               {
-                metadata: { creationTimestamp: ago(59 * 60_000), name: "panel-59m" },
+                metadata: {
+                  creationTimestamp: ago(59 * 60_000),
+                  name: "panel-59m",
+                },
                 status: { active: 1 },
               },
               {
-                metadata: { creationTimestamp: ago(86_400_000), name: "panel-1d" },
+                metadata: {
+                  creationTimestamp: ago(86_400_000),
+                  name: "panel-1d",
+                },
                 status: { active: 1 },
               },
             ],
