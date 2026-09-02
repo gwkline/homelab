@@ -68,6 +68,61 @@ test("viewJob derives status and issue", async () => {
   assert.equal(failed.status, "failed");
 });
 
+test("jobs sort newest-first by creation epoch, not lexical age text", async () => {
+  const { viewJob } = await import(path.join(root, "dist", "jobs.js"));
+  const now = Date.now();
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+  const mk = (name: string, creationTimestamp?: string) =>
+    viewJob({
+      metadata:
+        creationTimestamp === undefined
+          ? { name }
+          : { creationTimestamp, name },
+      status: { active: 1 },
+    });
+
+  const jobs = [
+    mk("j-3d", ago(3 * 86_400_000)),
+    mk("j-2h", ago(7_200_000)),
+    mk("j-59m", ago(59 * 60_000)),
+    mk("j-10m", ago(10 * 60_000)),
+    mk("j-9m", ago(9 * 60_000)),
+    mk("j-30s", ago(30_000)),
+    mk("j-bad", "not-a-date"),
+    mk("j-none"),
+  ];
+  const sorted = jobs.toSorted((a, b) => b.createdMs - a.createdMs);
+
+  // Newest-first across seconds, minutes, hours, and days — including the
+  // lexical traps 9m vs 10m and 2h vs 59m — with invalid/missing timestamps
+  // deterministically last (epoch fallback, stable input order).
+  assert.deepEqual(
+    sorted.map((j) => j.name),
+    ["j-30s", "j-9m", "j-10m", "j-59m", "j-2h", "j-3d", "j-bad", "j-none"]
+  );
+  assert.equal(typeof jobs[0]?.createdMs, "number");
+  assert.equal(jobs.find((j) => j.name === "j-bad")?.createdMs, 0);
+  assert.equal(jobs.find((j) => j.name === "j-none")?.createdMs, 0);
+
+  // Displayed age stays human-readable across every unit…
+  const ages = new Map(sorted.map((j) => [j.name, j.age]));
+  assert.equal(ages.get("j-30s"), "30s");
+  assert.equal(ages.get("j-9m"), "9m");
+  assert.equal(ages.get("j-10m"), "10m");
+  assert.equal(ages.get("j-59m"), "59m");
+  assert.equal(ages.get("j-2h"), "2h");
+  assert.equal(ages.get("j-3d"), "3d");
+  // …which is exactly why lexical age sorting is wrong.
+  assert.notDeepEqual(
+    ["9m", "10m"].toSorted((a, b) => a.localeCompare(b)),
+    ["9m", "10m"]
+  );
+  assert.notDeepEqual(
+    ["2h", "59m"].toSorted((a, b) => a.localeCompare(b)),
+    ["59m", "2h"]
+  );
+});
+
 test("GET /api/factory/prs lists open factory PRs with CI + review status", async () => {
   const stage = mkdtempSync(path.join(tmpdir(), "panel-prs-"));
   mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
@@ -452,17 +507,51 @@ test("server serves SPA and proxies k8s with locked-down manifests", async () =>
             },
           ],
         }
-      : {
-          items: [
-            {
-              metadata: {
-                creationTimestamp: new Date().toISOString(),
-                name: "panel-x",
+      : (() => {
+          const now = Date.now();
+          const ago = (ms: number) => new Date(now - ms).toISOString();
+          // Scrambled input order; /api/state must return newest-first.
+          return {
+            items: [
+              {
+                metadata: { creationTimestamp: ago(10 * 60_000), name: "panel-10m" },
+                status: { active: 1 },
               },
-              status: { active: 1 },
-            },
-          ],
-        };
+              {
+                metadata: { creationTimestamp: ago(0), name: "panel-x" },
+                status: { active: 1 },
+              },
+              {
+                metadata: { name: "panel-none" },
+                status: { active: 1 },
+              },
+              {
+                metadata: { creationTimestamp: ago(7_200_000), name: "panel-2h" },
+                status: { active: 1 },
+              },
+              {
+                metadata: { creationTimestamp: ago(30_000), name: "panel-30s" },
+                status: { active: 1 },
+              },
+              {
+                metadata: { creationTimestamp: "not-a-date", name: "panel-bad" },
+                status: { active: 1 },
+              },
+              {
+                metadata: { creationTimestamp: ago(9 * 60_000), name: "panel-9m" },
+                status: { active: 1 },
+              },
+              {
+                metadata: { creationTimestamp: ago(59 * 60_000), name: "panel-59m" },
+                status: { active: 1 },
+              },
+              {
+                metadata: { creationTimestamp: ago(86_400_000), name: "panel-1d" },
+                status: { active: 1 },
+              },
+            ],
+          };
+        })();
     res
       .writeHead(200, { "content-type": "application/json" })
       .end(JSON.stringify(fixture));
@@ -511,11 +600,29 @@ test("server serves SPA and proxies k8s with locked-down manifests", async () =>
     const state = (await (
       await fetch(`http://127.0.0.1:${port}/api/state`)
     ).json()) as {
-      jobs: { name: string; status: string }[];
+      jobs: { name: string; status: string; age: string }[];
       cronjobs: { schedule: string }[];
     };
-    assert.equal(state.jobs[0]?.name, "panel-x");
+    // Newest-first across every display unit; invalid/missing timestamps
+    // deterministically last (epoch fallback, stable input order).
+    assert.deepEqual(
+      state.jobs.map((j) => j.name),
+      [
+        "panel-x",
+        "panel-30s",
+        "panel-9m",
+        "panel-10m",
+        "panel-59m",
+        "panel-2h",
+        "panel-1d",
+        "panel-none",
+        "panel-bad",
+      ]
+    );
     assert.equal(state.jobs[0]?.status, "running");
+    for (const j of state.jobs) {
+      assert.match(j.age, /^\d+[smhd]$/u);
+    }
     assert.equal(state.cronjobs[0]?.schedule, "0 9 * * *");
 
     const launch = await fetch(`http://127.0.0.1:${port}/api/jobs`, {
