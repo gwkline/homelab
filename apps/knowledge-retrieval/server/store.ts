@@ -70,10 +70,10 @@ export interface ChannelResults {
 }
 
 export interface RetrievalStore {
-  search(options: SearchOptions): Promise<ChannelResults>;
+  search: (options: SearchOptions) => Promise<ChannelResults>;
   // Optional query-embedding capability for vector/hybrid modes. Returning
   // null disables the vector channel for that query instead of failing.
-  embedQuery?(query: string): Promise<number[] | null> | number[] | null;
+  embedQuery?: (query: string) => Promise<number[] | null> | number[] | null;
 }
 
 export class StoreUnavailableError extends Error {

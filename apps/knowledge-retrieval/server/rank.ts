@@ -2,18 +2,16 @@ export const BM25_K1 = 1.2;
 export const BM25_B = 0.75;
 export const RRF_DEFAULT_K = 60;
 
-export function tokenize(text: string): string[] {
-  return text
+export const tokenize = (text: string): string[] =>
+  text
     .toLowerCase()
     .split(/[^a-z0-9]+/u)
     .filter((t) => t.length > 0);
-}
 
-export function bm25Idf(docFrequency: number, totalDocs: number): number {
-  return Math.log(1 + (totalDocs - docFrequency + 0.5) / (docFrequency + 0.5));
-}
+export const bm25Idf = (docFrequency: number, totalDocs: number): number =>
+  Math.log(1 + (totalDocs - docFrequency + 0.5) / (docFrequency + 0.5));
 
-export function bm25TermScore(
+export const bm25TermScore = (
   termFrequency: number,
   docFrequency: number,
   totalDocs: number,
@@ -21,16 +19,16 @@ export function bm25TermScore(
   averageDocLength: number,
   k1 = BM25_K1,
   b = BM25_B
-): number {
+): number => {
   if (termFrequency <= 0 || totalDocs <= 0 || docFrequency <= 0) {
     return 0;
   }
   const idf = bm25Idf(docFrequency, totalDocs);
   const norm = 1 - b + b * (docLength / averageDocLength);
   return idf * ((termFrequency * (k1 + 1)) / (termFrequency + k1 * norm));
-}
+};
 
-export function cosineSimilarity(a: number[], b: number[]): number | null {
+export const cosineSimilarity = (a: number[], b: number[]): number | null => {
   if (a.length === 0 || a.length !== b.length) {
     return null;
   }
@@ -51,7 +49,7 @@ export function cosineSimilarity(a: number[], b: number[]): number | null {
     return null;
   }
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
+};
 
 export interface ChannelRank {
   rank: number;
@@ -74,11 +72,11 @@ interface ChannelInput<T> {
 // collapse to a single candidate that keeps every channel rank it earned;
 // candidates found by only one channel stay eligible. Ties break on the
 // candidate id (ascending) so the output is deterministic.
-export function reciprocalRankFusion<T>(
+export const reciprocalRankFusion = <T>(
   channels: ChannelInput<T>[],
   getId: (item: T) => string,
   k: number = RRF_DEFAULT_K
-): FusedCandidate<T>[] {
+): FusedCandidate<T>[] => {
   if (k <= 0) {
     throw new Error(`rrf k must be positive, got ${k}`);
   }
@@ -106,27 +104,25 @@ export function reciprocalRankFusion<T>(
         existing[channel.key] = { rank, score: contribution };
       } else {
         const entry: FusedCandidate<T> = {
-          bm25: null,
+          bm25: channel.key === "bm25" ? { rank, score: contribution } : null,
           fusedScore: contribution,
           item,
-          vector: null,
+          vector:
+            channel.key === "vector" ? { rank, score: contribution } : null,
         };
-        entry[channel.key] = { rank, score: contribution };
         byId.set(id, entry);
       }
     }
   }
-  return [...byId.values()].sort((a, b) => {
+  return [...byId.values()].toSorted((a, b) => {
     if (b.fusedScore !== a.fusedScore) {
       return b.fusedScore - a.fusedScore;
     }
     return getId(a.item).localeCompare(getId(b.item));
   });
-}
+};
 
-export function rrfScoreForRank(
+export const rrfScoreForRank = (
   rank: number,
   k: number = RRF_DEFAULT_K
-): number {
-  return 1 / (k + rank);
-}
+): number => 1 / (k + rank);

@@ -12,49 +12,55 @@ import {
 } from "./contract.js";
 import type { Logger } from "./log.js";
 import { reciprocalRankFusion } from "./rank.js";
+import type { FusedCandidate } from "./rank.js";
 import type { RankedCandidate, RetrievalStore } from "./store.js";
 
-type AppEnv = { Variables: { requestId: string } };
+interface AppEnv {
+  Variables: { requestId: string };
+}
 
 export class TimeoutError extends Error {
   override name = "TimeoutError";
 }
 
-export async function withTimeout<T>(
+export const withTimeout = async <T>(
   promise: Promise<T>,
   ms: number
-): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new TimeoutError(`retrieval exceeded ${ms}ms`)),
-      ms
-    );
-  });
+): Promise<T> => {
+  const { promise: timeout, reject } = Promise.withResolvers<never>();
+  const timer = setTimeout(
+    () => reject(new TimeoutError(`retrieval exceeded ${ms}ms`)),
+    ms
+  );
   try {
     return await Promise.race([promise, timeout]);
   } finally {
     clearTimeout(timer);
-    promise.catch(() => {});
+    void (async (): Promise<void> => {
+      try {
+        await promise;
+      } catch {
+        // The race already settled; swallow to avoid an unhandled rejection.
+      }
+    })();
   }
-}
+};
 
-function tokenFingerprint(token: string): Buffer {
-  return createHash("sha256").update(token).digest();
-}
+const tokenFingerprint = (token: string): Buffer =>
+  createHash("sha256").update(token).digest();
 
-function bearerTokenMatches(header: string, expected: string): boolean {
-  const match = /^Bearer\s+(.+)$/u.exec(header);
-  if (!match?.[1]) {
+const bearerTokenMatches = (header: string, expected: string): boolean => {
+  const match = /^Bearer\s+(?<token>.+)$/u.exec(header);
+  const token = match?.groups?.["token"];
+  if (!token) {
     return false;
   }
-  return timingSafeEqual(
-    tokenFingerprint(match[1]),
-    tokenFingerprint(expected)
-  );
-}
+  return timingSafeEqual(tokenFingerprint(token), tokenFingerprint(expected));
+};
 
 const roundScore = (value: number): number => Number(value.toFixed(6));
+
+const getId = (candidate: RankedCandidate): string => candidate.chunk.chunkId;
 
 export interface AppDeps {
   config: RetrievalConfig;
@@ -62,7 +68,7 @@ export interface AppDeps {
   logger: Logger;
 }
 
-export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
+export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
   const { config, store, logger } = deps;
   const contract = buildContract(config);
   const app = new OpenAPIHono<AppEnv>({
@@ -93,7 +99,7 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
         "requestId",
         /^[\w.-]{8,128}$/u.test(header) ? header : `req_${randomUUID()}`
       );
-      await next();
+      return await next();
     })
   );
 
@@ -101,6 +107,7 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
     "*",
     createMiddleware<AppEnv>(async (c, next) => {
       const startedAt = performance.now();
+      // eslint-disable-next-line node/callback-return -- hono middleware intentionally logs after next() resolves
       await next();
       logger.info("request", {
         durationMs: Math.round((performance.now() - startedAt) * 1000) / 1000,
@@ -129,7 +136,7 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
           401
         );
       }
-      await next();
+      return await next();
     })
   );
 
@@ -216,35 +223,35 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
         config.requestTimeoutMs
       );
 
-      const getId = (candidate: RankedCandidate): string =>
-        candidate.chunk.chunkId;
-      const fused =
-        mode === "bm25"
-          ? reciprocalRankFusion(
-              [{ items: channels.bm25, key: "bm25" }],
-              getId,
-              config.rrfK
-            )
-          : mode === "vector"
-            ? reciprocalRankFusion(
-                [{ items: channels.vector, key: "vector" }],
-                getId,
-                config.rrfK
-              )
-            : reciprocalRankFusion(
-                [
-                  { items: channels.bm25, key: "bm25" },
-                  { items: channels.vector, key: "vector" },
-                ],
-                getId,
-                config.rrfK
-              );
+      let fused: FusedCandidate<RankedCandidate>[];
+      if (mode === "bm25") {
+        fused = reciprocalRankFusion(
+          [{ items: channels.bm25, key: "bm25" }],
+          getId,
+          config.rrfK
+        );
+      } else if (mode === "vector") {
+        fused = reciprocalRankFusion(
+          [{ items: channels.vector, key: "vector" }],
+          getId,
+          config.rrfK
+        );
+      } else {
+        fused = reciprocalRankFusion(
+          [
+            { items: channels.bm25, key: "bm25" },
+            { items: channels.vector, key: "vector" },
+          ],
+          getId,
+          config.rrfK
+        );
+      }
 
       const payload = searchResponseSchema.parse({
         mode,
         namespace,
         results: fused.slice(0, topK).map((fusedCandidate, index) => {
-          const chunk = fusedCandidate.item.chunk;
+          const { chunk } = fusedCandidate.item;
           return {
             anchors: chunk.anchors,
             chunkId: chunk.chunkId,
@@ -363,9 +370,9 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
     )
   );
 
-  app.onError((error, c) => {
+  app.onError((thrown, c) => {
     logger.error("unhandled error", {
-      reason: error instanceof Error ? error.message : String(error),
+      reason: thrown instanceof Error ? thrown.message : String(thrown),
       requestId: c.get("requestId"),
     });
     return c.json(
@@ -379,4 +386,4 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
   });
 
   return app;
-}
+};

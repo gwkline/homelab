@@ -3,10 +3,10 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 export type LogFields = Record<string, string | number | boolean | null>;
 
 export interface Logger {
-  debug(msg: string, fields?: LogFields): void;
-  info(msg: string, fields?: LogFields): void;
-  warn(msg: string, fields?: LogFields): void;
-  error(msg: string, fields?: LogFields): void;
+  debug: (msg: string, fields?: LogFields) => void;
+  info: (msg: string, fields?: LogFields) => void;
+  warn: (msg: string, fields?: LogFields) => void;
+  error: (msg: string, fields?: LogFields) => void;
 }
 
 const levelWeight: Record<LogLevel, number> = {
@@ -20,10 +20,10 @@ const levelWeight: Record<LogLevel, number> = {
 // pass non-private metadata (ids, counts, durations, lengths) — never query
 // text or chunk content. KNOWLEDGE_LOG_QUERIES opts the search handler into
 // logging the raw query explicitly.
-export function createJsonLogger(
+export const createJsonLogger = (
   stream: NodeJS.WritableStream = process.stdout,
   minLevel: LogLevel = "info"
-): Logger {
+): Logger => {
   const emit = (level: LogLevel, msg: string, fields?: LogFields): void => {
     if (levelWeight[level] < levelWeight[minLevel]) {
       return;
@@ -42,4 +42,4 @@ export function createJsonLogger(
     info: (msg, fields) => emit("info", msg, fields),
     warn: (msg, fields) => emit("warn", msg, fields),
   };
-}
+};

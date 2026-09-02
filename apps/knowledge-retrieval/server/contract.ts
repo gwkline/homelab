@@ -66,9 +66,9 @@ const scoreBreakdownSchema = z
 
 const citationAnchorSchema = z.discriminatedUnion("type", [
   z.object({
-    type: z.literal("offset"),
-    start: z.number().int().min(0),
     end: z.number().int().min(0),
+    start: z.number().int().min(0),
+    type: z.literal("offset"),
   }),
   z.object({
     type: z.literal("heading"),
@@ -110,12 +110,12 @@ const sourceSchema = z.object({
 });
 
 const provenanceSchema = z.object({
-  ingestionEventId: z
-    .string()
-    .describe("Ingestion job/event that produced this chunk."),
   ingestedAt: z
     .string()
     .describe("When the producing ingestion event ran (ISO-8601)."),
+  ingestionEventId: z
+    .string()
+    .describe("Ingestion job/event that produced this chunk."),
 });
 
 const searchResultSchema = z.object({
@@ -154,7 +154,7 @@ export const searchResponseSchema = z.object({
 
 // Schemas depend on deployment limits, so they are built per config. The same
 // instances validate requests and generate the OpenAPI document.
-export function buildContract(config: RetrievalConfig) {
+export const buildContract = (config: RetrievalConfig) => {
   const searchRequestSchema = z.object({
     filters: z
       .object({
@@ -202,7 +202,7 @@ export function buildContract(config: RetrievalConfig) {
       ),
   });
   return { searchRequestSchema };
-}
+};
 
 export type SearchRequest = z.infer<
   ReturnType<typeof buildContract>["searchRequestSchema"]
