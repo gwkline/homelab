@@ -41,7 +41,9 @@ function positiveInt(
   }
   const value = Number.parseInt(raw, 10);
   if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}`);
+    throw new Error(
+      `${name} must be a positive integer, got ${JSON.stringify(raw)}`
+    );
   }
   return value;
 }
@@ -51,14 +53,18 @@ function readTokenFile(path: string): string {
     return readFileSync(path, "utf-8").trim();
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`KNOWLEDGE_RETRIEVAL_TOKEN_FILE ${path} unreadable: ${reason}`);
+    throw new Error(
+      `KNOWLEDGE_RETRIEVAL_TOKEN_FILE ${path} unreadable: ${reason}`
+    );
   }
 }
 
 // The bearer token must come from a secret: an env var injected from a
 // Kubernetes Secret, or a mounted token file. Fail closed when neither is
 // present so the service can never start unauthenticated.
-export function configFromEnv(env: Record<string, string | undefined>): RetrievalConfig {
+export function configFromEnv(
+  env: Record<string, string | undefined>
+): RetrievalConfig {
   const token = env.KNOWLEDGE_RETRIEVAL_TOKEN?.trim()
     ? env.KNOWLEDGE_RETRIEVAL_TOKEN.trim()
     : env.KNOWLEDGE_RETRIEVAL_TOKEN_FILE?.trim()
@@ -75,7 +81,11 @@ export function configFromEnv(env: Record<string, string | undefined>): Retrieva
     "KNOWLEDGE_MAX_QUERY_LENGTH",
     CONFIG_DEFAULTS.maxQueryLength
   );
-  const maxTopK = positiveInt(env, "KNOWLEDGE_MAX_TOP_K", CONFIG_DEFAULTS.maxTopK);
+  const maxTopK = positiveInt(
+    env,
+    "KNOWLEDGE_MAX_TOP_K",
+    CONFIG_DEFAULTS.maxTopK
+  );
   const defaultTopK = positiveInt(
     env,
     "KNOWLEDGE_DEFAULT_TOP_K",
@@ -88,19 +98,28 @@ export function configFromEnv(env: Record<string, string | undefined>): Retrieva
   }
   const defaultModeRaw = env.KNOWLEDGE_DEFAULT_MODE?.trim();
   const defaultMode =
-    defaultModeRaw === "bm25" || defaultModeRaw === "vector" || defaultModeRaw === "hybrid"
+    defaultModeRaw === "bm25" ||
+    defaultModeRaw === "vector" ||
+    defaultModeRaw === "hybrid"
       ? defaultModeRaw
       : CONFIG_DEFAULTS.defaultMode;
   return {
     channelWindowFactor: CONFIG_DEFAULTS.channelWindowFactor,
     defaultMode,
-    defaultNamespace: env.KNOWLEDGE_DEFAULT_NAMESPACE?.trim() || CONFIG_DEFAULTS.defaultNamespace,
+    defaultNamespace:
+      env.KNOWLEDGE_DEFAULT_NAMESPACE?.trim() ||
+      CONFIG_DEFAULTS.defaultNamespace,
     defaultTopK,
-    logQueries: env.KNOWLEDGE_LOG_QUERIES === "1" || env.KNOWLEDGE_LOG_QUERIES === "true",
+    logQueries:
+      env.KNOWLEDGE_LOG_QUERIES === "1" || env.KNOWLEDGE_LOG_QUERIES === "true",
     maxQueryLength,
     maxTopK,
     port,
-    requestTimeoutMs: positiveInt(env, "KNOWLEDGE_TIMEOUT_MS", CONFIG_DEFAULTS.requestTimeoutMs),
+    requestTimeoutMs: positiveInt(
+      env,
+      "KNOWLEDGE_TIMEOUT_MS",
+      CONFIG_DEFAULTS.requestTimeoutMs
+    ),
     rrfK: positiveInt(env, "KNOWLEDGE_RRF_K", CONFIG_DEFAULTS.rrfK),
     seedFile: env.KNOWLEDGE_SEED_FILE?.trim() || null,
     token,
@@ -108,7 +127,10 @@ export function configFromEnv(env: Record<string, string | undefined>): Retrieva
 }
 
 // Test/default instance: same limits as production defaults, caller supplies the token.
-export function baseConfig(token: string, overrides: Partial<RetrievalConfig> = {}): RetrievalConfig {
+export function baseConfig(
+  token: string,
+  overrides: Partial<RetrievalConfig> = {}
+): RetrievalConfig {
   return {
     channelWindowFactor: CONFIG_DEFAULTS.channelWindowFactor,
     defaultMode: CONFIG_DEFAULTS.defaultMode,

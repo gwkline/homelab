@@ -1,15 +1,15 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
-import { createMiddleware } from "hono/factory";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { createMiddleware } from "hono/factory";
 
+import type { RetrievalConfig } from "./config.js";
 import {
   buildContract,
   errorBody,
   errorSchema,
   searchResponseSchema,
 } from "./contract.js";
-import type { RetrievalConfig } from "./config.js";
 import type { Logger } from "./log.js";
 import { reciprocalRankFusion } from "./rank.js";
 import type { RankedCandidate, RetrievalStore } from "./store.js";
@@ -20,10 +20,16 @@ export class TimeoutError extends Error {
   override name = "TimeoutError";
 }
 
-export async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number
+): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new TimeoutError(`retrieval exceeded ${ms}ms`)), ms);
+    timer = setTimeout(
+      () => reject(new TimeoutError(`retrieval exceeded ${ms}ms`)),
+      ms
+    );
   });
   try {
     return await Promise.race([promise, timeout]);
@@ -42,7 +48,10 @@ function bearerTokenMatches(header: string, expected: string): boolean {
   if (!match?.[1]) {
     return false;
   }
-  return timingSafeEqual(tokenFingerprint(match[1]), tokenFingerprint(expected));
+  return timingSafeEqual(
+    tokenFingerprint(match[1]),
+    tokenFingerprint(expected)
+  );
 }
 
 const roundScore = (value: number): number => Number(value.toFixed(6));
@@ -64,7 +73,14 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
           path: c.req.path,
           requestId: c.get("requestId"),
         });
-        return c.json(errorBody("invalid_request", "request body failed validation", c.get("requestId")), 422);
+        return c.json(
+          errorBody(
+            "invalid_request",
+            "request body failed validation",
+            c.get("requestId")
+          ),
+          422
+        );
       }
     },
   });
@@ -73,7 +89,10 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
     "*",
     createMiddleware<AppEnv>(async (c, next) => {
       const header = c.req.header("x-request-id") ?? "";
-      c.set("requestId", /^[\w.-]{8,128}$/u.test(header) ? header : `req_${randomUUID()}`);
+      c.set(
+        "requestId",
+        /^[\w.-]{8,128}$/u.test(header) ? header : `req_${randomUUID()}`
+      );
       await next();
     })
   );
@@ -101,8 +120,14 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
     createMiddleware<AppEnv>(async (c, next) => {
       const header = c.req.header("authorization") ?? "";
       if (!bearerTokenMatches(header, config.token)) {
-        logger.warn("unauthorized", { path: c.req.path, requestId: c.get("requestId") });
-        return c.json(errorBody("unauthorized", "missing or invalid bearer token", null), 401);
+        logger.warn("unauthorized", {
+          path: c.req.path,
+          requestId: c.get("requestId"),
+        });
+        return c.json(
+          errorBody("unauthorized", "missing or invalid bearer token", null),
+          401
+        );
       }
       await next();
     })
@@ -114,7 +139,9 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
     path: "/v1/search",
     request: {
       body: {
-        content: { "application/json": { schema: contract.searchRequestSchema } },
+        content: {
+          "application/json": { schema: contract.searchRequestSchema },
+        },
         required: true,
       },
     },
@@ -129,11 +156,13 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
       },
       422: {
         content: { "application/json": { schema: errorSchema } },
-        description: "Body failed schema validation (unknown mode, topK out of range, oversized query, malformed JSON).",
+        description:
+          "Body failed schema validation (unknown mode, topK out of range, oversized query, malformed JSON).",
       },
       500: {
         content: { "application/json": { schema: errorSchema } },
-        description: "Unexpected failure; nothing is returned without complete provenance.",
+        description:
+          "Unexpected failure; nothing is returned without complete provenance.",
       },
       503: {
         content: { "application/json": { schema: errorSchema } },
@@ -153,7 +182,10 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
     const body = c.req.valid("json");
     const query = body.query.trim();
     if (query.length === 0) {
-      return c.json(errorBody("invalid_request", "query must not be blank", requestId), 422);
+      return c.json(
+        errorBody("invalid_request", "query must not be blank", requestId),
+        422
+      );
     }
     const mode = body.mode ?? config.defaultMode;
     const namespace = body.namespace ?? config.defaultNamespace;
@@ -184,12 +216,21 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
         config.requestTimeoutMs
       );
 
-      const getId = (candidate: RankedCandidate): string => candidate.chunk.chunkId;
+      const getId = (candidate: RankedCandidate): string =>
+        candidate.chunk.chunkId;
       const fused =
         mode === "bm25"
-          ? reciprocalRankFusion([{ items: channels.bm25, key: "bm25" }], getId, config.rrfK)
+          ? reciprocalRankFusion(
+              [{ items: channels.bm25, key: "bm25" }],
+              getId,
+              config.rrfK
+            )
           : mode === "vector"
-            ? reciprocalRankFusion([{ items: channels.vector, key: "vector" }], getId, config.rrfK)
+            ? reciprocalRankFusion(
+                [{ items: channels.vector, key: "vector" }],
+                getId,
+                config.rrfK
+              )
             : reciprocalRankFusion(
                 [
                   { items: channels.bm25, key: "bm25" },
@@ -215,7 +256,10 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
                 rank: fusedCandidate.bm25.rank,
                 score: roundScore(fusedCandidate.bm25.score),
               },
-              fused: { rank: index + 1, score: roundScore(fusedCandidate.fusedScore) },
+              fused: {
+                rank: index + 1,
+                score: roundScore(fusedCandidate.fusedScore),
+              },
               vector: fusedCandidate.vector && {
                 rank: fusedCandidate.vector.rank,
                 score: roundScore(fusedCandidate.vector.score),
@@ -259,7 +303,14 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
           requestId,
           runId,
         });
-        return c.json(errorBody("timeout", `retrieval exceeded ${config.requestTimeoutMs}ms`, runId), 504);
+        return c.json(
+          errorBody(
+            "timeout",
+            `retrieval exceeded ${config.requestTimeoutMs}ms`,
+            runId
+          ),
+          504
+        );
       }
       if (error instanceof z.ZodError) {
         logger.error("response contract violation", {
@@ -267,14 +318,24 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
           requestId,
           runId,
         });
-        return c.json(errorBody("internal_error", "retrieval produced an invalid response", runId), 500);
+        return c.json(
+          errorBody(
+            "internal_error",
+            "retrieval produced an invalid response",
+            runId
+          ),
+          500
+        );
       }
       logger.error("store failure", {
         reason: error instanceof Error ? error.message : String(error),
         requestId,
         runId,
       });
-      return c.json(errorBody("store_unavailable", "retrieval store unavailable", runId), 503);
+      return c.json(
+        errorBody("store_unavailable", "retrieval store unavailable", runId),
+        503
+      );
     }
   });
 
@@ -292,7 +353,14 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
   app.get("/healthz", (c) => c.json({ status: "ok" }));
 
   app.notFound((c) =>
-    c.json(errorBody("not_found", `${c.req.method} ${c.req.path} is not a defined route`, c.get("requestId")), 404)
+    c.json(
+      errorBody(
+        "not_found",
+        `${c.req.method} ${c.req.path} is not a defined route`,
+        c.get("requestId")
+      ),
+      404
+    )
   );
 
   app.onError((error, c) => {
@@ -300,7 +368,14 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
       reason: error instanceof Error ? error.message : String(error),
       requestId: c.get("requestId"),
     });
-    return c.json(errorBody("internal_error", "unexpected server error", c.get("requestId")), 500);
+    return c.json(
+      errorBody(
+        "internal_error",
+        "unexpected server error",
+        c.get("requestId")
+      ),
+      500
+    );
   });
 
   return app;

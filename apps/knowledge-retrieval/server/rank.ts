@@ -10,9 +10,7 @@ export function tokenize(text: string): string[] {
 }
 
 export function bm25Idf(docFrequency: number, totalDocs: number): number {
-  return Math.log(
-    1 + (totalDocs - docFrequency + 0.5) / (docFrequency + 0.5)
-  );
+  return Math.log(1 + (totalDocs - docFrequency + 0.5) / (docFrequency + 0.5));
 }
 
 export function bm25TermScore(
@@ -86,7 +84,12 @@ export function reciprocalRankFusion<T>(
   }
   const byId = new Map<
     string,
-    { item: T; fusedScore: number; bm25: ChannelRank | null; vector: ChannelRank | null }
+    {
+      item: T;
+      fusedScore: number;
+      bm25: ChannelRank | null;
+      vector: ChannelRank | null;
+    }
   >();
   for (const channel of channels) {
     for (let i = 0; i < channel.items.length; i += 1) {
@@ -121,6 +124,9 @@ export function reciprocalRankFusion<T>(
   });
 }
 
-export function rrfScoreForRank(rank: number, k: number = RRF_DEFAULT_K): number {
+export function rrfScoreForRank(
+  rank: number,
+  k: number = RRF_DEFAULT_K
+): number {
   return 1 / (k + rank);
 }

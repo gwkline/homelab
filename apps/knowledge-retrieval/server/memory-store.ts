@@ -1,10 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import {
-  bm25TermScore,
-  cosineSimilarity,
-  tokenize,
-} from "./rank.js";
+import { bm25TermScore, cosineSimilarity, tokenize } from "./rank.js";
 import type {
   ChannelResults,
   ChunkRecord,
@@ -96,7 +92,9 @@ export class MemoryStore implements RetrievalStore {
   private readonly embedder: (text: string) => number[];
 
   constructor(options: MemoryStoreOptions) {
-    this.embedder = options.embedder ?? ((text) => hashEmbed(text, options.embeddingDimensions));
+    this.embedder =
+      options.embedder ??
+      ((text) => hashEmbed(text, options.embeddingDimensions));
     const chunks: ChunkRecord[] = [];
     for (const doc of options.documents) {
       for (const version of doc.versions) {
@@ -136,7 +134,9 @@ export class MemoryStore implements RetrievalStore {
 
   async search(options: SearchOptions): Promise<ChannelResults> {
     const visible = this.chunks.filter(
-      (chunk) => chunk.namespace === options.namespace && chunkVisible(chunk, options.filters)
+      (chunk) =>
+        chunk.namespace === options.namespace &&
+        chunkVisible(chunk, options.filters)
     );
     return {
       bm25: this.searchBm25(visible, options),
@@ -144,7 +144,10 @@ export class MemoryStore implements RetrievalStore {
     };
   }
 
-  private searchBm25(chunks: ChunkRecord[], options: SearchOptions): RankedCandidate[] {
+  private searchBm25(
+    chunks: ChunkRecord[],
+    options: SearchOptions
+  ): RankedCandidate[] {
     const queryTerms = [...new Set(tokenize(options.query))];
     if (queryTerms.length === 0 || chunks.length === 0) {
       return [];
@@ -198,7 +201,10 @@ export class MemoryStore implements RetrievalStore {
     return scored.slice(0, options.limitPerChannel);
   }
 
-  private searchVector(chunks: ChunkRecord[], options: SearchOptions): RankedCandidate[] {
+  private searchVector(
+    chunks: ChunkRecord[],
+    options: SearchOptions
+  ): RankedCandidate[] {
     if (!options.queryEmbedding) {
       return [];
     }
@@ -207,7 +213,10 @@ export class MemoryStore implements RetrievalStore {
       if (!chunk.embedding) {
         continue;
       }
-      const similarity = cosineSimilarity(options.queryEmbedding, chunk.embedding);
+      const similarity = cosineSimilarity(
+        options.queryEmbedding,
+        chunk.embedding
+      );
       if (similarity !== null && similarity > 0) {
         scored.push({ bm25Score: null, chunk, vectorScore: similarity });
       }
