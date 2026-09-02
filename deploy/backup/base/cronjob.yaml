@@ -14,7 +14,8 @@
 # nodeSelector to match.
 #
 # Repos themselves are not precious (git re-clones); agent home dirs, hermes
-# memory, and t3code's own state (pairings, environment-id, sessions) are.
+# memory, t3code's own state (pairings, environment-id, sessions),
+# and executor state are.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -50,7 +51,7 @@ spec:
                 - |
                   set -eu
                   restic snapshots --quiet >/dev/null 2>&1 || restic init
-                  for dir in /mnt/t3code /mnt/t3state /mnt/hermes; do
+                  for dir in /mnt/t3code /mnt/t3state /mnt/hermes /mnt/executor; do
                     [ -d "$dir" ] || { echo "skip missing $dir"; continue; }
                     echo "==> backing up ${dir}"
                     restic backup "$dir" --tag "$(basename "$dir")"
@@ -70,6 +71,9 @@ spec:
                 - name: hermes-data
                   mountPath: /mnt/hermes
                   readOnly: true
+                - name: executor-data
+                  mountPath: /mnt/executor
+                  readOnly: true
               resources:
                 requests:
                   cpu: "200m"
@@ -88,4 +92,10 @@ spec:
             - name: hermes-data
               persistentVolumeClaim:
                 claimName: hermes-data-hermes-0
+                readOnly: true
+            # Executor's database+keys (deploy/executor/base). Referenced by
+            # claim name, so enabling backups implies executor is deployed.
+            - name: executor-data
+              persistentVolumeClaim:
+                claimName: executor-data-executor-0
                 readOnly: true
