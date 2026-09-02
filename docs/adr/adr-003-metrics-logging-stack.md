@@ -17,11 +17,11 @@ Constraints (from #36 and repo direction):
 
 Steady-state requests already committed in `deploy/` manifests (CronJobs excluded — they are transient bursts, `activeDeadlineSeconds`-bounded):
 
-| Workload | Requests |
-| --- | --- |
-| t3code (per replica) | 1 CPU / 2Gi |
-| hermes | 500m / 1Gi |
-| panel + homepage | 50m / 128Mi each |
+| Workload                            | Requests                |
+| ----------------------------------- | ----------------------- |
+| t3code (per replica)                | 1 CPU / 2Gi             |
+| hermes                              | 500m / 1Gi              |
+| panel + homepage                    | 50m / 128Mi each        |
 | **Total steady (1 t3code replica)** | **≈ 1.6 CPU / ≈ 3.3Gi** |
 
 Worst-case node budget (documented figures): 8 GB RAM node → ~7.5Gi allocatable after OS + k3s reservations; ~4.2Gi left after existing requests. The observability stack must therefore stay **≤ ~1Gi memory requests / ~3.5Gi limits and ≤ 21Gi of PVC claims** (local-path, thinly provisioned on the node's spare disk; actual usage governed by retention, see D3). Re-measure on the live cluster before deploying:
