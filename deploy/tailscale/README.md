@@ -22,7 +22,7 @@ Mechanisms confirmed against the chart v1.102.3 source (`cmd/k8s-operator/deploy
 
 ## 1Password item contract (issue #43)
 
-| | |
+|  |  |
 | --- | --- |
 | vault | `homelab` |
 | item | `tailscale-operator-oauth` — fields `client_id`, `client_secret` |
@@ -49,10 +49,8 @@ The policy file must own the operator tag and let tag-carrying proxies serve:
 ## Operator credential rotation (tested drill, issue #43)
 
 1. Create a NEW OAuth client with the same tag + scopes (the old one keeps working until deleted) and update the `tailscale-operator-oauth` fields in 1Password. Do not delete the old client until step 4 passes.
-2. Sync now instead of waiting out the 1h refresh:
-   `kubectl -n tailscale annotate externalsecret operator-oauth external-secrets.io/force-sync="$(date +%s)" --overwrite`
-3. Restart the operator to re-read the mounted Secret:
-   `kubectl -n tailscale rollout restart deploy/operator`
+2. Sync now instead of waiting out the 1h refresh: `kubectl -n tailscale annotate externalsecret operator-oauth external-secrets.io/force-sync="$(date +%s)" --overwrite`
+3. Restart the operator to re-read the mounted Secret: `kubectl -n tailscale rollout restart deploy/operator`
 4. Verify nothing was orphaned: `kubectl get statefulset -n tailscale` — existing proxy StatefulSets (`ts-*`) are NOT recreated or deleted; the operator pod goes Ready on the new credential; the exposed LB URL still returns 200 (`scripts/rebuild-check.sh` section 5) and the operator still reports `PROXY_TAGS=tag:k8s-operator` (section 7).
 
 Why rotation does not orphan proxies: rotation only swaps the operator's control-plane credential. Proxy devices are long-lived StatefulSets keyed by each Service's `tailscale.com/hostname` annotation and tagged `tag:k8s-operator`; as long as the new client can assume the same tag (same tagOwners), the operator reconnects to and keeps reconciling the existing devices. Orphaning only happens if the tag ownership changes or the Secret/item/field names drift — keep the contract above fixed.
