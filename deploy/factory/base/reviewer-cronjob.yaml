@@ -10,7 +10,7 @@ spec:
   # Approval-loop poller: observes draft PRs, nudges, reports review queue state.
   # Phase 1 = read-only (+ idempotent status comments). Auto-promote is behind
   # FACTORY_REVIEWER_AUTO_MERGE and stays OFF until explicitly enabled.
-  schedule: "20,50 * * * *" # twice an hour, staggered off orchestrator (:00) and security (:15/:45)
+  schedule: "35,55 * * * *" # after orchestrator, with room for the next collector.
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3

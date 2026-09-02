@@ -38,6 +38,7 @@ fi
 REPO=$(python3 -c "import json;print(json.load(open('${BRIEF}'))['repository'])")
 ISSUE_NUM=$(python3 -c "import json;print(json.load(open('${BRIEF}'))['issue']['number'])")
 ISSUE_TITLE=$(python3 -c "import json;print(json.load(open('${BRIEF}'))['issue'].get('title',''))")
+# shellcheck disable=SC2034
 ISSUE_BODY=$(python3 -c "import json;print(json.load(open('${BRIEF}'))['issue'].get('body','') or '')")
 RUN_ID=$(python3 -c "import json;print(json.load(open('${BRIEF}'))['run_id'])")
 MODE="${FACTORY_SECURITY_MODE:-per-issue}"
@@ -47,7 +48,8 @@ fi
 
 echo "[security] run=${RUN_ID} repo=${REPO} issue=#${ISSUE_NUM} mode=${MODE}"
 
-CLONE_URL="${CLONE_URL:-https://github.com/${REPO}.git}"
+# Build the authenticated URL at runtime; never put a token in a Job manifest.
+CLONE_URL="${CLONE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git}"
 git clone --depth 20 "${CLONE_URL}" repo
 git -C repo remote set-url origin "https://github.com/${REPO}.git"
 cd repo
@@ -90,6 +92,7 @@ append "- Repo: \`${REPO}\` @ \`${BASE_SHA}\`"
 append "- Scanners: gitleaks, shellcheck, hadolint, semgrep (best-effort), trivy (best-effort), kustomize verify, secret-pattern grep"
 append ""
 
+# shellcheck disable=SC2034
 FAIL=0
 
 run_section "gitleaks (secrets)" sh -c 'gitleaks detect --no-git --source . --verbose 2>&1 | head -n 300; echo "gitleaks exit $?"'

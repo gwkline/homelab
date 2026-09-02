@@ -1,0 +1,83 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: factory-collector
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+    factory.gwkline.io/component: collector
+spec:
+  # Every open issue in the allowlisted repos enters the factory unless it is
+  # already in a terminal or active factory state.
+  schedule: "5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  suspend: false
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 900
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            factory.gwkline.io/profile: collector
+        spec:
+          restartPolicy: Never
+          serviceAccountName: factory-collector
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: collector
+              image: ghcr.io/gwkline/homelab/factory/collector:latest
+              imagePullPolicy: Always
+              env:
+                - name: FACTORY_REPOS
+                  value: gwkline/homelab
+                - name: GH_CONFIG_DIR
+                  value: /tmp/gh
+                - name: FACTORY_COLLECTOR_DRY_RUN
+                  value: "false"
+                - name: GH_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      { name: github-token, key: token, optional: false }
+              resources:
+                requests: { cpu: 100m, memory: 128Mi }
+                limits: { cpu: 500m, memory: 512Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+                readOnlyRootFilesystem: true
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: factory-collector
+  namespace: sandbox
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: factory-collector
+  namespace: sandbox
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: factory-collector
+  namespace: sandbox
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: factory-collector
+subjects:
+  - { kind: ServiceAccount, name: factory-collector, namespace: sandbox }

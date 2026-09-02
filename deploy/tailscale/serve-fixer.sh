@@ -1,30 +1,47 @@
-#!/bin/bash
+#!/bin/sh
 # Self-healing serve config for the t3code tailscale proxy pod.
 # Runs as a sidecar-ish loop: whenever t3code's pod IP changes (restart,
 # reschedule), re-points `tailscale serve` at the new IP. This works around
 # the operator provisioning serve config with a stale pod IP and not
 # refreshing it on StatefulSet pod replacement (observed on operator
 # 1.102.x / k3s v1.36).
-# Deployed via a small Deployment in the tailscale namespace using the same
-# serviceaccount; uses `kubectl exec` into the proxy pod. Simple, visible, removable.
-set -euo pipefail
+#
+# This file is the readable copy of the script that actually runs — the
+# Deployment mounts it from the t3code-serve-fixer ConfigMap
+# (serve-fixer-cm.yaml). Keep both in sync when editing.
+#
+# Least privilege (issue #32): the proxy pod is discovered via the
+# operator's parent-resource labels, so this loop can only ever select the
+# proxy StatefulSet pod for t3code-0 — never the operator pod or another
+# service's proxy. The name guard is a second, independent check.
+set -eu
 
 SVC_NS="agents"
 SVC_NAME="t3code-0"
 TS_NS="tailscale"
+PROXY_SEL="tailscale.com/parent-resource=${SVC_NAME},tailscale.com/parent-resource-ns=${SVC_NS},tailscale.com/parent-resource-type=svc"
 
 while true; do
   # app pod IP (StatefulSet => stable name)
   APP_IP=$(kubectl get pod "${SVC_NAME}" -n "${SVC_NS}" -o jsonpath='{.status.podIP}' 2>/dev/null || true)
-  if [ -z "$APP_IP" ]; then echo "waiting for ${SVC_NAME}..."; sleep 15; continue; fi
+  if [ -z "${APP_IP}" ]; then echo "$(date -u +%H:%M:%S) waiting for ${SVC_NAME} pod..."; sleep 15; continue; fi
 
-  PROXY_POD=$(kubectl get pods -n "$TS_NS" --no-headers | grep "ts-${SVC_NAME}" | awk '$3=="Running"{print $1}' | head -1)
-  if [ -z "$PROXY_POD" ]; then echo "waiting for proxy pod..."; sleep 15; continue; fi
+  PROXY_POD=$(kubectl get pods -n "${TS_NS}" -l "${PROXY_SEL}" --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  case "${PROXY_POD}" in
+    ts-"${SVC_NAME}"-*) : ;;
+    *) echo "$(date -u +%H:%M:%S) waiting for proxy pod..."; sleep 15; continue ;;
+  esac
 
-  CURRENT=$(kubectl exec -n "$TS_NS" "$PROXY_POD" -- tailscale serve status 2>/dev/null || true)
-  if ! echo "$CURRENT" | grep -q "proxy http://${APP_IP}:3773"; then
+  # Surface exec failures instead of swallowing them (issue #110): let the
+  # nonzero exit propagate under set -e so the container restarts and the
+  # failure is visible in pod logs.
+  CURRENT=$(kubectl exec -n "${TS_NS}" "${PROXY_POD}" -- tailscale serve status 2>/dev/null)
+  if ! echo "${CURRENT}" | grep -q "proxy http://${APP_IP}:3773"; then
     echo "$(date -u +%H:%M:%S) fixing serve -> ${APP_IP}:3773"
-    kubectl exec -n "$TS_NS" "$PROXY_POD" -- tailscale serve --bg --http=80 "http://${APP_IP}:3773" >/dev/null 2>&1 || true
+    kubectl exec -n "${TS_NS}" "${PROXY_POD}" -- tailscale serve --bg --http=80 "http://${APP_IP}:3773" >/dev/null
+    echo "$(date -u +%H:%M:%S) re-pointed serve entry for ${SVC_NAME} at ${APP_IP}:3773"
+  else
+    echo "$(date -u +%H:%M:%S) serve entry for ${SVC_NAME} already targets ${APP_IP}:3773; nothing to do"
   fi
   sleep 30
 done

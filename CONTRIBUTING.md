@@ -14,8 +14,8 @@ It must pass. It runs the same checks CI runs: shell lint, manifest builds, secr
 
 - Manifests live under `deploy/<workload>/base/` as kustomize bases. No overlays exist yet; edit `base/` until someone needs an overlay.
 - Shell scripts are POSIX sh (or bash where `read -s` is needed) and must stay shellcheck-clean.
-- Never commit tokens or kubeconfigs. Secrets enter the cluster only via `scripts/create-github-secret.sh`.
-- New workload checklist: namespace entry (+ PSA label choice), default-deny NetworkPolicy, `github-token` secret in that namespace, manifests under `deploy/`, README "What runs here" entry.
+- Never commit tokens or kubeconfigs. Long-lived secrets are synced from 1Password by External Secrets (`deploy/github-tokens/base/`); the only manually created secret is the 1Password service-account token, applied at bootstrap via env/stdin without logging it.
+- New workload checklist: namespace entry (+ PSA label choice), default-deny NetworkPolicy, `github-token` ExternalSecret coverage in that namespace (`deploy/github-tokens/base/`), manifests under `deploy/`, README "What runs here" entry.
 
 ## Adding a workload
 

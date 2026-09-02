@@ -7,6 +7,8 @@ labels:
     includeSelectors: false
 
 resources:
+  - collector-cronjob.yaml
+  - reconciler-cronjob.yaml
   - profile-code-pr.yaml
   - profile-security.yaml
   - profile-reviewer.yaml

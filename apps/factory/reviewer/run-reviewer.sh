@@ -33,10 +33,14 @@ classify_checks() {
   esac
 }
 
-# List open PRs that carry factory ledger labels.
+# List open PRs, then filter factory branches locally. The lifecycle labels
+# live on the linked source issue (the publisher edits the issue), not on the
+# pull request object. Filtering PR labels here made the reviewer permanently
+# blind to every factory PR.
 # NOTE: use printf, never echo — echo mangles JSON content (parse errors on
 # real payloads with emoji/control chars); printf '%s' round-trips byte-safe.
-PRS_JSON="$(gh api "repos/${REPO}/pulls?state=open&per_page=50&labels=factory/draft-pr")"
+PRS_JSON="$(gh api --paginate --slurp "repos/${REPO}/pulls?state=open&per_page=100" \
+  | jq '[.[][] | select((.head.ref // "") | startswith("factory/issue-"))]')"
 
 printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
   NUM="$(printf '%s' "$PR" | jq -r '.number')"

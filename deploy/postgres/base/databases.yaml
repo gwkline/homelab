@@ -1,0 +1,37 @@
+# Declarative application databases. Each app owns its database through a
+# dedicated owner role (created from the Secrets workflow documented in
+# README.md); no cross-app grants are issued, so factory and knowledge cannot
+# see each other's data. The operator runs CREATE EXTENSION as the internal
+# superuser (extensions are not "trusted"), keeping superuser access disabled
+# for applications while still landing the extensions declaratively.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: pg-primary-factory
+  namespace: database
+spec:
+  name: factory
+  owner: factory_owner
+  cluster:
+    name: pg-primary
+  extensions:
+    - name: vector
+      # Keep in lockstep with the pgvector image pinned in
+      # cluster-image-catalog.yaml.
+      version: "0.8.6"
+    - name: pg_textsearch
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: pg-primary-knowledge
+  namespace: database
+spec:
+  name: knowledge
+  owner: knowledge_owner
+  cluster:
+    name: pg-primary
+  extensions:
+    - name: vector
+      version: "0.8.6"
+    - name: pg_textsearch
