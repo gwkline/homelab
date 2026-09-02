@@ -151,7 +151,12 @@ RUN_TS=$(timestamp)
 EXISTING=$(gh pr list -R "${REPO}" --head "${BRANCH}" --state all --json number --jq 'length')
 if [ "${EXISTING}" != "0" ]; then
   echo "[orch] branch ${BRANCH} already has PR — skipping duplicate"
-  gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_QUEUED}" >/dev/null
+  # A prior publisher may have created the PR but died before converging the
+  # issue ledger. Repair the terminal label instead of merely dropping the
+  # issue from the queue; otherwise the collector can requeue it forever.
+  gh issue edit "${NUM}" -R "${REPO}" \
+    --remove-label "${LABEL_QUEUED}" --remove-label "${LABEL_WIP}" \
+    --add-label "${LABEL_DONE}" >/dev/null
   exit 0
 fi
 
