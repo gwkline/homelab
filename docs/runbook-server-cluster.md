@@ -144,6 +144,7 @@ kubectl apply -k deploy/homepage/base
 kubectl apply -k deploy/panel/base
 kubectl apply -k deploy/headlamp/base
 kubectl apply -k deploy/cloudbeaver/base
+kubectl apply -k deploy/loki/base
 
 # database (prereqs: CNPG operator from #49 in cnpg-system, pg-textsearch
 # digest from #48 pinned in deploy/postgres/base/cluster.yaml — see
@@ -242,6 +243,7 @@ PVC data on the dead node is gone by definition — everything else converges fr
 | `ImagePullBackoff` | Section 7 |
 | Pod `CreateContainerError` privileged | workload landed in wrong namespace |
 | t3code pairing fails over tailnet | check NetworkPolicy allowed tailscale ns |
+| Job logs gone after TTL deletion | query Loki instead (Section 13): `{job_name="<job>"}` |
 | Node NotReady after reboot | `sudo systemctl status k3s` on that node |
 | Clone fails on private repo | 1Password `github-readonly` item expired or missing repo access (Section 6) |
 
@@ -459,3 +461,24 @@ Then deploy the variant instead of the default:
 kubectl apply -k deploy/gvisor/base     # replaces deploy/loop-agent/base
 ./scripts/new-job.sh gvisor-smoke 'node /data/repos/homelab/examples/loop-hello.mjs'
 ```
+
+## 13. Logs in Loki
+
+Every pod's logs are collected by Alloy and stored in Loki (`deploy/loki/base`) with bounded labels — `namespace`, `workload`, `profile`, `job_name` (the run identifier), `pod`, `container`. Retention is 30 days, so a sandbox Job remains debuggable for weeks after `ttlSecondsAfterFinished` deletes its pods and `kubectl logs` stops working. Credentials (auth headers, GitHub/model tokens) are redacted at source. Full details: `deploy/loki/README.md`.
+
+Deploy (already part of Section 8) and verify the whole chain with one uniquely identified run:
+
+```sh
+kubectl apply -k deploy/loki/base
+./scripts/new-job.sh loki-smoke 'echo hello-from-run-$RANDOM'
+kubectl wait --for=condition=complete job/loki-smoke -n sandbox --timeout=180s
+kubectl delete job loki-smoke -n sandbox          # pod + kubectl logs gone
+
+kubectl port-forward svc/loki -n agents 3100:3100 &
+curl -s 'http://localhost:3100/loki/api/v1/query_range' \
+  --get --data-urlencode 'query={namespace="sandbox", job_name="loki-smoke"}'
+```
+
+The response contains the run's output. In Grafana (tailnet hostname, Section 9's dev-tools catalog), Explore on the provisioned Loki datasource takes the same query — and the datasource's derived fields turn any `job_name="…"` in a log line into a click-through to that run's logs.
+
+Disk discipline: 10Gi PVC hard ceiling, 30-day retention. If Loki starts refusing writes, the PVC is full — lower `retention_period` in `deploy/loki/base/loki.yaml` or grow the PVC. Logs are not backed up (disposable by design).
