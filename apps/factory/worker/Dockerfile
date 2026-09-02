@@ -45,6 +45,24 @@ RUN ARCH="$(uname -m)" \
   && ln -s /opt/cursor-agent/dist-package/cursor-agent /usr/local/bin/cursor-agent \
   && rm /tmp/cursor-agent.tar.gz
 
+# P-Stack agent workflows (issue #68): the official Cursor plugin tree, fetched
+# at build time and pinned to an upstream commit — no local fork. The pin lives
+# here (single source of truth); apps/factory/worker/tests/pstack-sync.test.sh
+# cross-checks it against ADR-003 and verifies every path the runtime installer
+# references still exists at that commit, so an upstream bump cannot break
+# paths unnoticed. License (MIT) and plugin.json ship inside the fetched tree.
+ARG PSTACK_REPO=cursor/plugins
+ARG PSTACK_REF=efa2a531985e0a8084d36ff3cf87233be8a9f34b
+ARG PSTACK_VERSION=0.14.7
+RUN curl -fsSL "https://codeload.github.com/${PSTACK_REPO}/tar.gz/${PSTACK_REF}" \
+      -o /tmp/pstack.tar.gz \
+  && mkdir -p /opt/pstack \
+  && tar -xzf /tmp/pstack.tar.gz -C /opt/pstack --strip-components=1 --wildcards "*/pstack/*" \
+  && test -f /opt/pstack/.cursor-plugin/plugin.json \
+  && grep -q "\"version\": \"${PSTACK_VERSION}\"" /opt/pstack/.cursor-plugin/plugin.json \
+  && grep -q "License" /opt/pstack/LICENSE \
+  && rm /tmp/pstack.tar.gz
+
 # Non-root worker; task I/O on explicit volume-style paths.
 # node:24 base already ships a non-root 'node' user (uid 1000) — reuse it.
 RUN mkdir -p /task /out /work && chown -R node:node /task /out /work
