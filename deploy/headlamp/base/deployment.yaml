@@ -1,0 +1,62 @@
+# Headlamp — the generic Kubernetes web UI (issue #40): workloads, events,
+# resource trees, logs, metrics. The bespoke panel stays the software-factory
+# product UI. Read-only inspection behind the tailnet; see rbac.yaml for the
+# identity and netpol.yaml for the network boundary.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: headlamp
+  namespace: agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: headlamp
+  template:
+    metadata:
+      labels:
+        app: headlamp
+    spec:
+      serviceAccountName: headlamp
+      automountServiceAccountToken: true # deliberate exception, scoped by rbac.yaml
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: headlamp
+          # Upstream release, pinned by tag (Renovate does not manage
+          # kustomize manifests — bump manually).
+          image: ghcr.io/headlamp-k8s/headlamp:v0.45.0
+          args:
+            - -in-cluster # "main" context built from the pod's ServiceAccount
+            # Every UI user acts as the pod's least-privilege SA. Upstream
+            # marks this flag UNSAFE unless the UI sits behind an auth proxy:
+            # the Tailscale proxy is that auth proxy (tailnet identity +
+            # default-deny ingress), so the RBAC above is the boundary.
+            - -unsafe-use-service-account-token
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 100 # headlamp user baked into the upstream image
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 4466
+              name: http
+          resources:
+            requests:
+              cpu: "50m"
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
