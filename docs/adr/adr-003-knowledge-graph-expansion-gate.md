@@ -12,7 +12,7 @@ Entry gate (from #66): **no implementation until #59 lands a labeled multi-hop s
 
 ### D1. Failing subset and target improvement are defined before any graph code
 
-- From the #59 corpus, label a **multi-hop subset** of ≥ 20 queries whose relevant facts span ≥ 2 documents and require entity linking or relation traversal — manually verified that failures are *linking* failures, not chunking or embedding failures (e.g., the needed chunk is returned but ranked below k, versus never retrieved because the answer needs fact A from doc 1 joined to fact B in doc 2).
+- From the #59 corpus, label a **multi-hop subset** of ≥ 20 queries whose relevant facts span ≥ 2 documents and require entity linking or relation traversal — manually verified that failures are _linking_ failures, not chunking or embedding failures (e.g., the needed chunk is returned but ranked below k, versus never retrieved because the answer needs fact A from doc 1 joined to fact B in doc 2).
 - Record per-query failure mode (`entity-link`, `relation-hop`, `chunking`, `embedding`, `other`) in the harness dataset. Only `entity-link`/`relation-hop` failures count toward justification.
 - Pre-register the target: **≥ 20 pp Recall@10 lift on the multi-hop subset, no regression > 2 pp on the full suite, MRR non-inferior**. Numbers are frozen in the harness config before the first graph run; moving them afterwards voids the comparison.
 
