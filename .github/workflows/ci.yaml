@@ -170,7 +170,8 @@ jobs:
         run: ./scripts/verify.sh
 
   build:
-    needs: [validate, lint, panel-smoke, panel-test, knowledge-eval, github-app-test]
+    needs:
+      [validate, lint, panel-smoke, panel-test, knowledge-eval, github-app-test]
     strategy:
       matrix:
         include:
