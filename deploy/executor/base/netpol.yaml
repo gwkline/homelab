@@ -1,0 +1,55 @@
+# Executor's full network contract. Default-deny ingress comes from
+# policies/base; this declares the two allowed inbound paths. The egress half
+# is the practical outbound restriction the gateway issue (#72) asks for:
+# integrations may be public HTTPS endpoints and DNS, nothing else — no
+# Kubernetes API, node/LAN, metadata, or tailnet addresses from tool calls.
+# NetworkPolicies cannot filter by domain, so "integration destinations" are
+# restricted to the whole public internet over 443 (the same trade-off the
+# sandbox egress allowlist documents); FQDN-level filtering would need an
+# egress proxy and is deliberately out of scope for the spike.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-to-executor
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: executor
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: # Tailscale operator proxies (executor-tailnet LoadBalancer)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tailscale
+      ports:
+        - protocol: TCP
+          port: 4788
+    - from: # In-cluster MCP clients: t3code, hermes, panel health probe
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 4788
+  egress:
+    - to: # DNS — kube-dns pods only (k3s coredns carries this label)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to: # Integration calls: public internet over TLS, private ranges carved out
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8 # RFC1918 + k3s pod CIDR (10.42/16) + service CIDR (10.43/16, incl. API 10.43.0.1)
+              - 172.16.0.0/12 # RFC1918 (node/LAN)
+              - 192.168.0.0/16 # RFC1918 (node/LAN)
+              - 169.254.0.0/16 # link-local (cloud metadata)
+              - 100.64.0.0/10 # CGNAT — Tailscale tailnet
+      ports:
+        - protocol: TCP
+          port: 443

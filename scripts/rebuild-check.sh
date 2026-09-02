@@ -11,7 +11,8 @@ fail=0
 echo "== 1. manifest conformance (kubectl diff) =="
 for d in deploy/namespaces.yaml deploy/policies/base deploy/t3code/base \
          deploy/hermes/base deploy/loop-agent/base deploy/panel/base \
-         deploy/homepage/base deploy/tailscale deploy/factory/base; do
+         deploy/homepage/base deploy/headlamp/base deploy/tailscale \
+         deploy/factory/base; do
   if [ -f "$d" ] || [ -d "$d" ]; then
     if ! kubectl diff -f "$d" >/dev/null 2>&1 && ! kubectl diff -k "$d" >/dev/null 2>&1; then
       echo "  DRIFT: $d"
@@ -67,7 +68,11 @@ fi
 
 echo "== 6. tailscale service annotations =="
 # Every exposed Service must declare its hostname and required tags in the
-# live cluster (mirrors the static check in scripts/verify.sh).
+# live cluster (mirrors the static check in scripts/verify.sh). The list is
+# read into a variable + here-doc (not process substitution) so the file
+# stays POSIX-parseable (dash -n).
+svcs=$(kubectl get svc -A \
+  -o jsonpath='{range .items[?(@.spec.loadBalancerClass=="tailscale")]}{.metadata.namespace} {.metadata.name}{"\n"}{end}' 2>/dev/null)
 while IFS=' ' read -r ns name; do
   [ -n "$name" ] || continue
   host=$(kubectl get svc "$name" -n "$ns" \
@@ -80,7 +85,9 @@ while IFS=' ' read -r ns name; do
     echo "  FAIL: $ns/$name missing tailscale.com/hostname or tags=tag:k8s-operator (got host='$host' tags='$tags')"
     fail=1
   fi
-done < <(kubectl get svc -A -o jsonpath='{range .items[?(@.spec.loadBalancerClass=="tailscale")]}{.metadata.namespace} {.metadata.name}{"\n"}{end}' 2>/dev/null)
+done <<EOF
+$svcs
+EOF
 
 echo "== 7. operator default tag (pinned workaround) =="
 # The chart (1.102.3) hardcodes PROXY_TAGS=tag:k8; the documented workaround
