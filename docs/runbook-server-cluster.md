@@ -220,7 +220,7 @@ The backup job runs in the `agents` namespace, next to the PVCs it reads — PVC
 1. **Private B2 bucket**: Backblaze → Buckets → Create Bucket. Keep **Private**; note the bucket name and region. No public access, no lifecycle rules.
 2. **Least-privilege application key**: Backblaze → Application Keys → Add a New Application Key. Cap it to **the bucket above only**, capabilities Read and Write. The `keyID` + `applicationKey` pair is shown once — copy it straight into the 1Password item below. Never paste it into this repo, an issue, or a log.
 3. **1Password item `restic-backup`** in the homelab vault with four text fields named exactly: `RESTIC_REPOSITORY` (e.g. `b2:<bucket-name>/homelab`), `B2_ACCOUNT_ID`, `B2_ACCOUNT_KEY`, `RESTIC_PASSWORD` (invent a long one). Values are entered only in 1Password — never in git, issues, or logs. **`RESTIC_PASSWORD` has its only authoritative copy here; losing it loses every backup.**
-4. **Recovery metadata**: add a Notes section to the same item with the bucket name + region, repository path, creation date, the RPO (24h), the restic image version in use (`restic/restic:0.18.0`), and a pointer to this section. On a completely fresh machine, this one item is all you need to get the data back (see *Recovering on a completely fresh machine* below).
+4. **Recovery metadata**: add a Notes section to the same item with the bucket name + region, repository path, creation date, the RPO (24h), the restic image version in use (`restic/restic:0.18.0`), and a pointer to this section. On a completely fresh machine, this one item is all you need to get the data back (see _Recovering on a completely fresh machine_ below).
 
 ### Enable
 
