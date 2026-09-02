@@ -15,16 +15,11 @@ ssh <user>@<node-ip> 'sudo sh -s' < scripts/media-inventory.sh > "inv-<node>.txt
 #   < scripts/media-inventory.sh > "inv-bench-<node>.txt"
 ```
 
-Missing tools print install hints (`smartmontools`, `ethtool`, `vainfo` via
-`intel-media-va-driver-non-free` on Intel, `ffmpeg`, `iperf3`); install them
-and re-run rather than guessing.
+Missing tools print install hints (`smartmontools`, `ethtool`, `vainfo` via `intel-media-va-driver-non-free` on Intel, `ffmpeg`, `iperf3`); install them and re-run rather than guessing.
 
 ## 2. Inventory tables
 
-**Known constraint from the rebuild runbook:** `agent-1` boots with
-`nomodeset` in `GRUB_CMDLINE_LINUX_DEFAULT` (headless-stability hack). That
-means no KMS driver → no `/dev/dri` → **hardware transcoding is impossible on
-agent-1 until that kernel arg is removed** (`sudo sed -i 's/ quiet splash nomodeset/ quiet splash/' /etc/default/grub && sudo update-grub && reboot`, then verify the `nomodeset` count in `/boot/grub/grub.cfg` is 0). Check on both nodes with `grep nomodeset /proc/cmdline` (the script flags it too).
+**Known constraint from the rebuild runbook:** `agent-1` boots with `nomodeset` in `GRUB_CMDLINE_LINUX_DEFAULT` (headless-stability hack). That means no KMS driver → no `/dev/dri` → **hardware transcoding is impossible on agent-1 until that kernel arg is removed** (`sudo sed -i 's/ quiet splash nomodeset/ quiet splash/' /etc/default/grub && sudo update-grub && reboot`, then verify the `nomodeset` count in `/boot/grub/grub.cfg` is 0). Check on both nodes with `grep nomodeset /proc/cmdline` (the script flags it too).
 
 | Node | Disks (model/size) | Filesystem | Free capacity | SMART | Mount strategy |
 | --- | --- | --- | --- | --- | --- |
@@ -36,10 +31,10 @@ agent-1 until that kernel arg is removed** (`sudo sed -i 's/ quiet splash nomode
 | agent-1 | TBD | TBD | TBD | TBD (expect: absent — nomodeset) | TBD |
 | agent-2 | TBD | TBD | TBD | TBD | TBD |
 
-| Node | Link speed | iperf3 client→node | Notes |
-| --- | --- | --- | --- |
-| agent-1 | TBD | TBD | |
-| agent-2 | TBD | TBD | |
+| Node    | Link speed | iperf3 client→node | Notes |
+| ------- | ---------- | ------------------ | ----- |
+| agent-1 | TBD        | TBD                |       |
+| agent-2 | TBD        | TBD                |       |
 
 Decision rules once filled in:
 
@@ -104,10 +99,10 @@ Pod tolerates `media=true:NoSchedule` and gets the GPU without privileges:
 
 ```yaml
 securityContext:
-  runAsUser: 1000        # repo convention (README security model)
+  runAsUser: 1000 # repo convention (README security model)
   runAsGroup: 1000
   supplementalGroups:
-    - <render-gid>       # stat -c '%g' /dev/dri/renderD128 on the node
+    - <render-gid> # stat -c '%g' /dev/dri/renderD128 on the node
 volumeMounts:
   - { name: media, mountPath: /media }
   - { name: dri, mountPath: /dev/dri, readOnly: true }
