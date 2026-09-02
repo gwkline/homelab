@@ -1,7 +1,9 @@
 # Nightly encrypted backups of the stateful PVCs to object storage.
 #
-# DISABLED BY DEFAULT. Nothing deploys this until you both create the
-# backup-target secret and apply this directory (runbook section 11).
+# DISABLED BY DEFAULT. Nothing deploys this until you apply this directory
+# (runbook section 11). Applying it also materializes the backup-target
+# Secret from 1Password via the backup-target ExternalSecret — no manual
+# secret creation step.
 #
 # Same-node assumption: the PVCs use the local-path provisioner, which pins
 # them to the node where their pods run. RWO volumes can be mounted by other

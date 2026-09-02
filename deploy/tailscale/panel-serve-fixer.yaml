@@ -1,6 +1,75 @@
 # Panel serve-fixer: same stale-pod-IP workaround as the t3code serve-fixer,
-# pointed at the panel Deployment (pod name varies, resolved by selector).
-# Reuses the serve-fixer ServiceAccount and Role from serve-fixer.yaml.
+# pointed at the panel Deployment (pod name varies, resolved via the
+# operator's parent-resource labels). Least privilege per issue #32: it has
+# its own ServiceAccount and Role (no longer reuses serve-fixer's) so the
+# two mechanisms are independently revocable, its app-side read is pinned to
+# the panel Service's Endpoints object instead of listing pods in agents,
+# and the container runs non-root with a read-only filesystem.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: panel-serve-fixer
+  namespace: tailscale
+  labels:
+    app.kubernetes.io/part-of: homelab
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: panel-serve-fixer
+  namespace: tailscale
+rules:
+  # Discovery only (read-only): see the t3code Role in serve-fixer.yaml for
+  # why pods cannot be resourceName-pinned here.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # The repair primitive (`tailscale serve` inside the panel proxy pod);
+  # namespace-scoped residual, documented in deploy/tailscale/README.md.
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: panel-serve-fixer
+  namespace: tailscale
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: panel-serve-fixer
+subjects:
+  - kind: ServiceAccount
+    name: panel-serve-fixer
+---
+# Read-only access to the panel app's current pod IP via its Endpoints
+# object, name-pinned to the panel Service.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: panel-serve-fixer-reader
+  namespace: agents
+rules:
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    resourceNames: ["panel"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: panel-serve-fixer-reader
+  namespace: agents
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: panel-serve-fixer-reader
+subjects:
+  - kind: ServiceAccount
+    name: panel-serve-fixer
+    namespace: tailscale
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -12,16 +81,22 @@ data:
   panel-serve-fixer.sh: |
     #!/bin/sh
     # Self-healing serve config for the PANEL tailscale proxy pod (ts-panel-*).
+    # Proxy discovery uses the operator's parent-resource labels and the app
+    # IP comes from the panel Service's Endpoints object (issue #32).
     set -u
     SVC_NS="agents"
-    SVC_SEL="app=panel"
+    SVC_NAME="panel"
     SVC_PORT="3000"
     TS_NS="tailscale"
+    PROXY_SEL="tailscale.com/parent-resource=${SVC_NAME},tailscale.com/parent-resource-ns=${SVC_NS},tailscale.com/parent-resource-type=svc"
     while true; do
-      APP_IP=$(kubectl get pods -n "$SVC_NS" -l "$SVC_SEL" --field-selector=status.phase=Running -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)
-      if [ -z "$APP_IP" ]; then echo "$(date -u +%H:%M:%S) waiting for panel pod..."; sleep 15; continue; fi
-      PROXY_POD=$(kubectl get pods -n "$TS_NS" --no-headers 2>/dev/null | grep "ts-panel" | awk '$3=="Running"{print $1}' | head -1)
-      if [ -z "$PROXY_POD" ]; then echo "$(date -u +%H:%M:%S) waiting for proxy pod..."; sleep 15; continue; fi
+      APP_IP=$(kubectl get endpoints "${SVC_NAME}" -n "${SVC_NS}" -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)
+      if [ -z "$APP_IP" ]; then echo "$(date -u +%H:%M:%S) waiting for panel endpoint..."; sleep 15; continue; fi
+      PROXY_POD=$(kubectl get pods -n "$TS_NS" -l "$PROXY_SEL" --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+      case "$PROXY_POD" in
+        ts-"${SVC_NAME}"-*) : ;;
+        *) echo "$(date -u +%H:%M:%S) waiting for proxy pod..."; sleep 15; continue ;;
+      esac
       CURRENT=$(kubectl exec -n "$TS_NS" "$PROXY_POD" -c tailscale -- tailscale serve status 2>/dev/null || true)
       if ! echo "$CURRENT" | grep -q "proxy http://${APP_IP}:${SVC_PORT}"; then
         echo "$(date -u +%H:%M:%S) fixing panel serve -> ${APP_IP}:${SVC_PORT}"
@@ -48,8 +123,14 @@ spec:
       labels:
         app: panel-serve-fixer
     spec:
-      serviceAccountName: serve-fixer
+      serviceAccountName: panel-serve-fixer
       automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: fixer
           # Digest-pinned per verify.sh's latest-tag rule (issue #91). Bump the
@@ -58,10 +139,22 @@ spec:
           command:
             - /bin/sh
             - /scripts/panel-serve-fixer.sh
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # kubectl's discovery cache lives under $HOME; point it at the
+            # writable emptyDir since the root filesystem is read-only.
+            - name: HOME
+              value: /tmp
           volumeMounts:
             - name: scripts
               mountPath: /scripts
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests:
               cpu: 10m
@@ -73,3 +166,6 @@ spec:
           configMap:
             name: panel-serve-fixer
             defaultMode: 0755
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi

@@ -1,0 +1,112 @@
+# Primary PostgreSQL 18 cluster shared by the factory and knowledge apps.
+#
+# Availability target: ONE instance on ONE physical machine. This is a
+# fast-recovery system (PVC on local-path + declarative redeploy), not an HA
+# claim — do not describe it as HA until instances: 3 lands on distinct
+# hardware. The manifest is kept ready to scale: the PDB, netpols and
+# streaming-replication allowances already cover a multi-instance rollout
+# (see README.md "Scaling").
+#
+# Preconditions before applying (deploy/postgres/README.md):
+#   - CloudNativePG operator >= 1.29 installed (#49; extension catalogs and
+#     ImageVolume support are required).
+#   - The pg-textsearch image digest from #48 pinned below. The all-zero
+#     placeholder refuses to pull; scripts/pg-smoke.sh flags it explicitly.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-primary
+  namespace: database
+spec:
+  # Fast-recovery target. Scale to 3 only with a second failure domain.
+  instances: 1
+
+  # PostgreSQL 18 operand + pgvector resolve from the digest-pinned catalog
+  # (cluster-image-catalog.yaml) — minimal-trixie images, amd64.
+  imageCatalogRef:
+    apiGroup: postgresql.cnpg.io
+    kind: ClusterImageCatalog
+    name: postgresql-minimal-trixie
+    major: 18
+
+  # No superuser secret for applications; the operator keeps internal
+  # management of the postgres role. Apps connect via declarative owner
+  # roles only (managed.roles below).
+  enableSuperuserAccess: false
+
+  postgresql:
+    # pg_textsearch requires preload (issue #48). Not a CNPG "managed"
+    # library, so this list is authoritative.
+    shared_preload_libraries:
+      - pg_textsearch
+    extensions:
+      # Image resolved from the catalog above (pgvector 0.8.6, digest-pinned);
+      # installed per-database via the Database resources in databases.yaml.
+      - name: pgvector
+      # Homelab-built extension image (issue #48). CNPG 1.29+ mounts it via
+      # a Kubernetes ImageVolume and appends extension_control_path /
+      # dynamic_library_path automatically. ABI must match the operand above
+      # (PostgreSQL 18, Debian trixie, amd64).
+      - name: pg-textsearch
+        image:
+          # TODO(#48): replace with the immutable digest CI publishes, e.g.
+          # ghcr.io/gwkline/homelab/pg-textsearch@sha256:<64 hex chars>.
+          reference: ghcr.io/gwkline/homelab/pg-textsearch@sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+  bootstrap:
+    initdb:
+      # Data checksums let pg_basebackup/cnpg verify pages after the kind of
+      # hard power-cut this single-machine setup must survive.
+      dataChecksums: true
+      # The operator-mandated `app` database/owner stay as the default; real
+      # applications get dedicated databases and owner roles created by the
+      # Database resources in databases.yaml (see README "Isolation scheme").
+
+  # Explicit storage: local-path pins the volume to the node the pod runs on
+  # (k3s default provisioner; no replica, so RWO is correct). Sizing headroom
+  # for the knowledge corpus + factory ledger.
+  storage:
+    size: 20Gi
+    storageClass: local-path
+
+  # Explicit placement: the server/control-plane node is the durable one —
+  # agent nodes are rebuilt freely ("PVC data on the dead node is gone").
+  # local-path volumes pin to their node anyway, so declaring the durable
+  # node up front keeps restarts and reschedules landing where the data is.
+  # Every k3s server node carries this label.
+  affinity:
+    nodeSelector:
+      node-role.kubernetes.io/control-plane: "true"
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      # Memory ceiling only: CPU throttling wrecks Postgres tail latency, so
+      # cpu is intentionally not limited. shm/tmpfs usage is bounded by CNPG
+      # (ephemeralVolumesSizeLimit) and the 2Gi limit.
+      memory: 2Gi
+
+  # Per-application owner roles. Passwords live in basic-auth Secrets created
+  # out of band (README "Secrets") — never in Git. Roles are login-only,
+  # database-scoped via the Database resources, never superusers.
+  managed:
+    roles:
+      - name: factory_owner
+        login: true
+        superuser: false
+        connectionLimit: 20
+        passwordSecret:
+          name: pg-primary-factory-owner
+      - name: knowledge_owner
+        login: true
+        superuser: false
+        connectionLimit: 20
+        passwordSecret:
+          name: pg-primary-knowledge-owner
+
+  # Graceful shutdown: CNPG drains connections and stops Postgres cleanly on
+  # pod deletion (stopDelay 1800s + smartShutdownTimeout 180s defaults). The
+  # restart step of scripts/pg-smoke.sh proves the shutdown is graceful: test
+  # rows and both indexes must survive a pod restart.

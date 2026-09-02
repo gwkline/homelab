@@ -1,0 +1,36 @@
+# Write-scoped GitHub credential: a separate 1Password item with separate
+# permissions, synced only into sandbox where write jobs run (loop-agent,
+# panel-spawned jobs) and consumed as GITHUB_WRITER_TOKEN_FILE=/secrets-writer/token.
+#
+# 1Password item contract (issues #39/#45):
+#   vault:  homelab
+#   item:   github-writer   field: token
+#   scopes: fine-grained PAT — Contents + Pull requests: write on target repos
+#           ONLY. Never the read token's repos. Transitional: long-lived writer
+#           PATs should later become GitHub App installation tokens.
+#
+# OPTIONAL BY DESIGN: if the `github-writer` item is absent from the vault,
+# this ExternalSecret reports Ready=False and keeps retrying — that is the
+# expected state. Every consumer mounts `github-token-writer` with
+# optional: true, so read-only jobs are unaffected.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: github-token-writer
+  namespace: sandbox
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: onepassword
+  target:
+    name: github-token-writer
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        token: "{{ .token | trim }}"
+  data:
+    - secretKey: token
+      remoteRef:
+        key: github-writer/token

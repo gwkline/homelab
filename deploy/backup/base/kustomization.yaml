@@ -9,4 +9,6 @@ labels:
     includeSelectors: false
 
 resources:
+  - namespace.yaml
+  - externalsecret.yaml
   - cronjob.yaml
