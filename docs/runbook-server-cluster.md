@@ -137,11 +137,24 @@ kubectl apply -k deploy/hermes/base
 kubectl apply -k deploy/loop-agent/base
 kubectl apply -k deploy/homepage/base
 kubectl apply -k deploy/panel/base
+kubectl apply -k deploy/cloudbeaver/base
+
+# database (prereqs: CNPG operator from #49 in cnpg-system, pg-textsearch
+# digest from #48 pinned in deploy/postgres/base/cluster.yaml — see
+# deploy/postgres/README.md for secrets and bring-up)
+kubectl apply -k deploy/postgres/base
 
 kubectl get pods -A -w    # watch it settle; ^C when Running
 ```
 
 ## 9. First contact
+
+**postgres** (durable state for factory + knowledge):
+
+```sh
+kubectl get cluster -n database pg-primary      # "Cluster in healthy state"
+scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart && scripts/pg-smoke.sh verify
+```
 
 **t3code** (interactive coding agents):
 
@@ -181,6 +194,15 @@ kubectl get svc homepage -n agents   # tailnet hostname
 kubectl get svc panel -n agents      # tailnet hostname
 # open it: launch runs, watch jobs. Set your tailnet in
 # deploy/homepage/base/configmap.yaml to link it from the dashboard
+```
+
+**cloudbeaver** (database GUI, tailnet-only):
+
+```sh
+./scripts/create-cloudbeaver-secret.sh agents   # paste least-privilege DB creds from your password manager
+kubectl get svc cloudbeaver -n agents           # tailnet hostname
+# open it: create the admin user, then open the Factory PostgreSQL connection
+# with the role from Secret cloudbeaver-db (see deploy/cloudbeaver/base/README.md)
 ```
 
 **dispatcher** (optional, issue-driven runs): requires hermes' RBAC (applied above) and a PAT in secret `github-token` for API reads. Edit the repo and command in `deploy/dispatcher/base/cronjob.yaml`, then:
