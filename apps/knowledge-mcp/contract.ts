@@ -16,47 +16,43 @@ export const NAMESPACE_MAX_LENGTH = 128;
 
 // ---- tool inputs ----
 
-export const SearchToolInput = z
-  .object({
-    query: z
-      .string()
-      .min(1)
-      .max(QUERY_MAX_LENGTH)
-      .describe(
-        `Free-text search query, ${QUERY_MAX_LENGTH} characters max.`
-      ),
-    namespace: z
-      .string()
-      .min(1)
-      .max(NAMESPACE_MAX_LENGTH)
-      .optional()
-      .describe("Optional namespace/collection to restrict the search to."),
-    mode: z
-      .enum(["bm25", "vector", "hybrid"])
-      .optional()
-      .describe(
-        "Retrieval mode. Defaults to hybrid (rank-based reciprocal rank fusion) upstream."
-      ),
-    top_k: z
-      .number()
-      .int()
-      .min(1)
-      .max(TOP_K_MAX)
-      .optional()
-      .describe(
-        `Maximum number of chunks to return, 1-${TOP_K_MAX}. Defaults to ${TOP_K_DEFAULT}.`
-      ),
-  });
+export const SearchToolInput = z.object({
+  query: z
+    .string()
+    .min(1)
+    .max(QUERY_MAX_LENGTH)
+    .describe(`Free-text search query, ${QUERY_MAX_LENGTH} characters max.`),
+  namespace: z
+    .string()
+    .min(1)
+    .max(NAMESPACE_MAX_LENGTH)
+    .optional()
+    .describe("Optional namespace/collection to restrict the search to."),
+  mode: z
+    .enum(["bm25", "vector", "hybrid"])
+    .optional()
+    .describe(
+      "Retrieval mode. Defaults to hybrid (rank-based reciprocal rank fusion) upstream."
+    ),
+  top_k: z
+    .number()
+    .int()
+    .min(1)
+    .max(TOP_K_MAX)
+    .optional()
+    .describe(
+      `Maximum number of chunks to return, 1-${TOP_K_MAX}. Defaults to ${TOP_K_DEFAULT}.`
+    ),
+});
 
-export const GetSourceToolInput = z
-  .object({
-    source_id: z
-      .string()
-      .regex(SOURCE_ID_PATTERN)
-      .describe(
-        "source_id exactly as it appeared in a search_knowledge citation."
-      ),
-  });
+export const GetSourceToolInput = z.object({
+  source_id: z
+    .string()
+    .regex(SOURCE_ID_PATTERN)
+    .describe(
+      "source_id exactly as it appeared in a search_knowledge citation."
+    ),
+});
 
 export type SearchToolInput = z.infer<typeof SearchToolInput>;
 export type GetSourceToolInput = z.infer<typeof GetSourceToolInput>;

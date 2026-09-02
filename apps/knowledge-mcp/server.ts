@@ -87,7 +87,9 @@ const readTimeoutMs = (): number => {
   return value;
 };
 
-const toolError = (err: unknown): {
+const toolError = (
+  err: unknown
+): {
   isError: true;
   content: { type: "text"; text: string }[];
 } => {
@@ -124,7 +126,11 @@ const run = async (): Promise<void> => {
         "invent, alter, or paraphrase citations into unsupported claims.",
       ].join(" "),
       inputSchema: SearchToolInput.shape,
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async (input) => {
       try {
@@ -151,7 +157,11 @@ const run = async (): Promise<void> => {
         "inspected, and do not claim facts the retrieved text does not support.",
       ].join(" "),
       inputSchema: GetSourceToolInput.shape,
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async (input) => {
       try {

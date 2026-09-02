@@ -98,12 +98,15 @@ export class KnowledgeClient {
     return this.token ? text.replaceAll(this.token, "[redacted]") : text;
   }
 
-  private async request<T>(route: string, opts: {
-    method: "GET" | "POST";
-    body?: string;
-    schema: ZodType<T>;
-    notFoundSubject?: string;
-  }): Promise<T> {
+  private async request<T>(
+    route: string,
+    opts: {
+      method: "GET" | "POST";
+      body?: string;
+      schema: ZodType<T>;
+      notFoundSubject?: string;
+    }
+  ): Promise<T> {
     let res: Response;
     try {
       res = await this.fetchImpl(`${this.baseUrl}${route}`, {
