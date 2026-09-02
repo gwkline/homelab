@@ -65,6 +65,7 @@ deploy/
   backup/base/      opt-in nightly restic backups of stateful PVCs
   gvisor/base/      opt-in loop-agent variant under gVisor
   homepage/base/    tailnet dashboard (config-driven, zero code)
+  headlamp/base/    tailnet-only Kubernetes web UI (read-only inspection)
   panel/            factory control panel (Vite + React, this repo's code)
   dispatcher/base/  label-driven issue -> Job automation
   factory/base/      issue collector -> coding worker -> draft PR
@@ -95,8 +96,8 @@ Decisions and their reasons, so future-you can audit them:
 
 - **Privilege is scoped to `sandbox` namespace only.** Nested Docker needs a privileged dind sidecar; only throwaway loop pods run there (Pod Security Admission enforces this). Interactive workloads live under `baseline` PSA.
 - **No host Docker socket, ever.** The dind daemon owns an emptyDir-scoped unix socket shared within its own pod. A compromised inner container gets that pod's daemon, not the node's.
-- **Pods cannot talk to Kubernetes** — with three deliberate, audited exceptions, all scoped to the same verbs on sandbox Jobs/CronJobs (plus read pods/logs): hermes (conversational orchestration), dispatcher (label-driven issue automation), and panel (the control panel's backend). None can touch secrets, nodes, CRDs, or anything in their own namespace. This is what lets agents and you schedule work. A mounted CLUSTER.md playbook teaches hermes the patterns.
-- **Default-deny ingress** in both namespaces; only Tailscale operator proxies may reach t3code, homepage, and panel (each workload declares its own exposure rule beside its manifests). Hermes has no inbound at all. Egress is open by design — agents need the internet — revisit with allowlists if you start pointing agents at sensitive internal targets.
+- **Pods cannot talk to Kubernetes** — with three deliberate, audited exceptions, all scoped to the same verbs on sandbox Jobs/CronJobs (plus read pods/logs): hermes (conversational orchestration), dispatcher (label-driven issue automation), and panel (the control panel's backend). None can touch secrets, nodes, CRDs, or anything in their own namespace. This is what lets agents and you schedule work. A mounted CLUSTER.md playbook teaches hermes the patterns. Headlamp (`deploy/headlamp/base`) is a fourth, read-only exception: the Kubernetes web UI acts as its pod's ServiceAccount under a get/list/watch-only cluster role — no Secret values, no mutations, no pod exec, no node proxy.
+- **Default-deny ingress** in both namespaces; only Tailscale operator proxies may reach t3code, homepage, panel, and headlamp (each workload declares its own exposure rule beside its manifests). Hermes has no inbound at all. Egress is open by design — agents need the internet — revisit with allowlists if you start pointing agents at sensitive internal targets (headlamp already narrows its own egress to DNS + the Kubernetes API).
 - **Secrets**: long-lived credentials are synced from 1Password by External Secrets (`deploy/github-tokens/base/`); the only hand-entered secret is the least-privilege 1Password service-account token at bootstrap. The PAT is mounted read-only per namespace and delivered to git via a runtime-generated askpass helper (never in `.git/config`, env, or image layers). Non-dind containers run as uid 1000 with all capabilities dropped.
 - **Tailscale SSH is enabled on nodes** (`bootstrap.sh` runs `tailscale up --ssh`), gated by your tailnet ACLs. Tighten those before inviting anyone.
 - **Supply chain**: npm packages, upstream images, and GitHub Actions are pinned to exact versions; Renovate keeps them current. Images are rebuilt on every push to `main` and signed keylessly with cosign — verify with `cosign verify <image>` against the GitHub workflow identity.

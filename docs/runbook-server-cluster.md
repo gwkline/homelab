@@ -137,6 +137,7 @@ kubectl apply -k deploy/hermes/base
 kubectl apply -k deploy/loop-agent/base
 kubectl apply -k deploy/homepage/base
 kubectl apply -k deploy/panel/base
+kubectl apply -k deploy/headlamp/base
 kubectl apply -k deploy/cloudbeaver/base
 
 # database (prereqs: CNPG operator from #49 in cnpg-system, pg-textsearch
@@ -194,6 +195,14 @@ kubectl get svc homepage -n agents   # tailnet hostname
 kubectl get svc panel -n agents      # tailnet hostname
 # open it: launch runs, watch jobs. Set your tailnet in
 # deploy/homepage/base/configmap.yaml to link it from the dashboard
+```
+
+**headlamp** (Kubernetes web UI, read-only):
+
+```sh
+kubectl get svc headlamp -n agents   # tailnet hostname
+# open it: inspect workloads, events, logs, metrics — see
+# deploy/headlamp/base/README.md for the RBAC + access contract
 ```
 
 **cloudbeaver** (database GUI, tailnet-only):
