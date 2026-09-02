@@ -16,7 +16,7 @@ RUN ARCH=$(dpkg --print-architecture) \
           | grep "gh_${GH_VERSION}_linux_${ARCH}.tar.gz" | sha256sum -c -) \
   && tar -xzf "/tmp/gh_${GH_VERSION}_linux_${ARCH}.tar.gz" -C /tmp --strip-components=1 \
   && install -m755 /tmp/bin/gh /usr/local/bin/gh \
-  && rm -rf /tmp \
+  && rm -rf /tmp/* \
   && gh --version
 WORKDIR /collector
 COPY apps/factory/collector/run-collector.sh /collector/run-collector.sh

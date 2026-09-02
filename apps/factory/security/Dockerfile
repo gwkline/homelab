@@ -27,7 +27,7 @@ RUN curl -fsSLo "/tmp/gh_${GH_VERSION}_linux_amd64.tar.gz" \
           | grep "gh_${GH_VERSION}_linux_amd64.tar.gz" | sha256sum -c -) \
   && tar -xzf "/tmp/gh_${GH_VERSION}_linux_amd64.tar.gz" -C /tmp --strip-components=1 \
   && install -m755 /tmp/bin/gh /usr/local/bin/gh \
-  && rm -rf /tmp \
+  && rm -rf /tmp/* \
   && gh --version
 
 # Rust (for cargo-audit if present)
@@ -58,7 +58,7 @@ RUN curl -fsSLo "/tmp/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
           | grep "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | sha256sum -c -) \
   && tar -xzf "/tmp/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -C /tmp \
   && install -m755 /tmp/gitleaks /usr/local/bin/gitleaks \
-  && rm -rf /tmp \
+  && rm -rf /tmp/* \
   && gitleaks version
 
 # semgrep (SAST, harness-agnostic) — exact PyPI release.

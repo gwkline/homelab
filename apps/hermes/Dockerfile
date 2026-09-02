@@ -35,7 +35,7 @@ RUN gh_arch="amd64" \
           | grep "gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" | sha256sum -c -) \
   && tar -xzf "/tmp/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" -C /tmp \
   && mv "/tmp/gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh \
-  && rm -rf /tmp \
+  && rm -rf /tmp/* \
   && gh --version
 
 COPY apps/shared/workspace-lib.sh /usr/local/lib/workspace-lib.sh

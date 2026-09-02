@@ -26,7 +26,7 @@ RUN curl -fsSLo "/tmp/gh_${GH_VERSION}_linux_amd64.tar.gz" \
           | grep "gh_${GH_VERSION}_linux_amd64.tar.gz" | sha256sum -c -) \
   && tar -xzf "/tmp/gh_${GH_VERSION}_linux_amd64.tar.gz" -C /tmp --strip-components=1 \
   && install -m755 /tmp/bin/gh /usr/local/bin/gh \
-  && rm -rf /tmp \
+  && rm -rf /tmp/* \
   && gh --version
 
 # Pinned Rust toolchain (matches t3code image so builds behave identically).

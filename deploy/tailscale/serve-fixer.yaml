@@ -101,15 +101,11 @@ spec:
           type: RuntimeDefault
       containers:
         - name: fixer
-<<<<<<< HEAD
           # Digest-pinned per verify.sh's latest-tag rule (issues #91, #32):
           # a swapped mutable tag must not be able to replace the pod that
           # holds exec access. Bump the digest when loop-agent ships tooling
           # changes the fixer needs.
           image: ghcr.io/gwkline/homelab/loop-agent@sha256:331ed63c3ff4e781c10c1044c1c5ad475c5d6d8d6a3d3e02bed05a3f6a6e12a3
-=======
-          image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
->>>>>>> 73c84da (factory: resolve #35)
           command:
             - /bin/sh
             - /scripts/serve-fixer.sh

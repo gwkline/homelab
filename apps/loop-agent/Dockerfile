@@ -30,7 +30,7 @@ RUN apt-get update \
           | grep "gh_${GH_VERSION}_linux_$(dpkg --print-architecture).tar.gz" | sha256sum -c -) \
   && tar -xzf "/tmp/gh_${GH_VERSION}_linux_$(dpkg --print-architecture).tar.gz" -C /tmp --strip-components=1 \
   && install -m755 /tmp/bin/gh /usr/local/bin/gh \
-  && rm -rf /tmp \
+  && rm -rf /tmp/* \
   && gh --version \
   && curl -fsSLo /usr/local/bin/kubectl \
       "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/$(dpkg --print-architecture)/kubectl" \
