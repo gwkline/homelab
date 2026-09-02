@@ -53,6 +53,13 @@ spec:
               env:
                 - name: FACTORY_CONFIG_REPO
                   value: gwkline/homelab
+                # The in-cluster kubernetes Service VIP is unreachable from
+                # this isolated pod on the current node. Use the API server's
+                # node endpoint explicitly; the NetworkPolicy allows it below.
+                - name: KUBERNETES_SERVICE_HOST
+                  value: 192.168.1.2
+                - name: KUBERNETES_SERVICE_PORT
+                  value: "6443"
                 - name: GH_TOKEN
                   valueFrom:
                     secretKeyRef:
