@@ -64,8 +64,9 @@ apps/loop-agent/    unattended loop image (Chromium, docker CLI)
                     Both coding images ship a pinned Rust toolchain (cargo).
 apps/hermes/        persistent orchestrator image (kubectl included)
 deploy/
-  namespaces.yaml   agents + sandbox namespaces with PSA labels
+  namespaces.yaml   agents + sandbox + database namespaces with PSA labels
   policies/base/    default-deny NetworkPolicies
+  postgres/base/    CNPG PostgreSQL 18 cluster (factory + knowledge durable state)
   backup/base/      opt-in nightly restic backups of stateful PVCs
   gvisor/base/      opt-in loop-agent variant under gVisor
   homepage/base/    tailnet dashboard (config-driven, zero code)
