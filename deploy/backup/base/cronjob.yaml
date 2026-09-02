@@ -1,21 +1,24 @@
 # Nightly encrypted backups of the stateful PVCs to object storage.
 #
-# DISABLED BY DEFAULT. Nothing deploys this until you both create the
-# backup-target secret and apply this directory (runbook section 11).
+# DISABLED BY DEFAULT. Nothing deploys this until you apply this directory
+# (runbook section 11). Applying it also materializes the backup-target
+# Secret from 1Password via the backup-target ExternalSecret — no manual
+# secret creation step.
 #
-# Same-node assumption: the PVCs use the local-path provisioner, which pins
-# them to the node where their pods run. RWO volumes can be mounted by other
-# pods only on that same node, so this CronJob must stay co-located. On a
-# single-node cluster that is automatic; if you later add nodes and a
-# workload moves, pin this CronJob with a nodeSelector to match.
+# Runs in `agents` because the PVCs are namespaced: a pod anywhere else
+# cannot mount them. Same-node assumption still applies: the PVCs use the
+# local-path provisioner, which pins them to the node where their pods run.
+# RWO volumes can be mounted by other pods only on that same node, so this
+# CronJob must stay co-located. On a single-node cluster that is automatic;
+# if you later add nodes and a workload moves, pin this CronJob with a
+# nodeSelector to match.
 #
-# Repos themselves are not precious (git re-clones); agent home dirs and
-# hermes memory are.
+# Repos themselves are not precious (git re-clones); agent home dirs, hermes
+# memory, and t3code's own state (pairings, environment-id, sessions) are.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: restic-backup
-  namespace: backup
 spec:
   schedule: "30 3 * * *"
   concurrencyPolicy: Forbid
@@ -40,13 +43,14 @@ spec:
             - name: restic
               image: restic/restic:0.18.0
               # Idempotent: initializes the repo on first ever run, then
-              # snapshots + prunes every night.
+              # snapshots + prunes every night. Each source gets its own tag
+              # so snapshots are independently restorable and identifiable.
               command: ["sh", "-c"]
               args:
                 - |
                   set -eu
                   restic snapshots --quiet >/dev/null 2>&1 || restic init
-                  for dir in /mnt/t3code /mnt/hermes; do
+                  for dir in /mnt/t3code /mnt/t3state /mnt/hermes; do
                     [ -d "$dir" ] || { echo "skip missing $dir"; continue; }
                     echo "==> backing up ${dir}"
                     restic backup "$dir" --tag "$(basename "$dir")"
@@ -59,6 +63,9 @@ spec:
               volumeMounts:
                 - name: t3code-data
                   mountPath: /mnt/t3code
+                  readOnly: true
+                - name: t3state-data
+                  mountPath: /mnt/t3state
                   readOnly: true
                 - name: hermes-data
                   mountPath: /mnt/hermes
@@ -73,6 +80,10 @@ spec:
             - name: t3code-data
               persistentVolumeClaim:
                 claimName: t3code-data-t3code-0
+                readOnly: true
+            - name: t3state-data
+              persistentVolumeClaim:
+                claimName: t3state-t3code-0
                 readOnly: true
             - name: hermes-data
               persistentVolumeClaim:

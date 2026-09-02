@@ -1,0 +1,58 @@
+# Read-only GitHub credential, synced from 1Password into the exact Secret
+# shape every consumer already mounts: Secret `github-token`, single key
+# `token` (mounted at /secrets/token, read as GITHUB_TOKEN_FILE).
+#
+# 1Password item contract (issues #39/#45):
+#   vault:  homelab
+#   item:   github-readonly   field: token
+#   scopes: fine-grained PAT — Contents: read-only on every private repo the
+#           agents read. Deliberately separate from `github-writer` (write
+#           scopes live only there).
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: github-token
+  namespace: agents
+spec:
+  # Rotation in 1Password reaches the cluster within this interval (plus a
+  # ~5m provider cache and ~1m kubelet sync for mounted volumes).
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: onepassword
+  target:
+    name: github-token
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        # Trim guards against a trailing newline in the 1Password field — a
+        # newline in the token breaks git auth (same guarantee the deprecated
+        # create-github-secret.sh provided).
+        token: "{{ .token | trim }}"
+  data:
+    - secretKey: token
+      remoteRef:
+        key: github-readonly/token
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: github-token
+  namespace: sandbox
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: onepassword
+  target:
+    name: github-token
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        token: "{{ .token | trim }}"
+  data:
+    - secretKey: token
+      remoteRef:
+        key: github-readonly/token

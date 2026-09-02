@@ -1,3 +1,12 @@
+# t3code serve-fixer: ServiceAccount, RBAC, and Deployment for the t3code
+# proxy only. The panel fixer has its own ServiceAccount/Role
+# (panel-serve-fixer.yaml) so the two mechanisms stay independently
+# revocable. Least privilege per issue #32: no pods/log, no write verbs
+# other than pods/exec create, and the only cross-namespace read is the
+# t3code-0 pod's own IP, name-pinned below. The unavoidable residual —
+# pods/exec create stays namespace-scoped, because the operator generates
+# proxy pod names (ts-<parent>-<rand>) that RBAC cannot pin — is documented
+# in deploy/tailscale/README.md.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -12,9 +21,16 @@ metadata:
   name: serve-fixer
   namespace: tailscale
 rules:
+  # Discovery only (read-only): proxy pod names are operator-generated, so
+  # the fixer must list pods to find the one carrying the t3code
+  # parent-resource labels (see serve-fixer-cm.yaml).
   - apiGroups: [""]
-    resources: ["pods", "pods/exec", "pods/log"]
-    verbs: ["get", "list", "create"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # The repair primitive (`tailscale serve` inside the t3code proxy pod).
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -29,7 +45,9 @@ subjects:
   - kind: ServiceAccount
     name: serve-fixer
 ---
-# Read-only access to the app pod's IP from the agents namespace.
+# Read-only access to the t3code app pod's IP from the agents namespace,
+# pinned to the StatefulSet pod's stable name — the fixer cannot read any
+# other workload's pods.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -38,7 +56,8 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list"]
+    resourceNames: ["t3code-0"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -74,16 +93,38 @@ spec:
     spec:
       serviceAccountName: serve-fixer
       automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: fixer
-          image: ghcr.io/gwkline/homelab/loop-agent:latest
+          # Digest-pinned per verify.sh's latest-tag rule (issues #91, #32):
+          # a swapped mutable tag must not be able to replace the pod that
+          # holds exec access. Bump the digest when loop-agent ships tooling
+          # changes the fixer needs.
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:331ed63c3ff4e781c10c1044c1c5ad475c5d6d8d6a3d3e02bed05a3f6a6e12a3
           command:
             - /bin/sh
             - /scripts/serve-fixer.sh
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # kubectl's discovery cache lives under $HOME; point it at the
+            # writable emptyDir since the root filesystem is read-only.
+            - name: HOME
+              value: /tmp
           volumeMounts:
             - name: scripts
               mountPath: /scripts
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests:
               cpu: 10m
@@ -95,3 +136,6 @@ spec:
           configMap:
             name: t3code-serve-fixer
             defaultMode: 0755
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi

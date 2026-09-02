@@ -7,6 +7,11 @@ set -euo pipefail
 
 ROLE="${1:?usage: bootstrap.sh server|agent [server-ip]}"
 
+# Pinned so a rebuild reproduces the versions the manifests and workarounds
+# were tested against (issue #34). Override only for a deliberate upgrade;
+# the formal pin/upgrade policy is issue #29.
+K3S_VERSION="${K3S_VERSION:-v1.36.4+k3s1}"
+
 if [[ $EUID -eq 0 ]]; then
   echo "run as a normal user with sudo access, not root" >&2
   exit 1
@@ -27,7 +32,7 @@ if [[ "$ROLE" == "server" ]]; then
   echo "==> installing k3s (control-plane)"
   # kubeconfig stays root-only (600); fetch it from your laptop with:
   #   ssh <user>@<node-ip> sudo cat /etc/rancher/k3s/k3s.yaml
-  curl -sfL https://get.k3s.io | sh -s - server \
+  curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="$K3S_VERSION" sh -s - server \
     --disable traefik
   echo "==> kubeconfig: /etc/rancher/k3s/k3s.yaml"
   echo "==> node token: /var/lib/rancher/k3s/server/node-token"
@@ -38,7 +43,7 @@ elif [[ "$ROLE" == "agent" ]]; then
   echo "==> joining cluster at ${SERVER_IP}"
   curl -sfL https://get.k3s.io | \
     K3S_URL="https://${SERVER_IP}:6443" K3S_TOKEN="$TOKEN" \
-    sh -s - agent
+    INSTALL_K3S_VERSION="$K3S_VERSION" sh -s - agent
 else
   echo "unknown role: $ROLE" >&2
   exit 1

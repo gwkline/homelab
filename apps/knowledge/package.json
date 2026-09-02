@@ -1,0 +1,15 @@
+{
+  "name": "knowledge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "eval": "node --experimental-strip-types eval/run-eval.ts",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "26.3.0",
+    "typescript": "7.0.2"
+  }
+}
