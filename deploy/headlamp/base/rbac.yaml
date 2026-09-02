@@ -1,0 +1,53 @@
+# Fourth deliberate exception to "pods cannot talk to Kubernetes" — but a
+# different kind: where hermes/dispatcher/panel hold write verbs on sandbox
+# Jobs, headlamp is a read-only cluster viewer for the web UI (issue #40).
+# get/list/watch only. It cannot read Secret values, mutate workloads, exec
+# into pods (pods/exec, pods/attach, pods/portforward unassigned), or reach
+# node proxy APIs (nodes/proxy, services/proxy unassigned). Tailnet identity
+# gates who reaches the UI; this role bounds what the UI can do.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: headlamp
+  namespace: agents
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: headlamp-readonly
+rules:
+  # Workload inspection: pods, their status/logs/events, plus the nodes,
+  # services, and configmaps a debugging session needs to orient itself.
+  # ConfigMaps are read (not secret material by design) so workload config
+  # views render; Secrets are deliberately absent.
+  - apiGroups: [""]
+    resources: ["pods", "pods/status", "pods/log", "events", "namespaces", "nodes", "services", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  # Controllers behind the pods, for inspecting a failed rollout/Job.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  # Both event flavors (kubectl describe uses core, the UI may read either).
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  # CPU/memory graphs. The metrics API has no watch; get/list covers it.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: headlamp-readonly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: headlamp-readonly
+subjects:
+  - kind: ServiceAccount
+    name: headlamp
+    namespace: agents
