@@ -135,7 +135,7 @@ spec:
         - name: fixer
           # Digest-pinned per verify.sh's latest-tag rule (issue #91). Bump the
           # digest when loop-agent ships tooling changes the fixer needs.
-          image: ghcr.io/gwkline/homelab/loop-agent@sha256:331ed63c3ff4e781c10c1044c1c5ad475c5d6d8d6a3d3e02bed05a3f6a6e12a3
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
           command:
             - /bin/sh
             - /scripts/panel-serve-fixer.sh

@@ -13,7 +13,7 @@ data:
     {
       "name": "reviewer",
       "version": 1,
-      "image": "ghcr.io/gwkline/homelab/factory/reviewer:latest",
+      "image": "ghcr.io/gwkline/homelab/factory/reviewer@sha256:35e1d611b974d4a141583ebee005c3aaa908eac931fe837df314314b3e7d0edb",
       "serviceAccount": "factory-reviewer",
       "activeDeadlineSeconds": 900,
       "backoffLimit": 1,

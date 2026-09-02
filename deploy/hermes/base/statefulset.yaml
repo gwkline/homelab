@@ -28,7 +28,7 @@ spec:
       terminationGracePeriodSeconds: 60
       initContainers:
         - name: volume-init
-          image: busybox:1.36
+          image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
           command: ["chown", "-R", "1000:1000", "/data"]
           securityContext:
             allowPrivilegeEscalation: false
@@ -44,7 +44,7 @@ spec:
         # skills-sync/status.json and exits 0 — the gateway starts on stale
         # skills rather than refusing to boot during a GitHub outage.
         - name: skills-sync
-          image: ghcr.io/gwkline/homelab/hermes
+          image: ghcr.io/gwkline/homelab/hermes@sha256:af23d67fc4baf8821cb2e777dcf1892cdb98a5836ca7e5187b938562e7deda17
           imagePullPolicy: Always
           command: ["/opt/hermes/.venv/bin/python3", "/config/skills-sync.py"]
           env:
@@ -74,7 +74,7 @@ spec:
               readOnly: true
       containers:
         - name: hermes
-          image: ghcr.io/gwkline/homelab/hermes
+          image: ghcr.io/gwkline/homelab/hermes@sha256:af23d67fc4baf8821cb2e777dcf1892cdb98a5836ca7e5187b938562e7deda17
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

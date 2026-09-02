@@ -6,95 +6,76 @@ metadata:
   labels:
     app.kubernetes.io/part-of: homelab
 data:
-  # One target per line: kind,name,namespace,container,selector,image
-  # `container` is the container whose image changes; `selector` is the
-  # pod label selector (-l) for finding the workload's pods; digests are
-  # compared against the registry `:latest` tag for `image`.
+  # One target per line: kind,name,namespace,manifest
+  # `manifest` is the repo path of the single-document workload manifest the
+  # cluster should run. Manifests pin images to immutable digests (issue #35),
+  # so git is the only source of what runs: Renovate opens a digest-bump PR,
+  # CI signs the image, and applying the merged manifest is the rollout.
   watchlist: |
-    # kind,name,namespace,container,selector,image
-    deployment,panel,agents,panel,app=panel,ghcr.io/gwkline/homelab/panel
-    statefulset,t3code,agents,t3code,app=t3code,ghcr.io/gwkline/homelab/t3code
-    statefulset,hermes,agents,hermes,app=hermes,ghcr.io/gwkline/homelab/hermes
+    # kind,name,namespace,manifest
+    statefulset,t3code,agents,deploy/t3code/base/statefulset.yaml
+    statefulset,hermes,agents,deploy/hermes/base/statefulset.yaml
+    deployment,panel,agents,deploy/panel/base/deployment.yaml
   watch.sh: |
     #!/bin/sh
-    # Auto-deploy watcher: every INTERVAL seconds, compare each watchlisted
-    # workload's running image digest against GHCR's `:latest` digest and
-    # `kubectl rollout restart` when stale. Works around the absent CD story:
-    # CI pushes :latest, workloads run imagePullPolicy Always but only pull on
-    # pod (re)creation — nobody restarted them, so fixes never landed (#116-era
-    # panel 502). Adding an app = one line in the `watchlist` key.
-    #
-    # Safety rails:
-    # - a workload with no Running pods is skipped (a rollout is in flight)
-    # - a pod whose imageID carries no @sha256 digest is skipped (can't
-    #   compare — never restart on a guess)
-    # - per-workload RESTART_COOLDOWN (s) prevents restart storms while a
-    #   rollout is still converging
+    # Declarative image sync for the agents namespace (issue #35). The old
+    # watcher compared running digests against GHCR's floating :latest and
+    # rollout-restarted stale workloads — that pattern cannot survive digest
+    # pinning (a restart never changes a digest-pinned pod spec, so the
+    # comparison would never converge), and it ran code no reviewed diff
+    # contained. Now: every INTERVAL seconds, shallow-clone the repo at main
+    # and `kubectl apply` each watchlisted workload manifest. Unchanged
+    # manifests are no-ops; a merged digest bump rolls out on the next pass.
+    # Mirrors the factory reconciler's clone+apply pattern, scoped to the
+    # workloads that used to ride :latest.
     set -u
 
+    REPO="${REPO:-gwkline/homelab}"
+    WORK="${WORK:-/tmp/homelab}"
     WATCHLIST="${WATCHLIST:-/config/watchlist}"
-    STATE_DIR="${STATE_DIR:-/tmp/auto-deploy}"
-    INTERVAL="${INTERVAL:-60}"
-    RESTART_COOLDOWN="${RESTART_COOLDOWN:-900}"
-    mkdir -p "$STATE_DIR"
+    INTERVAL="${INTERVAL:-300}"
 
     log() { printf '%s %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
-    # Latest manifest digest on GHCR for repo (e.g. gwkline/homelab/panel).
-    registry_digest() {
-      repo="$1"
-      token=$(curl -fsS --max-time 20 "https://ghcr.io/token?scope=repository:${repo}:pull" 2>/dev/null \
-        | sed -n 's/.*"token":"\([^"]*\)".*/\1/p') || return 1
-      [ -n "$token" ] || return 1
-      curl -fsSI --max-time 20 \
-        -H "Authorization: Bearer ${token}" \
-        -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
-        "https://ghcr.io/v2/${repo}/manifests/latest" 2>/dev/null \
-        | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: //p' | head -1
+    # Fresh shallow clone of main. Uses the repo's read PAT when mounted
+    # (ExternalSecret github-token); falls back to anonymous for public repos.
+    clone_repo() {
+      rm -rf "$WORK"
+      if [ -s /secrets/token ]; then
+        GH_TOKEN=$(cat /secrets/token)
+        export GH_TOKEN
+        git config --file /tmp/gitconfig credential.helper \
+          '!f() { printf "username=x-access-token\npassword=%s\n" "$GH_TOKEN"; }; f'
+        GIT_CONFIG_GLOBAL=/tmp/gitconfig
+        export GIT_CONFIG_GLOBAL
+      fi
+      GIT_TERMINAL_PROMPT=0
+      export GIT_TERMINAL_PROMPT
+      git clone --depth 1 -q "https://github.com/${REPO}.git" "$WORK" 2>/dev/null
     }
 
-    # Running digest of the target container across the workload's pods.
-    running_digest() {
-      ns="$1" sel="$2" container="$3"
-      kubectl get pods -n "$ns" -l "$sel" --field-selector=status.phase=Running \
-        -o jsonpath='{range .items[*]}{.status.containerStatuses[*].imageID}{"\n"}{end}' 2>/dev/null \
-      | tr ' ' '\n' | grep -F "@sha256:" | head -1 | sed 's/.*@//'
-    }
-
-    while true; do
-      while IFS=, read -r kind name ns container sel image; do
-        case "$kind" in '' | '#'*) continue ;; esac
-        key="${ns}_${kind}_${name}"
-        state="${STATE_DIR}/${key}"
-        repo=${image#ghcr.io/}
-        repo=${repo%%:*}
-
-        now=$(date +%s)
-        if [ -f "$state" ]; then
-          last=$(cat "$state" 2>/dev/null || echo 0)
-          if [ $((now - last)) -lt "$RESTART_COOLDOWN" ]; then
+    while :; do
+      if ! clone_repo; then
+        log "WARN: clone ${REPO} failed (private repo without github-token?)"
+      else
+        while IFS=, read -r kind name ns manifest; do
+          case "$kind" in '' | '#'*) continue ;; esac
+          path="${WORK}/${manifest}"
+          if [ ! -f "$path" ]; then
+            log "WARN: ${kind}/${name} manifest missing from clone: ${manifest}"
             continue
           fi
-        fi
-
-        dig=$(registry_digest "$repo")
-        if [ -z "$dig" ]; then
-          log "WARN $key: no registry digest (GHCR unreachable?) — skipping"
-          continue
-        fi
-        run=$(running_digest "$ns" "$sel" "$container")
-        if [ -z "$run" ]; then
-          # No Running pods, or imageID had no digest — either way, don't guess.
-          continue
-        fi
-        if [ "$run" != "$dig" ]; then
-          log "$key STALE: running ${run##sha256:} != registry ${dig##sha256:} — restarting"
-          if kubectl rollout restart "$kind.v1.apps/$name" -n "$ns" >/dev/null 2>&1; then
-            echo "$now" > "$state"
+          if kubectl apply -f "$path" >/dev/null 2>&1; then
+            # Surface the image the workload now runs (digest = audit trail).
+            kubectl get "$kind" "$name" -n "$ns" \
+              -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null \
+              | while IFS= read -r img; do
+                  log "synced ${kind}/${name} -> ${img}"
+                done
           else
-            log "WARN $key: restart failed (RBAC/apiserver?)"
+            log "WARN: apply failed for ${manifest} (RBAC/apiserver?)"
           fi
-        fi
-      done < "$WATCHLIST"
+        done < "$WATCHLIST"
+      fi
       sleep "$INTERVAL"
     done
