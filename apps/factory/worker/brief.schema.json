@@ -60,7 +60,10 @@
               "title": { "type": "string" },
               "text": { "type": "string", "minLength": 1 },
               "score": { "type": "number" },
-              "retrieved_by": { "type": "array", "items": { "type": "string" } },
+              "retrieved_by": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
               "source": {
                 "type": "object",
                 "description": "Where to inspect this citation.",
