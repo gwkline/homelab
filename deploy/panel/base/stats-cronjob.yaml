@@ -1,0 +1,53 @@
+# Weekly trigger for the panel's factory-stats rollup (issue #186): each call
+# upserts the current week's snapshot into the JSON artifact on the panel-stats
+# PVC, so quiet weeks still land in the trend history even when nobody opens
+# the panel. Lives in agents so the pod-scoped NetworkPolicy rule in
+# service.yaml is the only ingress path needed. The panel owns all GitHub
+# fan-out and persistence logic — this job only pokes the endpoint and reuses
+# the panel image (same pinned digest, no dedicated image to build).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: factory-stats-snapshot
+  namespace: agents
+  labels:
+    app.kubernetes.io/part-of: homelab
+spec:
+  # Sunday 23:53 UTC: the rollup's week key is the Monday six days earlier, so
+  # this captures the week that just ended, nearly complete.
+  schedule: "53 23 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  suspend: false
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: factory-stats-snapshot
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: snapshot
+              image: ghcr.io/gwkline/homelab/panel@sha256:a9c6c439713556b5138fe87a0b4922d3d5beae47f07eb81af83be3843385f0a2
+              imagePullPolicy: Always
+              command:
+                - node
+                - -e
+                - >-
+                  fetch('http://panel-http.agents.svc.cluster.local:3000/api/factory/stats/rollup').then((r) => { if (!r.ok) { throw new Error('factory stats rollup failed: ' + r.status); } return r.json(); }).then((j) => { console.log('factory stats snapshot upserted, persisted:', j.persisted); }).catch((e) => { console.error(e); process.exit(1); });
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { memory: 256Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+                readOnlyRootFilesystem: true

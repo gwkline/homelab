@@ -13,3 +13,5 @@ resources:
   - nodes-viewer.yaml
   - deployment.yaml
   - service.yaml
+  - stats-pvc.yaml
+  - stats-cronjob.yaml

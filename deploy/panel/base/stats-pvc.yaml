@@ -1,0 +1,16 @@
+# Factory stats snapshot artifact (issue #186): the panel persists weekly
+# cross-repo stats as one JSON file here so trend history survives panel pod
+# restarts and outlives the GitHub-derived 8-week window. Tiny by design —
+# one snapshot per week, capped at 520 weeks inside the artifact itself.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: panel-stats
+  namespace: agents
+  labels:
+    app.kubernetes.io/part-of: homelab
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi

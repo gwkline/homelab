@@ -62,7 +62,18 @@ POST /api/factory/review { repo, pr, event: "APPROVE"|"REQUEST_CHANGES"|"COMMENT
      → POST /repos/{repo}/pulls/{pr}/reviews  (gh pr review equivalent)
 POST /api/factory/merge   { repo, pr, strategy: "squash"|"merge"|"rebase" }
      → guard: pr must have factory/issue-* head AND be APPROVED with green
-       checks; then PUT /repos/{repo}/pulls/{pr}/merge
+        checks; then PUT /repos/{repo}/pulls/{pr}/merge
+GET  /api/factory/stats?repo=<owner/name>
+     → { repo, weeks: [8 ISO Mondays], stats: { openIssues, openPrs,
+         issuesOpened[8], issuesClosed[8], prsOpened[8], prsMerged[8] } }
+GET  /api/factory/stats/rollup
+     → one call over every FACTORY_REPOS repo: { totals, repos, weeks,
+         history, persisted }. Cross-repo totals + per-repo breakdown derived
+         from GitHub over the 8-week window; `history` is the persisted weekly
+         snapshot series (JSON artifact on the panel-stats PVC, one snapshot
+         per ISO week, upserted on every rollup call and by the weekly
+         factory-stats-snapshot CronJob) — trend history is read from the
+         artifact, so it survives beyond the GitHub-derived window.
 ```
 
 Reviewer transitions (v1 read-only + comments; auto-promote behind `FACTORY_REVIEWER_AUTO_MERGE=false` default):

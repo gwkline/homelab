@@ -8,6 +8,18 @@ import { DEV_TOOLS, discoverTailnet, evaluateTools } from "./devtools.js";
 import { jobNameFor, jobManifest, viewJob } from "./jobs.js";
 import { loadConfig, api } from "./k8s.js";
 import type { K8sObject, JobTemplateSpec } from "./k8s.js";
+import {
+  collectRepoStats,
+  historyFromStore,
+  loadStatsStore,
+  sumSeries,
+  sumWeekStats,
+  upsertSnapshot,
+  weekKeysBack,
+  weekStart,
+  weekStatsOf,
+} from "./stats.js";
+import type { RepoStats } from "./stats.js";
 
 const root = process.env.PANEL_ROOT ?? process.cwd();
 const app = new Hono();
@@ -33,6 +45,12 @@ const FACTORY_REPOS = new Set([
 const FACTORY_PROFILES = new Set(["code-pr", "security"]);
 const DEFAULT_FACTORY_REPO = process.env.FACTORY_REPO ?? "gwkline/launchpad";
 const DEFAULT_FACTORY_PROFILE = process.env.FACTORY_PROFILE ?? "code-pr";
+// GitHub-derived trend window (weekly buckets). Older trend data comes from
+// the persisted snapshot artifact, not from GitHub (issue #186).
+const STATS_WINDOW_WEEKS = 8;
+const FACTORY_STATS_PATH =
+  process.env.FACTORY_STATS_PATH ??
+  path.join(root, "data", "factory-stats.json");
 
 // ── GitHub API response shapes (structural subset actually dereferenced) ──
 interface GhIssue {
@@ -339,6 +357,80 @@ app.get("/api/factory/issues", async (c) => {
   } catch (error: unknown) {
     return c.json({ error: errMessage(error) }, 502);
   }
+});
+
+// Per-repo factory stats: weekly throughput buckets over the GitHub-derived
+// window plus current open counts (issue #186's per-repo predecessor view).
+app.get("/api/factory/stats", async (c) => {
+  const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) {
+    return c.json(
+      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
+      400
+    );
+  }
+  try {
+    const weeks = weekKeysBack(Date.now(), STATS_WINDOW_WEEKS);
+    const stats = await collectRepoStats(repo, weeks, ghFetch);
+    return c.json({ repo, stats, weeks });
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, 502);
+  }
+});
+
+// All-repos rollup: one call aggregating every FACTORY_REPOS repo — cross-repo
+// totals, per-repo breakdown, and weekly trend history from the persisted
+// snapshot artifact (survives the GitHub-derived window; issue #186). Each
+// call upserts the current week's snapshot, so viewing the panel is what
+// keeps the artifact fresh.
+app.get("/api/factory/stats/rollup", async (c) => {
+  const now = new Date();
+  const week = weekStart(now);
+  const weeks = weekKeysBack(now, STATS_WINDOW_WEEKS);
+  const repoList = [...FACTORY_REPOS];
+  const results = await Promise.allSettled(
+    repoList.map((repo) => collectRepoStats(repo, weeks, ghFetch))
+  );
+  const ok: { repo: string; stats: RepoStats }[] = [];
+  const reposOut = repoList.map((repo, i) => {
+    const r = results[i];
+    if (r?.status === "fulfilled") {
+      ok.push({ repo, stats: r.value });
+      return { repo, ...r.value };
+    }
+    return { error: errMessage(r?.reason), repo };
+  });
+  const totals = {
+    issuesClosed: sumSeries(ok.map((x) => x.stats.issuesClosed)),
+    issuesOpened: sumSeries(ok.map((x) => x.stats.issuesOpened)),
+    openIssues: ok.reduce((acc, x) => acc + x.stats.openIssues, 0),
+    openPrs: ok.reduce((acc, x) => acc + x.stats.openPrs, 0),
+    prsMerged: sumSeries(ok.map((x) => x.stats.prsMerged)),
+    prsOpened: sumSeries(ok.map((x) => x.stats.prsOpened)),
+  };
+  const snapshot = {
+    capturedAt: now.toISOString(),
+    repos: Object.fromEntries(
+      ok.map((x) => [x.repo, weekStatsOf(x.stats)] as const)
+    ),
+    totals: sumWeekStats(ok.map((x) => weekStatsOf(x.stats))),
+    week,
+  };
+  // Never persist an all-repos failure (e.g. a GitHub outage) — zeros would
+  // poison the trend history. Partial failures still snapshot what succeeded.
+  let persisted = false;
+  if (ok.length > 0) {
+    try {
+      upsertSnapshot(FACTORY_STATS_PATH, snapshot);
+      persisted = true;
+    } catch (error: unknown) {
+      console.warn(
+        `[panel] stats snapshot not persisted: ${errMessage(error)}`
+      );
+    }
+  }
+  const history = historyFromStore(loadStatsStore(FACTORY_STATS_PATH));
+  return c.json({ history, persisted, repos: reposOut, totals, weeks });
 });
 
 const FACTORY_PR_HEAD_RE = /^factory\/issue-\d+\//u;
