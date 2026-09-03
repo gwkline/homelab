@@ -1,0 +1,53 @@
+# Workload-owned exposure rule. Default-deny ingress lives in policies/base;
+# the only path in is the Tailscale operator's proxies. Tailnet identity is
+# the auth layer, same model as every other UI here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-tailscale-to-grafana
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: grafana
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tailscale
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+# Egress narrowed below the namespace baseline (agents egress is otherwise
+# open): Grafana needs DNS and the Loki query API — nothing else. Anonymous
+# auth is on, so no identity-provider egress is needed either.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana-egress
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: grafana
+  policyTypes: [Egress]
+  egress:
+    - to: # DNS: kube-dns pods only (k3s coredns carries this label)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to: # Loki query API (same namespace)
+        - podSelector:
+            matchLabels:
+              app: loki
+      ports:
+        - protocol: TCP
+          port: 3100
