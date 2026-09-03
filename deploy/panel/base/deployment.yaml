@@ -26,6 +26,10 @@ spec:
           env:
             - name: FACTORY_REPO
               value: gwkline/homelab
+            # Weekly factory-stats snapshot artifact (issue #186): one JSON
+            # file on the panel-stats PVC, upserted per ISO week.
+            - name: FACTORY_STATS_PATH
+              value: /data/factory-stats/snapshots.json
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -45,6 +49,8 @@ spec:
             - name: github-token
               mountPath: /secrets
               readOnly: true
+            - name: stats
+              mountPath: /data
           startupProbe:
             httpGet:
               path: /
@@ -63,3 +69,6 @@ spec:
             items:
               - key: token
                 path: token
+        - name: stats
+          persistentVolumeClaim:
+            claimName: panel-stats

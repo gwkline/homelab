@@ -64,3 +64,12 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
+    # factory-stats-snapshot CronJob (issue #186): weekly rollup trigger, the
+    # only other in-cluster path to :3000 — pod-scoped like Homepage above.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: factory-stats-snapshot
+      ports:
+        - protocol: TCP
+          port: 3000
