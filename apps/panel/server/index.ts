@@ -886,6 +886,32 @@ const autonomousOutput = async (
   return out;
 };
 
+// Per-repo stats response (the health card's data). `cached` marks a
+// server-cache hit so views can show staleness without extra round-trips.
+interface FactoryStatsResponse {
+  autonomous: { additions: number; commits: number; deletions: number };
+  cached: boolean;
+  ci: { green: number; total: number };
+  merge: { merged: number; total: number };
+  queue: FactoryQueue;
+  repo: string;
+  review: { approved: number; total: number };
+  stats: RepoStats;
+  weeklyMerges: { label: string; merged: number }[];
+  weeks: string[];
+}
+
+// Short per-repo cache (#184): one stats call fans out to a dozen GitHub
+// routes (two searches, three lists, per-PR detail + check-runs + reviews),
+// and the panel refetches on every repo switch or refresh click. Merged-PR
+// history is immutable, so a ~2-minute TTL only adds staleness to the
+// open-PR rates and queue depth; failures are never cached.
+const STATS_CACHE_TTL_MS = 120_000;
+const statsCache = new Map<
+  string,
+  { at: number; body: Omit<FactoryStatsResponse, "cached"> }
+>();
+
 // Per-repo factory stats: weekly throughput and current health-card data.
 app.get("/api/factory/stats", async (c) => {
   const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
@@ -894,6 +920,10 @@ app.get("/api/factory/stats", async (c) => {
       { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
       400
     );
+  }
+  const hit = statsCache.get(repo);
+  if (hit && Date.now() - hit.at < STATS_CACHE_TTL_MS) {
+    return c.json({ ...hit.body, cached: true });
   }
   try {
     const statsWeeks = weekKeysBack(Date.now(), STATS_WINDOW_WEEKS);
@@ -926,7 +956,7 @@ app.get("/api/factory/stats", async (c) => {
       openPrRates(repo, openFactory),
       autonomousOutput(repo, mergedFactory),
     ]);
-    return c.json({
+    const body: Omit<FactoryStatsResponse, "cached"> = {
       autonomous,
       ci: { green: rates.ciGreen, total: rates.ciTotal },
       merge: { merged: mergedFactory.length, total: closedFactory.length },
@@ -939,7 +969,9 @@ app.get("/api/factory/stats", async (c) => {
         merged: counts[i] ?? 0,
       })),
       weeks: statsWeeks,
-    });
+    };
+    statsCache.set(repo, { at: Date.now(), body });
+    return c.json({ ...body, cached: false });
   } catch (error: unknown) {
     return c.json({ error: errMessage(error) }, 502);
   }
