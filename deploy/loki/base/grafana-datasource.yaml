@@ -1,0 +1,40 @@
+# Loki datasource provisioning for Grafana (deploy/grafana/base, #44).
+#
+# Inert until a Grafana consumes it. The `grafana_datasource: "1"` label is
+# the standard sidecar convention: a Grafana deployed with the datasource
+# sidecar picks this ConfigMap up automatically. If #44's Grafana mounts
+# provisioning files from explicit ConfigMaps instead, add this one to its
+# provisioning volume list — see deploy/loki/README.md.
+#
+# The derived fields are the "jump from a failed Job to its logs" path: any
+# log line carrying job_name="..." or pod="..." renders a link that opens
+# Explore pre-filtered to that run — no typing LogQL by hand.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-loki
+  namespace: agents
+  labels:
+    grafana_datasource: "1"
+data:
+  loki.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki.agents.svc:3100
+        isDefault: false
+        editable: false
+        jsonData:
+          maxLines: 2000
+          derivedFields:
+            - name: Job run logs
+              matcherRegex: 'job_name="([^"]+)"'
+              datasourceUid: loki
+              url: '{job_name="${__value.raw}"}'
+            - name: Pod logs
+              matcherRegex: 'pod="([^"]+)"'
+              datasourceUid: loki
+              url: '{pod="${__value.raw}"}'
