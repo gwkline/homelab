@@ -183,6 +183,14 @@ jobs:
       # worker edits.
       - name: Skills-sync fixture tests
         run: sh apps/shared/tests/skills-sync.test.sh
+      # Backup-secret input regression (#10): a stub kubectl proves the
+      # emergency fallback captures interactive credentials byte-exactly
+      # (no leading/trailing newline), keeps prompts and visual newlines on
+      # stderr, stays non-interactive for env input, and refuses empty
+      # values before applying. Run beside verify.sh, not inside it, for
+      # the same reason as the skills-sync tests above.
+      - name: Backup-secret input regression test
+        run: sh scripts/tests/create-backup-secret.test.sh
 
   build:
     needs:

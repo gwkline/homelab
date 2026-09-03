@@ -95,6 +95,10 @@ Retry-with-fix after a failed upgrade: because SSA recorded the failed attempt, 
 
 The operator writes the proxy's serve config once with the app pod's IP and does not refresh it when the StatefulSet pod is replaced → 502s after every rollout. The serve-fixer Deployments notice pod-IP drift within ~30s and re-apply `tailscale serve` in the proxy (`scripts/serve-retest.sh` checks whether a newer operator still needs this).
 
+HTTPS 443 is the supported endpoint (issue #11): the t3code fixer loop execs the ConfigMap copy of `scripts/serve-https.sh`, which converges the **https** handler's backend to the current pod IP and drift-checks only that handler (a matching backend under a leftover http:// handler does not count). `scripts/rebuild-check.sh` section 5 verifies the same `https://` URL users open.
+
+One implementation, no drift: the manual command, the recovery drill, and the fixer loop all run `scripts/serve-https.sh`; the ConfigMap must carry byte-exact copies of the repo files, enforced statically by `scripts/serve-fixer-check.sh` (and by `scripts/verify.sh` in CI).
+
 ### Least privilege (issue #32)
 
 Each fixer has its **own** ServiceAccount and Role so the two mechanisms are independently revocable:

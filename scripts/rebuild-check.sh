@@ -52,13 +52,22 @@ else
 fi
 
 echo "== 5. tailscale exposure =="
+# HTTPS 443 is the supported endpoint (issue #11): verify the URL users
+# actually open, and fail on certificate/TLS errors (curl exit != 0) and on
+# 502s (the signature of a stale serve backend the fixer should have
+# re-pointed). An HTTP-only check reported success while HTTPS served a
+# stale backend — that is the drift this section closes.
 host=$(kubectl get svc t3code-0 -n agents -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
 if [ -n "$host" ]; then
-  code=$(curl -s -m 10 -o /dev/null -w "%{http_code}" "http://${host}/")
-  if [ "$code" = "200" ]; then
-    echo "  ok: http://$host -> 200"
+  code=$(curl -s -m 10 -o /dev/null -w "%{http_code}" "https://${host}/")
+  curl_rc=$?
+  if [ "$curl_rc" -ne 0 ]; then
+    echo "  FAIL: https://$host request failed (curl exit $curl_rc — certificate/TLS or connection error; code $code)"
+    fail=1
+  elif [ "$code" = "200" ]; then
+    echo "  ok: https://$host -> 200"
   else
-    echo "  FAIL: http://$host -> $code (serve-fixer logs: kubectl logs -n tailscale deploy/t3code-serve-fixer)"
+    echo "  FAIL: https://$host -> $code (502 = stale serve backend; fixer logs: kubectl logs -n tailscale deploy/t3code-serve-fixer)"
     fail=1
   fi
 else
