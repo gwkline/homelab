@@ -187,14 +187,16 @@ fi
 # ---- 2. resolve profile stack (image/SA/resources) ------------------------
 # Resolved before the marker comment so the Run records the exact stack that
 # will execute it (acceptance: RunProfile + workflow/version recorded).
+# Images are digest-pinned (issue #35): the orchestrator spawns exactly the
+# worker build this commit's manifests pin, never a moving tag.
 case "${PROFILE}" in
   security)
-    WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/security:latest"
+    WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/security@sha256:de0859cf9eaff1f9c6bc2d46bc15e8217c1e3dca7d13a0f37bac0397bbc657a6"
     WORKER_SA="factory-security"
     WORKER_CPU="500m"; WORKER_MEM="4Gi"
     ;;
   code-pr|*)
-    WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/worker:latest"
+    WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/worker@sha256:8ecbd0969fb1d0d7bd68cbc0a4c4432620a45df2b41787fddc1d925d659e406e"
     WORKER_SA="factory-worker"
     WORKER_CPU="500m"; WORKER_MEM="12Gi"
     ;;
