@@ -89,7 +89,14 @@ jobs:
             || { echo "::error::asset $ASSET did not answer 200"; kill $PREVIEW_PID; exit 1; }
           kill $PREVIEW_PID
 
-  # Panel unit/integration tests (node --test against the built server).
+  # Panel unit/integration tests (node --test against the built server):
+  # npm ci installs strictly from the committed apps/panel/package-lock.json,
+  # and the npm cache is keyed on that same lockfile, so lockfile drift always
+  # busts the cache instead of being papered over by stale packages (#18).
+  # verify.sh deliberately does not run this suite: it is bash-only (and must
+  # stay untouched by dash-gated worker edits, see the validate job below), so
+  # CI owns the panel test path and documents the split here — every other
+  # check CI runs still lives in verify.sh.
   panel-test:
     runs-on: ubuntu-latest
     permissions:
