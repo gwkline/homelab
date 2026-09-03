@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: agents
+  annotations:
+    tailscale.com/hostname: grafana # -> https://grafana.<tailnet>.ts.net
+    # Required so proxy devices carry tag:k8s-operator regardless of the
+    # operator's default tag (see deploy/tailscale/README.md).
+    tailscale.com/tags: tag:k8s-operator
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app: grafana
+  ports:
+    - name: https
+      port: 443
+      targetPort: http
+    # Plain HTTP for the panel's Dev Tools health probe, which expects
+    # port 80 declared on this Service (apps/panel/server/devtools.ts);
+    # same container port, tailnet-gated like everything else.
+    - name: http
+      port: 80
+      targetPort: http
