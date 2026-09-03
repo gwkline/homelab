@@ -1,14 +1,16 @@
-# Deliberate, scoped exception to "pods can't talk to Kubernetes":
-# hermes may manage throwaway workloads in `sandbox`, observe its own
-# namespace, and read cluster health — nothing else.
-# It cannot touch secrets, CRDs, or other namespaces' workloads.
+# Hermes' Kubernetes identity, after routing factory orchestration through
+# the Executor MCP gateway (#82): hermes no longer creates or deletes
+# Kubernetes workloads at all — factory work is requested via the governed
+# Executor tools (see executor.yaml + cluster-guide.yaml). What remains is
+# read-only and separately justified below. It cannot touch secrets, CRDs,
+# or other namespaces' workloads.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: hermes
   namespace: agents
 ---
-# Self-visibility: lets hermes report on the workloads it hosts.
+# Self-visibility: lets hermes report on the workloads that host it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -42,9 +44,10 @@ subjects:
     name: hermes
     namespace: agents
 ---
-# Cluster health: read-only nodes/componentstatuses so hermes can answer
-# "is the cluster healthy?" — no write, no secrets access (nodes expose no
-# secret material via these verbs).
+# Cluster health (retained, justified): read-only nodes + metrics so hermes
+# can answer "is the cluster healthy?" without writing anything. Nodes expose
+# no secret material via get/list/watch; every write path stays with the
+# operator and the panel.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -70,7 +73,10 @@ subjects:
     name: hermes
     namespace: agents
 ---
-# Throwaway job management in sandbox (unchanged).
+# Shared sandbox workload verbs for automation that still writes Jobs
+# directly (dispatcher, panel). Hermes is deliberately NOT bound to this
+# role anymore (#82): its factory orchestration goes through Executor,
+# which holds the Kubernetes credentials host-side.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -80,21 +86,6 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs", "cronjobs"]
     verbs: ["create", "get", "list", "watch", "patch", "delete"]
-  # Read-only pod access so hermes can fetch logs to see why a run failed.
   - apiGroups: [""]
     resources: ["pods", "pods/log"]
     verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: hermes-loop-manager
-  namespace: sandbox
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: loop-manager
-subjects:
-  - kind: ServiceAccount
-    name: hermes
-    namespace: agents
