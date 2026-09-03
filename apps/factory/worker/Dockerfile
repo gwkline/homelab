@@ -78,7 +78,7 @@ ARG PSTACK_VERSION=0.14.7
 RUN curl -fsSL "https://codeload.github.com/${PSTACK_REPO}/tar.gz/${PSTACK_REF}" \
       -o /tmp/pstack.tar.gz \
   && mkdir -p /opt/pstack \
-  && tar -xzf /tmp/pstack.tar.gz -C /opt/pstack --strip-components=1 --wildcards "*/pstack/*" \
+  && tar -xzf /tmp/pstack.tar.gz -C /opt/pstack --strip-components=2 --wildcards "*/pstack/*" \
   && test -f /opt/pstack/.cursor-plugin/plugin.json \
   && grep -q "\"version\": \"${PSTACK_VERSION}\"" /opt/pstack/.cursor-plugin/plugin.json \
   && grep -q "License" /opt/pstack/LICENSE \
