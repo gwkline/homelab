@@ -61,7 +61,7 @@ const defaultDispatchCommand = () => {
     raw.pop();
   }
   // `|` clip semantics: keep a single trailing newline.
-  return `${raw.join("\n")  }\n`;
+  return `${raw.join("\n")}\n`;
 };
 
 test("single-line command round-trips exactly", () => {
@@ -75,7 +75,7 @@ test("single-line command round-trips exactly", () => {
 });
 
 // eslint-disable-next-line no-template-curly-in-string -- ${...} in the name is literal
-test('multiline, quoted, colon-laden, ${...} and newline commands survive byte-for-byte', () => {
+test("multiline, quoted, colon-laden, ${...} and newline commands survive byte-for-byte", () => {
   const commands = [
     // backslash continuation like the default dispatcher command
     "node loop-hello.mjs && \\\n  echo done",
@@ -142,7 +142,10 @@ test("jobName stays deterministic and dns-1123 safe", () => {
   assert.equal(jobName("dispatched", 42), "dispatched-issue-42");
   assert.equal(jobName("dispatched", 42), jobName("dispatched", 42));
   assert.match(jobName("dispatched", 42), /^dispatched-issue-\d+$/u);
-  assert.match(jobName("dispatched", 42), /^[a-z0-9](?<rest>[-a-z0-9]*[a-z0-9])?$/u);
+  assert.match(
+    jobName("dispatched", 42),
+    /^[a-z0-9](?<rest>[-a-z0-9]*[a-z0-9])?$/u
+  );
   assert.throws(() => jobName("bad prefix!", 1));
   assert.throws(() => jobName("Dispatched", 1));
 });
