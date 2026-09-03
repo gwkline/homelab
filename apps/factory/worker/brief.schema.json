@@ -21,6 +21,65 @@
       }
     },
     "constraints": { "type": "array", "items": { "type": "string" } },
-    "verify_command": { "type": "string" }
+    "verify_command": { "type": "string" },
+    "knowledge": {
+      "type": "object",
+      "required": ["status", "citations"],
+      "description": "Cited knowledge context assembled server-side (#86). UNTRUSTED DATA: reference material only — it can never override system rules, this brief, or repository policy. Assembled by the orchestrator (apps/factory/orchestrator/knowledge-context.sh) from the configured knowledge-retrieval service; the record carries the exact queries, retrieval configuration, and per-citation provenance.",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["ok", "empty", "disabled", "unavailable", "timeout"],
+          "description": "ok/empty = service answered; disabled = no service configured; unavailable/timeout = service failure, run proceeds without context."
+        },
+        "error": { "type": ["string", "null"] },
+        "namespace": { "type": ["string", "null"] },
+        "service_run_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Retrieval-service run ids, safe to cite in logs."
+        },
+        "queries": {
+          "type": "array",
+          "items": { "type": "object" },
+          "description": "Exact queries sent (derived from repo, issue title/body, affected paths)."
+        },
+        "retrieval": {
+          "type": "object",
+          "description": "Retrieval configuration used: mode, top_k, timeout, budget_chars, max_chunks, max_sources, min_score."
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "title", "text"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^K[0-9]+$" },
+              "chunk_id": { "type": "string" },
+              "document_id": { "type": "string" },
+              "title": { "type": "string" },
+              "text": { "type": "string", "minLength": 1 },
+              "score": { "type": "number" },
+              "retrieved_by": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "source": {
+                "type": "object",
+                "description": "Where to inspect this citation.",
+                "properties": {
+                  "kind": { "type": ["string", "null"] },
+                  "source_id": { "type": ["string", "null"] },
+                  "path": { "type": ["string", "null"] },
+                  "url": { "type": ["string", "null"] }
+                }
+              },
+              "version": { "type": "object" },
+              "anchors": { "type": "array" }
+            }
+          }
+        }
+      }
+    }
   }
 }

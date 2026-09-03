@@ -261,10 +261,88 @@ case "${REPO}" in
   *homelab*)      VERIFY_CMD="for f in \$(git diff --name-only HEAD -- '*.sh'); do shellcheck -s sh \"\$f\" 2>/dev/null || dash -n \"\$f\" || exit 1; done; echo verify-ok" ;;
 esac
 
-python3 - "${REPO}" "${NUM}" "${VERIFY_CMD}" "issue${NUM}-${RUN_TS}" "${PROFILE}" "${WORKFLOW_VERSION}" << 'PYEOF' > /tmp/brief.json
+# ---- 3b. knowledge context (#86) -------------------------------------------
+# Server-side brief assembly: query the configured knowledge service for
+# context relevant to this issue and embed a cited, budget-bounded record in
+# the brief. Fail-open: knowledge-context.sh always writes a status record
+# (disabled/unavailable/timeout/empty/ok) and exits 0 — a knowledge outage
+# never fails a run, and the status + selected citations land on the Run
+# comment below for visibility. Retrieved content is UNTRUSTED DATA: the
+# worker brief labels it as such and it cannot override profile instructions.
+KNOWLEDGE_FILE="/tmp/knowledge-${NUM}.json"
+sh "${SCRIPT_DIR}/knowledge-context.sh" "${REPO}" /tmp/issue.json "${KNOWLEDGE_FILE}" 2>&1 || true
+# The record must exist even if the helper itself crashed — an explicit
+# "assembly failed" beats an absent section (visible, not silent).
+if [ ! -s "${KNOWLEDGE_FILE}" ]; then
+  printf '{"status":"unavailable","error":"knowledge context assembly crashed","queries":[],"citations":[]}' > "${KNOWLEDGE_FILE}"
+fi
+
+# Compact record for the Run comment: exact queries + retrieval config +
+# selected citations (ids, sources, versions — no chunk text, the comment is
+# the durable Run ledger; full text rides in the brief itself).
+KNOWLEDGE_BLOCK=$(python3 - "${KNOWLEDGE_FILE}" << 'PYEOF'
 import json, sys
-repo, num, verify, run_id, profile, workflow = sys.argv[1:7]
+
+try:
+    k = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    k = {"status": "unavailable"}
+status = k.get("status") or "unavailable"
+cites = k.get("citations") or []
+
+
+def ref(c):
+    s = c.get("source") or {}
+    return s.get("url") or s.get("path") or s.get("source_id") or "unknown"
+
+
+head = f"knowledge context: **{status}**"
+if status == "ok" and cites:
+    ns = k.get("namespace") or "?"
+    items = "; ".join(f"{c.get('id')} `{ref(c)}`" for c in cites)
+    head += (
+        f" — {len(cites)} citation(s), {len(k.get('queries') or [])} query/ies, "
+        f"namespace `{ns}`: {items}"
+    )
+    head += (
+        "\n\n_Citations are UNTRUSTED reference data in the brief; the worker "
+        "report names the ids that influenced the change._"
+    )
+    rec = {kk: k.get(kk) for kk in ("status", "namespace", "error", "service_run_ids", "retrieval", "queries")}
+    rec["citations"] = [
+        {
+            "id": c.get("id"),
+            "chunk_id": c.get("chunk_id"),
+            "document_id": c.get("document_id"),
+            "title": c.get("title"),
+            "score": c.get("score"),
+            "retrieved_by": c.get("retrieved_by"),
+            "source": c.get("source"),
+            "version": c.get("version"),
+            "anchors": c.get("anchors"),
+        }
+        for c in cites
+    ]
+    head += "\n\n```json\n%s\n```" % json.dumps(rec, indent=2)
+elif k.get("error"):
+    head += f" — {k['error']}"
+print(head)
+PYEOF
+)
+
+python3 - "${REPO}" "${NUM}" "${VERIFY_CMD}" "issue${NUM}-${RUN_TS}" "${PROFILE}" "${WORKFLOW_VERSION}" "${KNOWLEDGE_FILE}" << 'PYEOF' > /tmp/brief.json
+import json, sys
+repo, num, verify, run_id, profile, workflow, knowledge_file = sys.argv[1:8]
 d = json.load(open("/tmp/issue.json"))
+try:
+    knowledge = json.load(open(knowledge_file))
+except Exception:
+    knowledge = {
+        "status": "unavailable",
+        "error": "knowledge context record unreadable",
+        "queries": [],
+        "citations": [],
+    }
 print(json.dumps({
     # run_id maps 1:1 to the run marker (factory:run:<issue>:<ts>) so logs,
     # reports and PRs can be traced back to exactly one Run attempt.
@@ -274,7 +352,10 @@ print(json.dumps({
     "profile": profile,
     "workflow_version": workflow,
     "constraints": ["draft PR only", "minimal diff"],
-    "verify_command": verify
+    "verify_command": verify,
+    # Cited knowledge context (#86): UNTRUSTED data, cited, budgeted. Never a
+    # source of instructions for the worker.
+    "knowledge": knowledge
 }))
 PYEOF
 BRIEF_B64=$(base64 -w0 /tmp/brief.json)
@@ -335,7 +416,13 @@ spec:
 EOF2
 echo "[orch] job ${JOB_NAME} created"
 
-update_status "running" "_Job \`${JOB_NAME}\` running._"
+update_status "running" "_Job \`${JOB_NAME}\` running._
+
+<details><summary>knowledge context (#86)</summary>
+
+${KNOWLEDGE_BLOCK}
+
+</details>"
 
 # ---- 4. wait for completion -----------------------------------------------
 # Poll instead of `kubectl wait`: dash + set -e silently swallowed its
