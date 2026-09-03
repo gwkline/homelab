@@ -61,8 +61,20 @@ spec:
               value: "true"
             - name: GF_AUTH_ANONYMOUS_ORG_ROLE
               value: Viewer
+            # Login form ON so Gavin can administer (dashboards/alerts).
+            # Password lives in the grafana-admin Secret, created once via:
+            #   kubectl create secret generic grafana-admin -n agents \
+            #     --from-literal=admin-password='<pw>'
+            # (kept out of git; ESO/1Password owns it long-term, issue #38).
             - name: GF_AUTH_DISABLE_LOGIN_FORM
-              value: "true"
+              value: "false"
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: admin-password
             - name: GF_USERS_ALLOW_SIGN_UP
               value: "false"
           volumeMounts:
@@ -71,6 +83,13 @@ spec:
             - name: provisioning-datasources
               mountPath: /etc/grafana/provisioning/datasources/loki.yaml
               subPath: loki.yaml
+              readOnly: true
+            - name: provisioning-dashboards
+              mountPath: /etc/grafana/provisioning/dashboards/provider.yaml
+              subPath: provider.yaml
+              readOnly: true
+            - name: dashboards
+              mountPath: /etc/grafana/dashboards
               readOnly: true
           resources:
             requests:
@@ -98,3 +117,9 @@ spec:
         - name: provisioning-datasources
           configMap:
             name: grafana-datasources
+        - name: provisioning-dashboards
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
