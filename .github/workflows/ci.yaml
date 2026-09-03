@@ -160,6 +160,8 @@ jobs:
           - app: factory/orchestrator
           - app: factory/reviewer
           - app: factory/collector
+          - app: pg-textsearch
+            dockerfile: images/pg-textsearch/Dockerfile
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -190,7 +192,7 @@ jobs:
         id: push
         with:
           context: .
-          file: apps/${{ matrix.app }}/Dockerfile
+          file: ${{ matrix.dockerfile || format('apps/{0}/Dockerfile', matrix.app) }}
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
