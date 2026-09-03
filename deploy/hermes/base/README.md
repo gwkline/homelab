@@ -4,21 +4,12 @@ StatefulSet running the homelabby agent gateway. One replica, PVC-backed `/data`
 
 ## Persistent CLI state (#19)
 
-`HOME=/data/home` (on the PVC). Claude and Codex read/write their auth and
-session state directly under it:
+`HOME=/data/home` (on the PVC). Claude and Codex read/write their auth and session state directly under it:
 
 - `/data/home/.claude` — Claude CLI logins + sessions
 - `/data/home/.codex` — Codex CLI logins + sessions
 
-Both are persistent in place — no container-local `/home/node` copy and no
-write-back hook, so logins survive rollouts and nothing can be lost at
-shutdown. Old deployments snapshotted these dirs at `/data/agent-state` and
-restored them into container-local `/home/node` (never `$HOME`), losing
-logins on every rollout; `run-hermes.sh` migrates such a legacy snapshot
-into `/data/home` once (marker-guarded by `/data/home/.agent-state-migrated`,
-so a later logout isn't resurrected by the stale restore). Each boot writes
-a `.persistence-probe` marker into both dirs and logs when the previous
-boot's marker survived — restart persistence is visible in pod logs.
+Both are persistent in place — no container-local `/home/node` copy and no write-back hook, so logins survive rollouts and nothing can be lost at shutdown. Old deployments snapshotted these dirs at `/data/agent-state` and restored them into container-local `/home/node` (never `$HOME`), losing logins on every rollout; `run-hermes.sh` migrates such a legacy snapshot into `/data/home` once (marker-guarded by `/data/home/.agent-state-migrated`, so a later logout isn't resurrected by the stale restore). Each boot writes a `.persistence-probe` marker into both dirs and logs when the previous boot's marker survived — restart persistence is visible in pod logs.
 
 ## GitHub auth chain (zero human intervention)
 
