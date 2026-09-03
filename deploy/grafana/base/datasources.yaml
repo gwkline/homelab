@@ -1,0 +1,39 @@
+# Loki datasource provisioning for this Grafana (issue #44).
+#
+# Copy of the canonical definition in
+# deploy/loki/base/grafana-datasource.yaml, mounted as a provisioning file
+# at /etc/grafana/provisioning/datasources/loki.yaml (see deployment.yaml).
+# Kept as a file here instead of referencing the loki base's ConfigMap so
+# this kustomization stays self-contained. If the Loki URL or derived
+# fields change there, mirror them here.
+#
+# The derived fields are the "jump from a failed Job to its logs" path: any
+# log line carrying job_name="..." or pod="..." renders a link that opens
+# Explore pre-filtered to that run — no typing LogQL by hand.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: agents
+data:
+  loki.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki.agents.svc:3100
+        isDefault: false
+        editable: false
+        jsonData:
+          maxLines: 2000
+          derivedFields:
+            - name: Job run logs
+              matcherRegex: 'job_name="([^"]+)"'
+              datasourceUid: loki
+              url: '{job_name="${__value.raw}"}'
+            - name: Pod logs
+              matcherRegex: 'pod="([^"]+)"'
+              datasourceUid: loki
+              url: '{pod="${__value.raw}"}'
