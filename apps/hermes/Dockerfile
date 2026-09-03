@@ -19,24 +19,22 @@ RUN apt-get update \
   && chmod +x /usr/local/bin/kubectl \
   && rm /tmp/kubectl.sha256
 
-# gh CLI baked into the image: pinned to an exact release and verified
-# against the checksums.txt file published alongside it (Renovate bumps the
-# ARG; the next build re-verifies). Before this, gh only existed in the
-# agent's ad-hoc ~/bin on the PVC — a PVC wipe silently removed it, and
-# non-interactive shells couldn't see it, pushing the agent toward
-# hand-rolled credential exports (see run-hermes.sh scrub).
+# gh CLI baked into the image via the shared installer (apps/shared/
+# install-gh.sh): one strategy across t3code/hermes/loop-agent so the pin
+# and its checksum verification cannot drift between images (#23) — exact
+# release, sha256-verified against the checksums.txt published alongside it,
+# arch-detected at build time (amd64 today, arm64 if the base gains that
+# build). Renovate bumps the ARG; the next build re-verifies. Authentication
+# is runtime-only: GH_TOKEN/GITHUB_TOKEN arrive via the StatefulSet env
+# (secretKeyRef, deploy/github-tokens) — no token is baked into a layer.
+# Before gh was baked in, it only existed in the agent's ad-hoc ~/bin on
+# the PVC — a PVC wipe silently removed it, and non-interactive shells
+# couldn't see it, pushing the agent toward hand-rolled credential exports
+# (see run-hermes.sh scrub).
 # renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.+)$
 ARG GH_VERSION=2.98.0
-RUN gh_arch="amd64" \
-  && curl -fsSLo "/tmp/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" \
-      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" \
-  && (cd /tmp \
-      && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_checksums.txt" \
-          | grep "gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" | sha256sum -c -) \
-  && tar -xzf "/tmp/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" -C /tmp \
-  && mv "/tmp/gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh \
-  && rm -rf /tmp/* \
-  && gh --version
+COPY apps/shared/install-gh.sh /usr/local/lib/install-gh.sh
+RUN sh /usr/local/lib/install-gh.sh
 
 COPY apps/shared/workspace-lib.sh /usr/local/lib/workspace-lib.sh
 COPY apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
