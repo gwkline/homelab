@@ -47,6 +47,18 @@ RUN npm install -g \
   && ln -sf /opt/opencode-v2/bin/opencode /usr/local/bin/opencode-beta \
   && opencode-beta --version
 
+# gh CLI — installed by the shared installer (apps/shared/install-gh.sh):
+# one strategy across t3code/hermes/loop-agent so the pin and its
+# checksum verification cannot drift between images (#23). Renovate bumps
+# the ARG ("pinned build tools" group in renovate.json). Authentication is
+# runtime-only: the image carries no token — gh reads GH_TOKEN/GITHUB_TOKEN
+# from pod env (secretKeyRef, see deploy/github-tokens) or a mounted token
+# file via workspace-lib setup_gh_cli — never anything baked into a layer.
+# renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.+)$
+ARG GH_VERSION=2.98.0
+COPY apps/shared/install-gh.sh /usr/local/lib/install-gh.sh
+RUN sh /usr/local/lib/install-gh.sh
+
 # Cursor CLI — pinned lab release. Cursor publishes no checksum file, so the
 # SHA-256 of the exact tarball (per arch) was recorded when the pin was set
 # and is verified at build time; bump the version and both digests together.

@@ -4,6 +4,10 @@ set -eu
 
 . /usr/local/lib/workspace-lib.sh
 setup_git_auth
+# gh (baked into the image, see Dockerfile) authenticates runtime-only:
+# exports GH_TOKEN when a writer token file is mounted (GITHUB_WRITER_TOKEN_FILE);
+# a no-op otherwise — the image itself carries no credentials (#23).
+setup_gh_cli
 
 DATA_DIR="${DATA_DIR:-/data}"
 REPOS_DIR="${DATA_DIR}/repos"
