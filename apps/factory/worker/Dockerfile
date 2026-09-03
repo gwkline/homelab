@@ -90,7 +90,17 @@ RUN mkdir -p /task /out /work && chown -R node:node /task /out /work
 USER node
 WORKDIR /work
 
+COPY --chmod=755 --chown=node:node apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
 COPY --chmod=755 --chown=node:node apps/factory/worker/entrypoint.sh /usr/local/bin/entrypoint
 
+# Pinned private skills (#81): the entrypoint syncs these before the agent
+# runs. Defaults are reviewed image changes — bumping SKILLS_REF (full SHA,
+# verified by the sync) or SKILLS_ALLOWLIST is the opt-in update path; a Job
+# may override either via env. Status lands in /out/skills-sync.json and is
+# echoed into the run report.
+ENV SKILLS_REF=445e4255288732efb00c8878151610c2669f5e93 \
+    SKILLS_ALLOWLIST="software-development/homelab-k3s-ops software-development/poteto-mode" \
+    SKILLS_TARGET=/work/skills-generated \
+    SKILLS_STATUS_FILE=/out/skills-sync.json
 
 ENTRYPOINT ["/usr/local/bin/entrypoint"]

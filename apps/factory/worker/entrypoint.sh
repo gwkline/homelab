@@ -46,6 +46,28 @@ fi
 BRIEF="/task/brief.json"
 OUT="/out"
 
+# ---------------------------------------------------------------------------
+# Pinned private skills (#81): apps/shared/skills-lib.sh builds the generated
+# store at $SKILLS_TARGET from the pinned commit (SKILLS_REF, verified) with
+# only the allowlisted skill paths, then links into the coding CLIs' skill
+# dir. Auth is the read-only GH_TOKEN via throwaway GIT_ASKPASS — nothing
+# lands in Git config. Degrade explicitly on failure: loud warning, the run
+# continues WITHOUT private skills, and the status (recorded commit included)
+# lands in /out/skills-sync.json and the final run report.
+# ---------------------------------------------------------------------------
+. /usr/local/lib/skills-lib.sh
+SKILLS_SYNC_RC=0
+skills_sync || SKILLS_SYNC_RC=$?
+if [ "$SKILLS_SYNC_RC" -eq 0 ]; then
+  for _skills_dir in /home/node/.claude/skills; do
+    skills_link_generated "${SKILLS_TARGET}" "${_skills_dir}" \
+      || echo "[worker] WARNING: skills link into ${_skills_dir} incomplete" >&2
+  done
+  echo "[worker] skills-sync: $(cat "${SKILLS_STATUS_FILE}")"
+else
+  echo "[worker] WARNING: skills sync FAILED (rc=${SKILLS_SYNC_RC}) — continuing WITHOUT private skills (see ${SKILLS_STATUS_FILE})" >&2
+fi
+
 # Brief arrives via env (base64 JSON) or mounted file — support both.
 if [ -n "${FACTORY_BRIEF_B64:-}" ] && [ ! -f "${BRIEF}" ]; then
   mkdir -p /task
@@ -174,14 +196,20 @@ SUMMARY=$(tail -5 /tmp/task-prompt-output.log 2>/dev/null | head -c 500 || echo 
 
 python3 - "$TESTS" "$SUMMARY" "$BASE_SHA" "$RUN_ID" "$PROFILE" << 'EOF' > "${OUT}/report.json"
 import json, sys
-print(json.dumps({
+report = {
     "success": sys.argv[1] in ("passed", "no-command-configured"),
     "summary": sys.argv[2],
     "tests": sys.argv[1],
     "base_sha": sys.argv[3],
     "run_id": sys.argv[4],
     "profile": sys.argv[5],
-}, indent=2))
+}
+# Run metadata (#81): which private-skills commit this run was built with.
+try:
+    report["skills_sync"] = json.load(open("/out/skills-sync.json"))
+except Exception:
+    report["skills_sync"] = None
+print(json.dumps(report, indent=2))
 EOF
 
 cat "${OUT}/report.json"

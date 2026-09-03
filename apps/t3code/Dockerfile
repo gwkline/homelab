@@ -70,6 +70,7 @@ RUN ARCH="$(uname -m)" \
   && rm /tmp/cursor-agent.tar.gz
 
 COPY apps/shared/workspace-lib.sh /usr/local/lib/workspace-lib.sh
+COPY apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
 COPY apps/t3code/init-workspace.sh /usr/local/bin/init-workspace
 RUN chmod +x /usr/local/bin/init-workspace
 

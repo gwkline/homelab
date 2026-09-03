@@ -38,25 +38,54 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-        # Skills sync: clone gwkline/.dotfiles at SYNC_REF and run the repo's
-        # own `dot install` (allowlist manifest + secret scan) into
-        # $HERMES_HOME/skills. Degrades explicitly on failure (#81): records
-        # skills-sync/status.json and exits 0 — the gateway starts on stale
-        # skills rather than refusing to boot during a GitHub outage.
+        # Skills sync (#81): apps/shared/skills-lib.sh clones the private
+        # skills repo at the pinned commit from hermes-skills-sync (token
+        # answered via throwaway GIT_ASKPASS — nothing lands in Git config),
+        # verifies the pin, and installs only the allowlisted skill paths
+        # into the generated store $HERMES_HOME/skills-generated, then links
+        # them into $HERMES_HOME/skills. The link step only manages its own
+        # symlinks — a pre-existing real entry from the earlier `dot install`
+        # era is reported and left untouched (remove it manually once, if a
+        # collision is reported). Degrades explicitly on failure: records
+        # skills-sync/status.json and always exits 0 — the gateway starts on
+        # stale skills rather than refusing to boot during a GitHub outage;
+        # run-hermes.sh prints the fresh/stale line loudly at boot.
         - name: skills-sync
           image: ghcr.io/gwkline/homelab/hermes@sha256:af23d67fc4baf8821cb2e777dcf1892cdb98a5836ca7e5187b938562e7deda17
           imagePullPolicy: Always
-          command: ["/opt/hermes/.venv/bin/python3", "/config/skills-sync.py"]
+          command:
+            - sh
+            - -c
+            - |
+              if sh /usr/local/lib/skills-lib.sh; then
+                echo "[skills-sync] OK"
+              else
+                echo "[skills-sync] FAILED (degraded) — see ${HERMES_HOME}/skills-sync/status.json; pod continues on stale skills" >&2
+              fi
+              exit 0
           env:
+            - name: HOME
+              value: /tmp
             - name: HERMES_HOME
               value: /data/hermes
             - name: GITHUB_TOKEN_FILE
               value: /secrets/token
-            - name: SYNC_REF
+            - name: SKILLS_REF
               valueFrom:
                 configMapKeyRef:
                   name: hermes-skills-sync
                   key: ref
+            - name: SKILLS_ALLOWLIST
+              valueFrom:
+                configMapKeyRef:
+                  name: hermes-skills-sync
+                  key: allowlist
+            - name: SKILLS_TARGET
+              value: /data/hermes/skills-generated
+            - name: SKILLS_STATUS_FILE
+              value: /data/hermes/skills-sync/status.json
+            - name: SKILLS_LINK_DIRS
+              value: /data/hermes/skills
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -68,9 +97,6 @@ spec:
               mountPath: /data
             - name: github-token
               mountPath: /secrets
-              readOnly: true
-            - name: skills-sync-config
-              mountPath: /config
               readOnly: true
       containers:
         - name: hermes
@@ -153,12 +179,6 @@ spec:
         - name: guide
           configMap:
             name: hermes-cluster-guide
-        - name: skills-sync-config
-          configMap:
-            name: hermes-skills-sync
-            items:
-              - key: sync.py
-                path: skills-sync.py
   volumeClaimTemplates:
     - metadata:
         name: data

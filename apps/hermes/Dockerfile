@@ -39,6 +39,7 @@ RUN gh_arch="amd64" \
   && gh --version
 
 COPY apps/shared/workspace-lib.sh /usr/local/lib/workspace-lib.sh
+COPY apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
 COPY apps/hermes/run-hermes.sh /usr/local/bin/run-hermes
 COPY apps/hermes/check-skills-sync.sh /usr/local/bin/check-skills-sync
 RUN chmod +x /usr/local/bin/run-hermes /usr/local/bin/check-skills-sync
