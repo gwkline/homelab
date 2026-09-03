@@ -13,5 +13,7 @@ resources:
   - profile-security.yaml
   - profile-reviewer.yaml
   - orchestrator-cronjob.yaml
+  - orchestrator-launchpad-cronjob.yaml
   - security-cronjob.yaml
   - reviewer-cronjob.yaml
+  - reviewer-launchpad-cronjob.yaml
