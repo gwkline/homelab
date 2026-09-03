@@ -1,0 +1,30 @@
+# Cluster-scoped reads backing the panel's cluster card and per-namespace
+# pod views (apps/panel/server/index.ts): GET /api/v1/nodes (list) and GET
+# /api/v1/pods (list across all namespaces — the panel aggregates pod counts
+# by node and namespace itself). List-only: the panel never watches, never
+# reads a single pod or node, and calls no metrics.k8s.io or namespaces API.
+# None of these reads expose secret material.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: panel-cluster-viewer
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: panel-cluster-viewer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: panel-cluster-viewer
+subjects:
+  - kind: ServiceAccount
+    name: panel
+    namespace: agents

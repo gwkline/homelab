@@ -72,7 +72,12 @@ Run after `deploy/executor/base` exists and `executor-client` is provisioned:
    ```sh
    kubectl auth can-i create jobs.batch -n sandbox \
      --as=system:serviceaccount:agents:hermes   # expect: no
+   kubectl auth can-i patch cronjobs.batch -n agents \
+     --as=system:serviceaccount:agents:hermes   # expect: no
    ```
+   CronJob mutation is not required for hermes (#26): it reads CronJobs for
+   self-visibility only; schedule edits and suspend/resume belong to the
+   operator and the panel.
 3. **Conversational round-trip** — via the messaging gateway or `kubectl exec -it hermes-0 -n agents -- hermes`:
    - "List the factory RunProfiles." → `code-pr`, `reviewer`, `security`.
    - "Create a code-pr Run for issue <N> in <fixture repo>." → Executor raises an approval; approve it in the Executor UI; run enters `queued`.

@@ -1,23 +1,75 @@
 # Third deliberate exception to "pods cannot talk to Kubernetes": the panel
-# backend holds the same sandbox-Job verbs as dispatcher, under its own
-# identity, so the UI can list and launch runs. Read-only for everything
-# except Job creation. Also owns the GitHub token mount for the factory
-# manual-trigger (label queued + create Job from CronJob).
+# backend talks to the Kubernetes API under its own identity, scoped to
+# exactly the calls its server code makes (apps/panel/server/k8s.ts):
+#   - sandbox Jobs: list (state card), create (ad-hoc run + factory
+#     manual-trigger), delete (job cleanup) — no single-Job gets (views come
+#     from list), no patches
+#   - sandbox CronJobs: get (factory trigger clones the orchestrator
+#     jobTemplate), list (schedules card), patch (suspend/resume + schedule
+#     edit from the schedules card) — CronJob create/delete stay operator-only
+#   - Services in agents: get (dev tools health checks + tailnet DNS
+#     discovery from the panel's own LoadBalancer Service)
+# Cluster-wide pod/node reads live in ClusterRole panel-cluster-viewer
+# (cluster-viewer.yaml). No pod/log reads anywhere, no secret access, no
+# workload writes outside sandbox Jobs. The GitHub token mount for the
+# factory manual-trigger (label queued + create Job from CronJob) is a
+# secret mount, not RBAC.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: panel
   namespace: agents
 ---
+# Sandbox Job/CronJob surface — exactly the verbs apps/panel/server calls.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: panel-sandbox
+  namespace: sandbox
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete", "list"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "patch"]
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: panel-loop-manager
+  name: panel-sandbox
   namespace: sandbox
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: loop-manager
+  name: panel-sandbox
+subjects:
+  - kind: ServiceAccount
+    name: panel
+    namespace: agents
+---
+# Service reads for the dev tools catalog: every current call is a
+# single-Service get in `agents` (catalog health entries + the panel's own
+# Service). Read-only; no secrets, no proxying — the panel only links out.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: panel-services-viewer
+  namespace: agents
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: panel-services-viewer
+  namespace: agents
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: panel-services-viewer
 subjects:
   - kind: ServiceAccount
     name: panel

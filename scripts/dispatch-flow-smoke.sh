@@ -6,7 +6,8 @@
 #   1. the dispatch-watcher CronJob pod is specified to run as ServiceAccount
 #      `dispatcher`, any live watcher pod does too, and that identity holds
 #      exactly the RBAC deploy/dispatcher/base/rbac.yaml grants (Job
-#      lifecycle in sandbox + pod/log reads; secrets denied)
+#      create/get in sandbox — the watcher's calls; nothing else; secrets
+#      denied)
 #   2. one open `run-agent` issue makes the watcher list it and submit
 #      exactly one runnable sandbox Job
 #   3. the dispatched Job reaches Complete and its logs carry the issue
@@ -29,9 +30,10 @@
 #   DISPATCH_FLOW_JOB_WAIT=480  # dispatched-Job completion wait, seconds
 #
 # Requirements: kubectl with cluster-admin (RBAC probes impersonate the
-# dispatcher identity); deploy/hermes/base + deploy/dispatcher/base applied
-# (the dispatcher binds hermes' loop-manager Role; the netpol comes with the
-# dispatcher kustomization); the loop-agent image pullable in the cluster.
+# dispatcher identity); deploy/dispatcher/base applied (its rbac.yaml ships
+# the purpose-specific dispatcher Role — no hermes/base dependency since #26;
+# the netpol comes with the dispatcher kustomization); the loop-agent image
+# pullable in the cluster.
 # On failure prints RBAC checks, watcher logs and dispatched-Job events, and
 # keeps the artifacts for inspection:
 #   kubectl delete job dispatch-flow-smoke dispatched-issue-424242 \
@@ -64,14 +66,21 @@ can() {
 }
 
 # Every RBAC probe for the dispatcher identity; non-zero on drift.
+# Positives are the watcher's exact calls (examples/dispatch-watcher.mjs:
+# `kubectl get job` + `kubectl apply` of a new Job); everything else is a
+# negative probe — the dispatcher Role grants nothing else (#26).
 rbac_checks() {
   CAN_FAIL=0
   can create jobs.batch yes
   can get jobs.batch yes
-  can list jobs.batch yes
-  can delete jobs.batch yes
-  can get pods yes
-  can get pods/log yes
+  can list jobs.batch no
+  can patch jobs.batch no
+  can delete jobs.batch no
+  can get cronjobs.batch no
+  can patch cronjobs.batch no
+  can delete cronjobs.batch no
+  can get pods no
+  can get pods/log no
   can create secrets no
   can list secrets no
   [ "$CAN_FAIL" -eq 0 ]
@@ -134,7 +143,7 @@ else
 fi
 
 if rbac_checks; then
-  echo "  ok: dispatcher RBAC matches deploy/dispatcher/base/rbac.yaml (secrets denied)"
+  echo "  ok: dispatcher RBAC matches deploy/dispatcher/base/rbac.yaml (watcher verbs only; secrets denied)"
 else
   dump_diagnostics
   fail "dispatcher RBAC drift (see probes above)"
@@ -263,6 +272,16 @@ fi
 smoke_logs="$(kubectl logs "job/${SMOKE}" -n "$NS" --tail=-1 || true)"
 printf '%s\n' "$smoke_logs" | grep -q "DISPATCH FLOW SMOKE PASS" || {
   echo "FAIL: smoke pod completed without its pass marker — diagnostics follow" >&2
+  dump_diagnostics
+  exit 1
+}
+
+# The in-pod runner cannot read pod logs (the dispatcher identity is limited
+# to Job get/create), so the "logs carry the issue number" proof runs here,
+# with cluster credentials.
+dispatch_logs="$(kubectl logs "job/${JOB}" -n "$NS" --tail=-1 || true)"
+printf '%s\n' "$dispatch_logs" | grep -qF "issue ${ISSUE}: dispatch flow smoke passed" || {
+  echo "FAIL: dispatched Job ${JOB} logs missing the pass marker — diagnostics follow" >&2
   dump_diagnostics
   exit 1
 }

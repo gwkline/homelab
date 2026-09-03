@@ -5,8 +5,11 @@
 # the live cluster that:
 #   1. the first watcher run lists the fixture issue and dispatches exactly
 #      one runnable Job
-#   2. that Job reaches Complete and its logs carry the issue number
+#   2. that Job reaches Complete
 #   3. a second watcher run reports the existing dispatch and creates nothing
+# The dispatcher identity is limited to its documented calls (Job get/create
+# in sandbox, see deploy/dispatcher/base/rbac.yaml), so the "logs carry the
+# issue number" assertion runs host-side in scripts/dispatch-flow-smoke.sh.
 # Required env: SMOKE_ISSUE, SMOKE_JOB, SMOKE_NAMESPACE, SMOKE_WATCHER,
 # SMOKE_JOB_WAIT (numeric seconds), WATCHER_REPO. Only the GitHub API is
 # mocked (/smoke/gh); every kubectl call below is real.
@@ -50,7 +53,7 @@ wait_complete() {
   return 1
 }
 
-echo "==> [1/4] watcher run 1: list fixture issue #${ISSUE}, dispatch ${JOB}"
+echo "==> [1/3] watcher run 1: list fixture issue #${ISSUE}, dispatch ${JOB}"
 if ! node "$WATCHER" >/tmp/run1.log 2>&1; then
   cat /tmp/run1.log >&2
   fail "watcher run 1 exited non-zero (GitHub query or kubectl apply failed)"
@@ -64,25 +67,17 @@ if grep -qF "already dispatched" /tmp/run1.log; then
   fail "run 1 skipped ${JOB} as already dispatched (stale Job survived host cleanup)"
 fi
 
-echo "==> [2/4] dispatched Job ${JOB} must reach Complete (max ${JOB_WAIT}s)"
+echo "==> [2/3] dispatched Job ${JOB} must reach Complete (max ${JOB_WAIT}s)"
 if ! wait_complete "$JOB"; then
+  # Pod-level diagnostics need pod reads the dispatcher identity does not
+  # have; the host-side dump_diagnostics in dispatch-flow-smoke.sh prints
+  # them on failure.
   kubectl describe job "$JOB" -n "$NS" >&2 || true
-  kubectl get pods -n "$NS" -l "job-name=${JOB}" -o name 2>/dev/null |
-    while IFS= read -r dead_pod; do
-      [ -n "$dead_pod" ] || continue
-      kubectl logs -n "$NS" "$dead_pod" --tail=-1 >&2 || true
-    done
   fail "dispatched Job ${JOB} did not reach Complete within ${JOB_WAIT}s"
 fi
 echo "  Job ${JOB}: Complete"
 
-echo "==> [3/4] dispatched Job logs must include issue ${ISSUE}"
-job_logs="$(kubectl logs "job/${JOB}" -n "$NS" --tail=-1 2>/dev/null || true)"
-printf '%s\n' "$job_logs"
-printf '%s\n' "$job_logs" | grep -F "issue ${ISSUE}: dispatch flow smoke passed" >/dev/null ||
-  fail "dispatched Job logs missing 'issue ${ISSUE}: dispatch flow smoke passed'"
-
-echo "==> [4/4] watcher run 2: report the existing dispatch, create nothing"
+echo "==> [3/3] watcher run 2: report the existing dispatch, create nothing"
 if ! node "$WATCHER" >/tmp/run2.log 2>&1; then
   cat /tmp/run2.log >&2
   fail "watcher run 2 exited non-zero"
@@ -92,8 +87,7 @@ grep -F "skip ${JOB} (already dispatched)" /tmp/run2.log >/dev/null ||
   fail "run 2 did not report ${JOB} as already dispatched"
 grep -F "dispatched=0" /tmp/run2.log >/dev/null ||
   fail "run 2 dispatched again — duplicate Job!"
-job_count="$(kubectl get jobs -n "$NS" -o name 2>/dev/null | grep -Fxc "job/${JOB}" || true)"
-[ "$job_count" = "1" ] ||
-  fail "expected exactly 1 Job named ${JOB}, found ${job_count:-none}"
+kubectl get job "$JOB" -n "$NS" >/dev/null 2>&1 ||
+  fail "expected exactly 1 Job named ${JOB}, found none"
 
 echo "DISPATCH FLOW SMOKE PASS: issue #${ISSUE} -> one Complete Job (${JOB}); second watcher run dispatched nothing"

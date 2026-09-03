@@ -216,7 +216,7 @@ app.get("/api/state", async (c) => {
   }
 });
 
-// Cluster view: nodes, per-namespace pod counts, metrics.
+// Cluster view: nodes + cluster-wide pod counts (panel-cluster-viewer reads).
 app.get("/api/cluster", async (c) => {
   try {
     const [nodes, pods] = await Promise.all([

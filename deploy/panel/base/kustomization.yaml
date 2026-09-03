@@ -10,6 +10,6 @@ labels:
 
 resources:
   - rbac.yaml
-  - nodes-viewer.yaml
+  - cluster-viewer.yaml
   - deployment.yaml
   - service.yaml

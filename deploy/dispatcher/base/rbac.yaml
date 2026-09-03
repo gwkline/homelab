@@ -3,7 +3,11 @@
 # runs without a human in the loop. One principal, one auditable purpose.
 # (Hermes lost this write path in #82 — it now goes through Executor.)
 #
-# Depends on hermes/base being applied first (reuses its loop-manager Role).
+# Own Role since #26 (the shared loop-manager Role is gone). Scoped to
+# exactly the watcher's calls (examples/dispatch-watcher.mjs):
+# `kubectl get job <name>` for idempotence and `kubectl apply -f -` of a
+# new Job. No list, no patch, no delete (deduped Jobs expire via TTL),
+# no CronJob access, no pod/log reads — those belong to the operator.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -11,14 +15,24 @@ metadata:
   namespace: agents
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dispatcher
+  namespace: sandbox
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: dispatcher-loop-manager
+  name: dispatcher
   namespace: sandbox
 roleRef:
-  apiGroup: rbac.authorization.k8s.io/v1
+  apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: loop-manager
+  name: dispatcher
 subjects:
   - kind: ServiceAccount
     name: dispatcher

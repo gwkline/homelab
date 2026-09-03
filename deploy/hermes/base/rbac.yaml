@@ -1,9 +1,21 @@
 # Hermes' Kubernetes identity, after routing factory orchestration through
-# the Executor MCP gateway (#82): hermes no longer creates or deletes
-# Kubernetes workloads at all — factory work is requested via the governed
-# Executor tools (see executor.yaml + cluster-guide.yaml). What remains is
-# read-only and separately justified below. It cannot touch secrets, CRDs,
-# or other namespaces' workloads.
+# the Executor MCP gateway (#82): hermes no longer creates, patches, or
+# deletes Kubernetes workloads at all — factory work is requested via the
+# governed Executor tools (see executor.yaml + cluster-guide.yaml). What
+# remains is read-only and separately justified below. It cannot touch
+# secrets, CRDs, or other namespaces' workloads.
+#
+# Purpose-per-principal split (#26): this file no longer defines a shared
+# loop-manager Role. Each Kubernetes-talking principal owns one:
+#   - hermes:     the two read-only roles below (this file)
+#   - dispatcher: Role `dispatcher` (deploy/dispatcher/base/rbac.yaml)
+#   - panel:      Roles `panel-sandbox` + `panel-services-viewer` and
+#                 ClusterRole `panel-cluster-viewer` (deploy/panel/base/)
+# CronJob mutation is NOT required for hermes and is deliberately absent:
+# hermes reads CronJobs in `agents` for self-visibility only. Schedule
+# edits and suspend/resume belong to the operator (kubectl) and the panel's
+# documented schedules card (panel-sandbox grants cronjobs patch in
+# `sandbox`); no rule anywhere grants hermes a CronJob write.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -72,20 +84,3 @@ subjects:
   - kind: ServiceAccount
     name: hermes
     namespace: agents
----
-# Shared sandbox workload verbs for automation that still writes Jobs
-# directly (dispatcher, panel). Hermes is deliberately NOT bound to this
-# role anymore (#82): its factory orchestration goes through Executor,
-# which holds the Kubernetes credentials host-side.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: loop-manager
-  namespace: sandbox
-rules:
-  - apiGroups: ["batch"]
-    resources: ["jobs", "cronjobs"]
-    verbs: ["create", "get", "list", "watch", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["pods", "pods/log"]
-    verbs: ["get", "list", "watch"]
