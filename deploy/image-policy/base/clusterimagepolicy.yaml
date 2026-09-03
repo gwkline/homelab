@@ -1,0 +1,28 @@
+# ClusterImagePolicy for issue #91: only images from this repo's CI signing
+# workflow are admitted. The glob matches every image CI publishes; the
+# authority is the keyless Fulcio/Rekor identity of the one workflow that
+# signs (github.event_name == 'push' && refs/heads/main). Anything matching
+# this policy without that exact signature is rejected at admission; images
+# outside the glob (all third-party images) match no policy and are admitted
+# — see README.md and ADR-004 D3.
+#
+# Enforcement is opt-in per namespace: the webhook only intercepts namespaces
+# labeled policy.sigstore.dev/include=true (deploy/namespaces.yaml).
+apiVersion: policy.sigstore.dev/v1beta1
+kind: ClusterImagePolicy
+metadata:
+  name: homelab-images
+spec:
+  images:
+    - glob: "ghcr.io/gwkline/homelab/**"
+  authorities:
+    - keyless:
+        url: https://fulcio.sigstore.dev
+        identities:
+          # The OIDC `sub` claim of the signing job in
+          # .github/workflows/ci.yaml (build job, push to main only).
+          # Extend this list — never widen it — when a new workflow signs.
+          - issuer: https://token.actions.githubusercontent.com
+            subject: https://github.com/gwkline/homelab/.github/workflows/ci.yaml@refs/heads/main
+      ctlog:
+        url: https://rekor.sigstore.dev

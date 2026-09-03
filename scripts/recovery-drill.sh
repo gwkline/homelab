@@ -27,6 +27,10 @@ set -eu
 # deploy/tailscale/README.md and scripts/rebuild-check.sh section 7 are
 # tested against it. k3s itself is pinned at bootstrap time (bootstrap.sh).
 TS_CHART_VERSION=1.102.3
+# Pinned sigstore policy-controller chart (issue #91 / ADR-004): the
+# admission webhook that verifies cosign signatures on homelab images
+# (deploy/image-policy/base) before any workload pod is admitted.
+POLICY_CHART_VERSION=0.10.7
 
 POD_TIMEOUT=600s
 PROXY_TIMEOUT=480s
@@ -105,6 +109,20 @@ end_stage
 stage namespaces
 kubectl apply -f deploy/namespaces.yaml
 kubectl apply -k deploy/policies/base
+end_stage
+
+# ---------------------------------------------------------------------------
+# Image admission policy (issue #91 / ADR-004): the webhook must be in force
+# before the workload stage so every homelab pod is admitted only with a
+# verified signature. Namespaces first (they carry the include labels), then
+# controller, then the ClusterImagePolicy, then workloads.
+stage image-policy
+helm repo add sigstore https://sigstore.github.io/helm-charts >/dev/null 2>&1 || true
+helm upgrade --install policy-controller sigstore/policy-controller \
+  --namespace cosign-system --create-namespace \
+  --version "$POLICY_CHART_VERSION"
+kubectl -n cosign-system rollout status deploy/policy-controller-webhook --timeout="$PROXY_TIMEOUT"
+kubectl apply -k deploy/image-policy/base
 end_stage
 
 # ---------------------------------------------------------------------------
