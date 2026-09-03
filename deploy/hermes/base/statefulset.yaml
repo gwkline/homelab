@@ -108,6 +108,9 @@ spec:
             capabilities:
               drop: ["ALL"]
           env:
+            # HOME lives on the PVC (issue #19): the agent CLIs' auth/session
+            # state is /data/home/.claude and /data/home/.codex — persistent
+            # in place, no /home/node restore target and no write-back hook.
             - name: HOME
               value: /data/home
             - name: GITHUB_TOKEN_FILE
