@@ -67,10 +67,10 @@ export interface Bm25SearchOptions {
 
 /** Minimal pg-compatible client surface; satisfied by `pg` Pool/Client. */
 export interface Bm25DbClient {
-  query(
+  query: (
     text: string,
     params: unknown[]
-  ): Promise<{ rows: Array<Record<string, unknown>> }>;
+  ) => Promise<{ rows: Record<string, unknown>[] }>;
 }
 
 /** Parameterized SELECT text plus bind params for `client.query`. */
@@ -79,7 +79,7 @@ export interface Bm25SearchQuery {
   params: unknown[];
 }
 
-const INDEX_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const INDEX_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
 const validatedIndexName = (indexName: string | undefined): string => {
   const name = indexName ?? BM25_INDEX_NAME;
@@ -117,7 +117,7 @@ export const buildBm25SearchQuery = (
   const text = validatedQueryText(query);
   const indexName = validatedIndexName(options.indexName);
   const limit = validatedLimit(options.limit);
-  const literal = `'${indexName.replace(/'/g, "''")}'`;
+  const literal = `'${indexName.replaceAll('\'', "''")}'`;
   return {
     params: [text, limit],
     text: `SELECT "${BM25_ID_COLUMN}", "${BM25_COLUMN}", ("${BM25_COLUMN}" <@> to_bm25query($1, ${literal})) AS score FROM "${BM25_TABLE}" ORDER BY score ASC LIMIT $2`,
@@ -129,17 +129,17 @@ export const buildBm25SearchQuery = (
  * non-numeric score) rather than silently ranking garbage.
  */
 export const parseBm25Rows = (
-  rows: Array<Record<string, unknown>>
+  rows: Record<string, unknown>[]
 ): Bm25Hit[] =>
   rows.map((row, position) => {
     const id = row[BM25_ID_COLUMN];
     const content = row[BM25_COLUMN];
-    const score = row["score"];
+    const {score} = row;
     if (typeof id !== "string" || id.length === 0) {
       throw new Error(`bm25: row ${position} has no string id`);
     }
     if (typeof score !== "number" || !Number.isFinite(score)) {
-      throw new Error(`bm25: row ${position} has no numeric score`);
+      throw new TypeError(`bm25: row ${position} has no numeric score`);
     }
     return {
       content: typeof content === "string" ? content : "",

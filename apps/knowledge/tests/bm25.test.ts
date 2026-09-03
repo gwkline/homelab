@@ -13,7 +13,7 @@ import {
 import type { Bm25DbClient } from "../src/bm25.ts";
 
 const stubClient = (
-  rows: Array<Record<string, unknown>>,
+  rows: Record<string, unknown>[],
   seen: { text?: string; params?: unknown[] } = {}
 ): Bm25DbClient => ({
   query: (text: string, params: unknown[]) => {
@@ -52,18 +52,18 @@ test("builder accepts a custom index name, rejects injection", () => {
 
   assert.throws(
     () => buildBm25SearchQuery("q", { indexName: "docs; DROP TABLE docs;--" }),
-    /invalid index name/
+    /invalid index name/u
   );
 });
 
 test("builder rejects empty queries and bad limits without touching the db", () => {
   for (const bad of ["", "   "]) {
-    assert.throws(() => buildBm25SearchQuery(bad), /non-empty string/);
+    assert.throws(() => buildBm25SearchQuery(bad), /non-empty string/u);
   }
   for (const bad of [0, -3, 2.5, Number.NaN]) {
     assert.throws(
       () => buildBm25SearchQuery("q", { limit: bad }),
-      /limit must be an integer >= 1/
+      /limit must be an integer >= 1/u
     );
   }
 });
@@ -78,14 +78,14 @@ test("parseBm25Rows maps rows, coerces missing content, rejects bad rows", () =>
     { content: "", id: "b", score: -1.1 },
   ]);
 
-  assert.throws(() => parseBm25Rows([{ id: "a" }]), /no numeric score/);
+  assert.throws(() => parseBm25Rows([{ id: "a" }]), /no numeric score/u);
   assert.throws(
     () => parseBm25Rows([{ content: "x", id: "a", score: "high" }]),
-    /no numeric score/
+    /no numeric score/u
   );
   assert.throws(
     () => parseBm25Rows([{ content: "x", id: 7, score: -1 }]),
-    /no string id/
+    /no string id/u
   );
 });
 
@@ -93,7 +93,7 @@ test("searchBm25 returns hits best-first and sends the built query", async () =>
   const seen: { text?: string; params?: unknown[] } = {};
   const client = stubClient(
     [
-      { content: "best", id: "doc-1", score: -4.0 },
+      { content: "best", id: "doc-1", score: -4 },
       { content: "worse", id: "doc-2", score: -0.5 },
     ],
     seen
@@ -117,8 +117,8 @@ test("searchBm25 validates before issuing any query", async () => {
       return Promise.resolve({ rows: [] });
     },
   };
-  await assert.rejects(() => searchBm25(client, "   "), /non-empty string/);
-  await assert.rejects(() => searchBm25(client, "q", { limit: 0 }), /limit/);
+  await assert.rejects(() => searchBm25(client, "   "), /non-empty string/u);
+  await assert.rejects(() => searchBm25(client, "q", { limit: 0 }), /limit/u);
   assert.equal(calls, 0);
 });
 
@@ -153,7 +153,7 @@ test("integration path requires DATABASE_URL when env is empty", async () => {
   try {
     await assert.rejects(
       () => withBm25ClientFromEnv(() => Promise.resolve(0)),
-      /DATABASE_URL is not set/
+      /DATABASE_URL is not set/u
     );
   } finally {
     if (saved !== undefined) {
@@ -173,17 +173,19 @@ test(
     await withBm25ClientFromEnv(async (client) => {
       await ensureBm25Schema(client);
       await client.query("DELETE FROM docs WHERE id LIKE 'bm25-test-%'", []);
-      const seed: Array<[string, string]> = [
+      const seed: [string, string][] = [
         ["bm25-test-1", "wireless noise-cancelling headphones review"],
         ["bm25-test-2", "wired earbuds buying guide"],
         ["bm25-test-3", "retirement savings account basics"],
       ];
-      for (const [id, content] of seed) {
-        await client.query(
-          "INSERT INTO docs (id, content) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content",
-          [id, content]
-        );
-      }
+      await Promise.all(
+        seed.map(([id, content]) =>
+          client.query(
+            "INSERT INTO docs (id, content) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content",
+            [id, content]
+          )
+        )
+      );
 
       const hits = await searchBm25(client, "wireless headphones", {
         limit: 3,
