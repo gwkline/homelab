@@ -273,6 +273,13 @@ Applying the directory materializes Secret `backup-target` in `agents` with the 
 
 ### First backup and verification drill
 
+Before the first run, write a harmless non-secret canary into t3state (exec into the running t3code pod) — the scratch drill below uses it to prove that a file created in `/home/node/.t3` really round-trips the backup:
+
+```sh
+kubectl -n agents exec statefulset/t3code -c t3code -- \
+  sh -c 'echo "t3state-backup-marker $(date -u +%FT%TZ)" > /home/node/.t3/backup-marker'
+```
+
 Trigger a one-off run immediately (don't wait for 03:30):
 
 ```sh
@@ -363,7 +370,8 @@ spec:
               for marker in \
                 /restore/mnt/t3code/repos/homelab/README.md \
                 /restore/mnt/hermes/hermes/skills-sync/status.json \
-                /restore/mnt/t3state/environment-id; do
+                /restore/mnt/t3state/environment-id \
+                /restore/mnt/t3state/backup-marker; do
                 [ -s "$marker" ] || { echo "MISSING marker: $marker"; exit 1; }
                 echo "marker ok: $marker"
               done
@@ -389,7 +397,89 @@ kubectl -n agents logs job/scratch-restore | grep -E 'restored|marker'
 kubectl -n agents delete job scratch-restore
 ```
 
-The three markers are known non-secret files, one per source: the homelab repo's `README.md` (agent home dirs), `skills-sync/status.json` (hermes memory metadata), and `environment-id` (t3code's environment identifier — a UUID, not a credential). For proof beyond existence, `kubectl exec` into an interactive pod with the same scratch mount and `cat` exactly those three files — never anything else from the restored tree (it contains session tokens and private memory), and never into a ticket or log. The drill never overwrites live PVCs: it restores into an `emptyDir` that dies with the job.
+The four markers are known non-secret files, one per source: the homelab repo's `README.md` (agent home dirs), `skills-sync/status.json` (hermes memory metadata), `environment-id` (t3code's environment identifier — a UUID, not a credential), and `backup-marker` (the canary written into `/home/node/.t3` by the step above). For proof beyond existence, `kubectl exec` into an interactive pod with the same scratch mount and `cat` exactly those four files — never anything else from the restored tree: **the t3state snapshot carries pairing material and agent credentials** (browser pairings, session tokens), hermes carries private memory. Never paste restored contents into a ticket or log. The drill never overwrites live PVCs: it restores into an `emptyDir` that dies with the job.
+
+### Restoring a lost t3state PVC (snapshot contains credentials)
+
+The t3state snapshot holds environment identity, browser pairing material, sessions, and agent credentials — treat every copy of it like a credential dump: restore only into storage you control, never paste its contents into logs, tickets, or chat, and re-encrypt anything you keep.
+
+t3state is standalone PVC `t3state-t3code-0` in namespace `agents`, mounted at `/home/node/.t3` in the t3code pod. The backup job reads it at `/mnt/t3state`, and restic preserves that absolute path inside the snapshot (`/mnt/t3state/environment-id`, …). To land the restored files exactly on the new PVC root, the restore pod mounts the PVC at `/restore/mnt/t3state` and restores with `--target /restore` — snapshot path and mount path line up, no file shuffling:
+
+1. Stop t3code and recreate an empty PVC (skip the scale-down if the pod is already gone after the disk loss):
+
+   ```sh
+   kubectl -n agents scale statefulset/t3code --replicas=0
+   kubectl -n agents delete pvc t3state-t3code-0   # only if a stale PVC object still exists
+   kubectl apply -f deploy/t3code/base/t3state-pvc.yaml
+   ```
+
+2. Restore the latest `t3state` snapshot onto it:
+
+   ```sh
+   kubectl apply -f - <<'EOF'
+   apiVersion: batch/v1
+   kind: Job
+   metadata:
+     name: t3state-restore
+     namespace: agents
+   spec:
+     backoffLimit: 1
+     template:
+       metadata:
+         labels:
+           app: t3state-restore
+       spec:
+         restartPolicy: Never
+         automountServiceAccountToken: false
+         securityContext:
+           seccompProfile:
+             type: RuntimeDefault
+         containers:
+           - name: restic
+             image: restic/restic:0.18.0
+             command: ["sh", "-c"]
+             args:
+               - |
+                 set -eu
+                 restic restore --tag t3state latest --target /restore
+                 # environment-id must sit at the PVC root: the snapshot's
+                 # absolute /mnt/t3state path resolved onto the nested mount.
+                 [ -s /restore/mnt/t3state/environment-id ] || { echo "environment-id missing"; exit 1; }
+                 echo "t3state restored at PVC root: $(ls /restore/mnt/t3state)"
+             envFrom:
+               - secretRef:
+                   name: backup-target
+             volumeMounts:
+               # Nested mountPath: the snapshot stores the absolute backup path
+               # (/mnt/t3state/...), so this exact mount makes /restore/mnt/t3state
+               # the PVC root the StatefulSet mounts at /home/node/.t3.
+               - name: t3state
+                 mountPath: /restore/mnt/t3state
+             resources:
+               requests:
+                 cpu: "200m"
+                 memory: 256Mi
+               limits:
+                 memory: 1Gi
+         volumes:
+           - name: t3state
+             persistentVolumeClaim:
+               claimName: t3state-t3code-0
+   EOF
+   kubectl -n agents wait --for=condition=complete job/t3state-restore --timeout=30m
+   kubectl -n agents logs job/t3state-restore
+   kubectl -n agents delete job t3state-restore
+   ```
+
+   File ownership is preserved (uid/gid 1000, matching the pod's `runAsUser`), and the scheduler pins the job to the PVC's node via the local-path PV affinity — same assumption as the backup CronJob.
+
+3. Bring t3code back. Pairings, environment id, and sessions are intact — no re-pairing needed:
+
+   ```sh
+   kubectl -n agents scale statefulset/t3code --replicas=1
+   ```
+
+The same pattern restores any other source: use its tag and mount the fresh PVC at `/restore/mnt/<source>`.
 
 ### Rotation and replacement
 
@@ -399,7 +489,7 @@ The three markers are known non-secret files, one per source: the homelab repo's
 
 ### Retention
 
-The backup job prunes on every run: `restic forget --keep-daily 7 --keep-weekly 5 --keep-monthly 6 --prune`. That keeps the last 7 daily, 5 weekly, and 6 monthly snapshots per source and deletes unreferenced data from B2, so storage cost stays bounded. To change the policy, edit `deploy/backup/base/cronjob.yaml` and re-apply; to see what a change would delete without deleting, run `restic forget --keep-daily 7 --keep-weekly 5 --keep-monthly 6 --dry-run` in a `backup-snapshots`-style job.
+The backup job prunes on every run: `restic forget --group-by paths --keep-daily 7 --keep-weekly 5 --keep-monthly 6 --prune`. Snapshots are grouped by source path (`--group-by paths`) rather than restic's default host+paths grouping — every nightly run is a fresh pod with a unique hostname, so without this each snapshot would be its own retention group and nothing would ever prune. With it, the policy applies per source: the last 7 daily, 5 weekly, and 6 monthly snapshots of each of t3code, t3state, hermes, and executor are kept independently — the t3state snapshot is never confused with the repo data in the t3code snapshot — and unreferenced data is deleted from B2 so storage cost stays bounded. To change the policy, edit `deploy/backup/base/cronjob.yaml` and re-apply; to see what a change would delete without deleting, run `restic forget --group-by paths --keep-daily 7 --keep-weekly 5 --keep-monthly 6 --dry-run` in a `backup-snapshots`-style job.
 
 ### Recovering on a completely fresh machine
 
