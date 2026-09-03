@@ -46,7 +46,9 @@ spec:
             # t3code state (environment-id, pairings, sessions, agent creds).
             # Standalone PVC (not a VCT — those are immutable after creation)
             # so pairing survives pod replacement; without this, every rollout
-            # orphans the browser session.
+            # orphans the browser session. Contains credentials — backed up
+            # nightly (deploy/backup/base, tag `t3state`); restore recipe in
+            # runbook section 11.
             - name: t3state
               mountPath: /home/node/.t3
             - name: github-token
