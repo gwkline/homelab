@@ -15,6 +15,8 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      # 24h: finished Jobs GCd; live ledger is GitHub labels, not Job objects.
+      ttlSecondsAfterFinished: 86400
       activeDeadlineSeconds: 3900 # 65 min: covers 3600s worker + publish overhead
       backoffLimit: 0 # a failed tick stays failed — visible
       template:

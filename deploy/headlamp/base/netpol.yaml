@@ -45,9 +45,17 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    - to: # Kubernetes API
+    - to: # Kubernetes API: in-cluster ClusterIP AND the node IP the external
+        # kubeconfig uses. kube-router enforces netpol on the FORWARD path, and
+        # post-DNAT egress sees the node IP — allowing only 10.43.0.1 leaves
+        # the backend dialing 192.168.1.2:443 refused. Both ports: 443 is the
+        # ClusterIP service port, 6443 the node's API port.
         - ipBlock:
             cidr: 10.43.0.1/32
+        - ipBlock:
+            cidr: 192.168.1.2/32
       ports:
         - protocol: TCP
           port: 443
+        - protocol: TCP
+          port: 6443

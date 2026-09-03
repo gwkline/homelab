@@ -293,6 +293,8 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 3600
+  # 24h: worker Jobs GCd automatically; live ledger is GitHub labels, not Jobs.
+  ttlSecondsAfterFinished: 86400
   template:
     metadata:
       labels:
