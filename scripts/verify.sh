@@ -180,8 +180,27 @@ secret_exclusions=':!scripts/verify.sh :!deploy/loki/base/alloy.yaml :!apps/shar
 if git grep --untracked -nIE "$pattern" -- $secret_exclusions 2>/dev/null | grep .; then
   fail 'secret-looking string in working tree'
 fi
-if git grep -nIE "$pattern" "$(git rev-list --all)" -- $secret_exclusions 2>/dev/null | grep .; then
-  fail 'secret-looking string found in history'
+# History scan (#22): every reachable revision, one rev at a time (a quoted
+# `$(rev-list --all)` collapses to a single bogus revision and scans
+# nothing). Filenames only (-l) so findings never print secret contents.
+# git grep exit: 0 = match, 1 = clean, >=2 = scanner error (distinct failure).
+history_hits=""
+while IFS= read -r rev; do
+  [ -n "$rev" ] || continue
+  set +e
+  rev_hits="$(git grep -lIE "$pattern" "$rev" -- $secret_exclusions 2>/dev/null)"
+  rc=$?
+  set -e
+  if [ "$rc" -ge 2 ]; then
+    fail "history scan error at revision $rev (git grep exit $rc)"
+  elif [ "$rc" -eq 0 ]; then
+    history_hits="${history_hits}${rev}: ${rev_hits}
+"
+  fi
+done < <(git rev-list --all || fail 'cannot list reachable revisions')
+if [ -n "$history_hits" ]; then
+  printf '%s' "$history_hits" | head -n 20 >&2
+  fail 'secret-looking string found in history (revisions:filenames above)'
 fi
 
 echo '==> homelab image references match the published namespace'
