@@ -117,7 +117,7 @@ export const buildBm25SearchQuery = (
   const text = validatedQueryText(query);
   const indexName = validatedIndexName(options.indexName);
   const limit = validatedLimit(options.limit);
-  const literal = `'${indexName.replaceAll('\'', "''")}'`;
+  const literal = `'${indexName.replaceAll("'", "''")}'`;
   return {
     params: [text, limit],
     text: `SELECT "${BM25_ID_COLUMN}", "${BM25_COLUMN}", ("${BM25_COLUMN}" <@> to_bm25query($1, ${literal})) AS score FROM "${BM25_TABLE}" ORDER BY score ASC LIMIT $2`,
@@ -128,13 +128,11 @@ export const buildBm25SearchQuery = (
  * Map raw driver rows to hits. Throws on malformed rows (missing id or
  * non-numeric score) rather than silently ranking garbage.
  */
-export const parseBm25Rows = (
-  rows: Record<string, unknown>[]
-): Bm25Hit[] =>
+export const parseBm25Rows = (rows: Record<string, unknown>[]): Bm25Hit[] =>
   rows.map((row, position) => {
     const id = row[BM25_ID_COLUMN];
     const content = row[BM25_COLUMN];
-    const {score} = row;
+    const { score } = row;
     if (typeof id !== "string" || id.length === 0) {
       throw new Error(`bm25: row ${position} has no string id`);
     }
