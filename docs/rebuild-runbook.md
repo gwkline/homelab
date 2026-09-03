@@ -87,23 +87,23 @@ kubectl apply -k deploy/factory/base       # unattended issue -> draft PR factor
 
 # 4b. HTTPS for tailscale-proxied services (one-time tailnet approval already
 # granted; re-run after operator reinstall or proxy pod replacement)
-./scripts/serve-https.sh                   # t3code
+./scripts/serve-https.sh                   # t3code: converges https://... (443) at the current pod IP
 # Automatic self-healing: the t3code serve-fixer (deploy/tailscale/) runs a
-# loop in the tailscale namespace that re-points the serve entry at the app
-# pod's current IP within ~30s of a pod replacement, logging one line per
-# check; unreachable proxy pods fail loudly (container restarts, error in
-# `kubectl logs -n tailscale deploy/t3code-serve-fixer`). panel — or any
+# loop in the tailscale namespace that execs that same script every ~30s, so
+# a pod replacement re-points the HTTPS handler at the new pod IP within
+# ~60s; every check logs one line, failures included
+# (`kubectl logs -n tailscale deploy/t3code-serve-fixer`). panel — or any
 # exposed app: serve-refresh.sh <app> <namespace>.
 # Also the one-command fix whenever a replaced app pod leaves its serve
-# entry pointing at a dead IP (502s): it re-points the entry at the current
-# pod IP, idempotently, printing serve status before/after.
+# entry pointing at a dead IP (502s): it re-points the HTTPS entry at the
+# current pod IP, idempotently.
 ./scripts/serve-refresh.sh panel agents
 
 # 5. wait & verify
 kubectl get pods -A -w
 # TAILNET_NAME is the one documented tailnet config value
 # (deploy/tailscale/README.md); scripts/serve-https.sh auto-discovers it.
-curl -s -o /dev/null -w "%{http_code}\n" "http://t3code-0.${TAILNET_NAME:-<tailnet>}/"
+curl -s -o /dev/null -w "%{http_code}\n" "https://t3code-0.${TAILNET_NAME:-<tailnet>}/"
 ```
 
 Fetch the kubeconfig to the driver (server runbook §4), confirm `kubectl get nodes` is Ready, and export the four credentials from section 1.
