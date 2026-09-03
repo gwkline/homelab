@@ -1,6 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Tailscale stack (issue #43): the namespace, the operator's 1Password-backed
+# OAuth Secret (operator-oauth) and the serve-fixer workarounds. The operator
+# itself is helm-installed with deploy/tailscale/values.yaml (issue #43).
+
 labels:
   - pairs:
       app.kubernetes.io/part-of: homelab
@@ -8,6 +12,9 @@ labels:
     includeSelectors: false
 
 resources:
+  - namespace.yaml
+  - secretstore.yaml
+  - operator-oauth.yaml
   - serve-fixer.yaml
   - serve-fixer-cm.yaml
   - panel-serve-fixer.yaml
