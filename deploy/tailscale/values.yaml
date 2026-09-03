@@ -1,0 +1,27 @@
+# Pinned helm values for the Tailscale Kubernetes operator (chart 1.102.3).
+#
+# OAuth values are NEVER set here or via --set. With oauth.clientId /
+# oauth.clientSecret left empty the chart creates no Secret and mounts the
+# pre-created Secret `operator-oauth` into the operator at /oauth (env
+# CLIENT_ID_FILE=/oauth/client_id, CLIENT_SECRET_FILE=/oauth/client_secret).
+# That Secret is synced from the 1Password homelab vault by
+# deploy/tailscale/operator-oauth.yaml (issue #43).
+#
+# Behaviour verified against the chart v1.102.3 templates
+# (tailscale/tailscale, cmd/k8s-operator/deploy/chart):
+#   - templates/deployment.yaml sets PROXY_TAGS from proxyConfig.defaultTags
+#     (chart default "tag:k8s"), so the value below is the supported
+#     override — it replaces the old out-of-band
+#     `kubectl set env deploy/operator PROXY_TAGS=...` workaround.
+#   - operatorConfig.defaultTags maps to OPERATOR_INITIAL_TAGS (the operator
+#     device's own tag) and does NOT touch proxy tags.
+#   - operatorConfig.extraEnv is appended after the fixed env block, so
+#     putting PROXY_TAGS there creates a duplicate env entry (failed release).
+oauth:
+  clientId: ""
+  clientSecret: ""
+
+proxyConfig:
+  # Every operator-provisioned proxy device gets this tag; the OAuth client
+  # and the tailnet tagOwners policy must own it (see README.md).
+  defaultTags: "tag:k8s-operator"

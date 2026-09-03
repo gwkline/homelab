@@ -1,0 +1,45 @@
+# Operator OAuth credential, synced from 1Password into the exact Secret
+# shape the pinned chart (1.102.3) consumes: Secret `operator-oauth` with
+# keys `client_id` + `client_secret`, mounted at /oauth (CLIENT_ID_FILE /
+# CLIENT_SECRET_FILE). This is the chart's existing-Secret mode — used by
+# leaving oauth.clientId/clientSecret unset in deploy/tailscale/values.yaml;
+# the chart only creates `operator-oauth` itself when oauth.clientId is set.
+#
+# 1Password item contract (issue #43):
+#   vault:  homelab
+#   item:   tailscale-operator-oauth   fields: client_id, client_secret
+#   scopes: Devices/Core + Auth Keys read-or-modify, Routes read (README.md)
+#   tags:   the client must be created WITH tag:k8s-operator (cannot be
+#           added later; regenerate the client if missed)
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: operator-oauth
+  namespace: tailscale
+spec:
+  # Rotation in 1Password reaches the cluster within this interval (plus a
+  # ~5m provider cache); restart the operator to re-read the mounted Secret
+  # (rotation drill in README.md).
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: onepassword
+  target:
+    # Must match the Secret name hardcoded in the chart's deployment template.
+    name: operator-oauth
+    # ESO owns the Secret: manual edits are reconciled back to vault state.
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        # Trim guards against a trailing newline in the 1Password field — a
+        # newline in the credential breaks operator auth.
+        client_id: "{{ .client_id | trim }}"
+        client_secret: "{{ .client_secret | trim }}"
+  data:
+    - secretKey: client_id
+      remoteRef:
+        key: tailscale-operator-oauth/client_id
+    - secretKey: client_secret
+      remoteRef:
+        key: tailscale-operator-oauth/client_secret

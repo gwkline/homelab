@@ -56,25 +56,28 @@ git clone https://github.com/gwkline/homelab.git && cd homelab
 
 # 0. node ready per above
 
-# 1. CRDs/operator for tailscale
+# 1. secrets infra: External Secrets Operator (issue #41) + the one
+#    hand-entered 1Password bootstrap token (env/stdin, never logged)
+kubectl -n agents create secret generic onepassword-service-account \
+  --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"   # repeat for sandbox and tailscale
+kubectl apply -k deploy/github-tokens/base       # syncs github-token(+writer) from 1Password
+
+# 2. namespaces + policies (before deploy/tailscale — its serve-fixer RBAC
+#    reaches into agents)
+kubectl apply -f deploy/namespaces.yaml
+kubectl apply -k deploy/policies/base
+
+# 3. tailscale operator: credentials synced from 1Password, then helm with
+#    the pinned values file — never --set oauth.* (issue #43)
+kubectl apply -k deploy/tailscale                # ns + SecretStore + ExternalSecret -> Secret operator-oauth; serve-fixer
 helm repo add tailscale https://pkgs.tailscale.com/helmcharts
 helm upgrade --install tailscale-operator tailscale/tailscale-operator \
-  -n tailscale --create-namespace \
-  --set oauth.clientId="$TS_CLIENT_ID" \
-  --set oauth.clientSecret="$TS_CLIENT_SECRET"
+  --version 1.102.3 -n tailscale --create-namespace \
+  -f deploy/tailscale/values.yaml
 kubectl -n tailscale set env deploy/operator PROXY_TAGS=tag:k8s-operator  # chart bug workaround (documented)
 kubectl rollout restart deploy/operator -n tailscale
 
-# 2. secrets: bootstrap the 1Password service-account token (env/stdin,
-#    never logged), then everything else is declarative
-kubectl -n agents create secret generic onepassword-service-account \
-  --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"   # repeat for sandbox
-kubectl apply -k deploy/github-tokens/base       # syncs github-token(+writer) from 1Password
-
-# 3. workloads
-kubectl apply -f deploy/namespaces.yaml
-kubectl apply -k deploy/policies/base
-kubectl apply -k deploy/tailscale          # serve-fixer
+# 4. workloads
 kubectl apply -k deploy/t3code/base
 kubectl apply -k deploy/hermes/base
 kubectl apply -k deploy/loop-agent/base
@@ -82,7 +85,7 @@ kubectl apply -k deploy/panel/base         # admin portal (https://panel.$TAILNE
 kubectl apply -k deploy/headlamp/base      # k8s web UI (https://headlamp.$TAILNET_NAME)
 kubectl apply -k deploy/factory/base       # unattended issue -> draft PR factory
 
-# 3b. HTTPS for tailscale-proxied services (one-time tailnet approval already
+# 4b. HTTPS for tailscale-proxied services (one-time tailnet approval already
 # granted; re-run after operator reinstall or proxy pod replacement)
 ./scripts/serve-https.sh                   # t3code
 # Automatic self-healing: the t3code serve-fixer (deploy/tailscale/) runs a
@@ -96,7 +99,7 @@ kubectl apply -k deploy/factory/base       # unattended issue -> draft PR factor
 # pod IP, idempotently, printing serve status before/after.
 ./scripts/serve-refresh.sh panel agents
 
-# 4. wait & verify
+# 5. wait & verify
 kubectl get pods -A -w
 # TAILNET_NAME is the one documented tailnet config value
 # (deploy/tailscale/README.md); scripts/serve-https.sh auto-discovers it.

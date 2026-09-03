@@ -1,0 +1,7 @@
+# The kustomization is self-contained so a clean cluster can materialize the
+# operator credentials (SecretStore + ExternalSecret -> Secret operator-oauth)
+# before the helm install, whose operator Deployment mounts that Secret.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tailscale
