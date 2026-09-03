@@ -1,0 +1,100 @@
+# Grafana — log/metrics UI over the Loki stack (issue #44).
+#
+# Single replica, anonymous Viewer behind the tailnet (tailnet identity is
+# the auth gate; read-only posture mirrors headlamp). The Loki datasource is
+# provisioned from datasources.yaml in this directory — a copy of the
+# canonical definition in deploy/loki/base/grafana-datasource.yaml, mounted
+# as a file so Grafana picks it up without a sidecar. Dashboards are
+# ephemeral (emptyDir); provisioning is the source of truth.
+#
+# Image is digest-pinned (tag + digest together); bump deliberately.
+# Runs as uid 1000 (repo convention): GF_PATHS_* below keep every writable
+# path inside the data emptyDir, since the image's baked-in dirs
+# (/var/log/grafana, root-owned) are not writable by uid 1000.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1000
+      containers:
+        - name: grafana
+          # grafana/grafana:13.2.1 (multi-arch manifest, 2026-09-02).
+          image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: GF_PATHS_DATA
+              value: /var/lib/grafana
+            - name: GF_PATHS_LOGS
+              value: /var/lib/grafana/log
+            - name: GF_PATHS_PLUGINS
+              value: /var/lib/grafana/plugins
+            - name: GF_PATHS_PROVISIONING
+              value: /etc/grafana/provisioning
+            # Read-only UI behind the tailnet: anonymous Viewer, no login
+            # form. To enable management, flip DISABLE_LOGIN_FORM and set
+            # GF_SECURITY_ADMIN_PASSWORD from a Secret.
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Viewer
+            - name: GF_AUTH_DISABLE_LOGIN_FORM
+              value: "true"
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+            - name: provisioning-datasources
+              mountPath: /etc/grafana/provisioning/datasources/loki.yaml
+              subPath: loki.yaml
+              readOnly: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 30
+      volumes:
+        # Dashboards/preferences are ephemeral; the Loki datasource is
+        # provisioned (datasources.yaml), so core function survives restarts.
+        - name: data
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: provisioning-datasources
+          configMap:
+            name: grafana-datasources
