@@ -18,3 +18,12 @@ spec:
       ports:
         - protocol: TCP
           port: 3773
+    # Homepage siteMonitor (issue #14): the only in-cluster path to :3773 —
+    # pod-scoped, so other agents pods stay denied by default-deny-ingress.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: homepage
+      ports:
+        - protocol: TCP
+          port: 3773
