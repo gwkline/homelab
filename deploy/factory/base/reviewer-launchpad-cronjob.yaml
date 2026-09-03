@@ -1,15 +1,17 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: factory-collector
+  name: factory-reviewer-launchpad
   namespace: sandbox
   labels:
     app.kubernetes.io/part-of: homelab
-    factory.gwkline.io/component: collector
+    factory.gwkline.io/component: reviewer
 spec:
-  # Every open issue in the allowlisted repos enters the factory unless it is
-  # already in a terminal or active factory state.
-  schedule: "5 * * * *"
+  # Reviewer instance for gwkline/launchpad factory PRs (branch convention
+  # factory/issue-<N>/<profile>). Same policy as homelab: CI-as-gate
+  # auto-merge, factory-authored PRs only, green checks required.
+  # Staggered off the homelab reviewer (35,55) and collector (:05).
+  schedule: "15,45 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -21,30 +23,30 @@ spec:
       template:
         metadata:
           labels:
-            factory.gwkline.io/profile: collector
+            factory.gwkline.io/profile: reviewer
         spec:
           restartPolicy: Never
-          serviceAccountName: factory-collector
+          serviceAccountName: factory-reviewer
           automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
             seccompProfile: { type: RuntimeDefault }
           containers:
-            - name: collector
-              image: ghcr.io/gwkline/homelab/factory/collector@sha256:5a81fa42375a15522764a25d79f9fa0a4d9d101db48ea55456704639aec7e1b5
+            - name: reviewer
+              image: ghcr.io/gwkline/homelab/factory/reviewer:latest
               imagePullPolicy: Always
               env:
-                - name: FACTORY_REPOS
-                  value: gwkline/homelab,gwkline/launchpad
-                - name: GH_CONFIG_DIR
-                  value: /tmp/gh
-                - name: FACTORY_COLLECTOR_DRY_RUN
-                  value: "false"
+                - name: FACTORY_REPO
+                  value: gwkline/launchpad
                 - name: GH_TOKEN
                   valueFrom:
                     secretKeyRef:
                       { name: github-token, key: token, optional: false }
+                # Write path — same as homelab: CI-as-gate auto-merge
+                # (factory-authored PRs, green checks required).
+                - name: FACTORY_REVIEWER_AUTO_MERGE
+                  value: "true"
               resources:
                 requests: { cpu: 100m, memory: 128Mi }
                 limits: { cpu: 500m, memory: 512Mi }
@@ -56,28 +58,3 @@ spec:
                 - { name: tmp, mountPath: /tmp }
           volumes:
             - { name: tmp, emptyDir: {} }
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: factory-collector
-  namespace: sandbox
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: factory-collector
-  namespace: sandbox
-rules: []
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: factory-collector
-  namespace: sandbox
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: factory-collector
-subjects:
-  - { kind: ServiceAccount, name: factory-collector, namespace: sandbox }
