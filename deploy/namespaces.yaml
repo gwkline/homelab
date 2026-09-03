@@ -7,6 +7,11 @@ metadata:
     pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/audit: baseline
+    # Opt this namespace into image-signature verification at admission
+    # (sigstore policy-controller, issue #91 / ADR-004). Only namespaces
+    # with this label are intercepted by the webhook; the policy itself
+    # lives in deploy/image-policy/base.
+    policy.sigstore.dev/include: "true"
 ---
 # Loop agents live here because nested Docker requires a privileged dind
 # sidecar. Isolating them in their own namespace keeps the blast radius of
@@ -19,6 +24,8 @@ metadata:
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/audit: baseline
+    # Image-signature verification opt-in (see the agents namespace note).
+    policy.sigstore.dev/include: "true"
 ---
 # Dedicated namespace for the PostgreSQL cluster (deploy/postgres). Restricted
 # PSA works because CloudNativePG's default pod security context already runs

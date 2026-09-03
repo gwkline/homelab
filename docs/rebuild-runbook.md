@@ -33,6 +33,7 @@ No hidden state is copied from the existing cluster. The only crossers are the d
 | --- | --- | --- |
 | k3s | `v1.36.4+k3s1` | `bootstrap/bootstrap.sh` default (`K3S_VERSION` overrides for deliberate upgrades; formal pin/verify/upgrade policy: issue #29) |
 | Tailscale operator chart | `1.102.3` | `scripts/recovery-drill.sh` (`TS_CHART_VERSION`); the PROXY_TAGS workaround in [deploy/tailscale/README.md](../deploy/tailscale/README.md) is tested against this chart |
+| Sigstore policy-controller chart | `0.10.7` | `scripts/recovery-drill.sh` (`POLICY_CHART_VERSION`); the ClusterImagePolicy it verifies against lives in [deploy/image-policy/base](../deploy/image-policy/base/README.md) (issue #91, ADR-004) |
 | tailscaled (host package) | latest stable via install.sh | **unpinned — known gap**, owned by issue #29 |
 
 `bootstrap/bootstrap.sh` is the root node entry point; `scripts/recovery-drill.sh` is the root cluster entry point (it runs the documented apply order — until issue #20 replaces it with a root Kustomization, the script is that order's source of truth).
@@ -66,6 +67,18 @@ kubectl apply -k deploy/github-tokens/base       # syncs github-token(+writer) f
 #    reaches into agents)
 kubectl apply -f deploy/namespaces.yaml
 kubectl apply -k deploy/policies/base
+
+# 2b. image admission policy (issue #91 / ADR-004): the sigstore
+#     policy-controller webhook must be in force BEFORE workloads are
+#     applied — it admits pods only when the exact digest of a
+#     ghcr.io/gwkline/homelab/** image carries a signature from this repo's
+#     CI workflow. Namespaces above carry the include labels; break-glass
+#     and failure behavior: deploy/image-policy/base/README.md
+helm repo add sigstore https://sigstore.github.io/helm-charts
+helm upgrade --install policy-controller sigstore/policy-controller \
+  --version 0.10.7 -n cosign-system --create-namespace
+kubectl -n cosign-system rollout status deploy/policy-controller-webhook
+kubectl apply -k deploy/image-policy/base
 
 # 3. tailscale operator: credentials synced from 1Password, then helm with
 #    the pinned values file — never --set oauth.* (issue #43)
@@ -114,7 +127,7 @@ Fetch the kubeconfig to the driver (server runbook §4), confirm `kubectl get no
 ./scripts/recovery-drill.sh --from "$DRILL_START"
 ```
 
-The script runs and times every stage — operator (pinned chart + PROXY_TAGS workaround), namespaces/policies, secrets (1Password SA token + github-tokens sync), workloads (t3code, hermes, loop-agent, homepage, panel, dispatcher, factory), pods-ready, HTTPS (serve-https + serve-refresh + curl checks for t3code-0 and panel), and the `scripts/rebuild-check.sh` smoke sweep — then prints per-stage times and the total RTO. A failed stage fails the drill; the fix must land as a runbook step or follow-up issue before the next attempt (known warnings it emits are listed in section 6).
+The script runs and times every stage — operator (pinned chart + PROXY_TAGS workaround), namespaces/policies, image policy (policy-controller + ClusterImagePolicy, before workloads), secrets (1Password SA token + github-tokens sync), workloads (t3code, hermes, loop-agent, homepage, panel, dispatcher, factory), pods-ready, HTTPS (serve-https + serve-refresh + curl checks for t3code-0 and panel), and the `scripts/rebuild-check.sh` smoke sweep — then prints per-stage times and the total RTO. A failed stage fails the drill; the fix must land as a runbook step or follow-up issue before the next attempt (known warnings it emits are listed in section 6).
 
 ### Step 2 — PVC state: restore from B2 or intentionally recreate
 
