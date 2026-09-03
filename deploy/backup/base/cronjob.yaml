@@ -15,7 +15,9 @@
 #
 # Repos themselves are not precious (git re-clones); agent home dirs, hermes
 # memory, t3code's own state (pairings, environment-id, sessions),
-# and executor state are.
+# and executor state are. The t3state snapshot additionally carries agent
+# credentials and browser pairing material — the restic repository password
+# is the only thing protecting it, so treat every restored copy as secret.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -42,7 +44,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: restic
-              image: restic/restic:0.18.0
+              image: restic/restic:0.18.0@sha256:4cf4a61ef9786f4de53e9de8c8f5c040f33830eb0a10bf3d614410ee2fcb6120
               # Idempotent: initializes the repo on first ever run, then
               # snapshots + prunes every night. Each source gets its own tag
               # so snapshots are independently restorable and identifiable.
@@ -56,7 +58,12 @@ spec:
                     echo "==> backing up ${dir}"
                     restic backup "$dir" --tag "$(basename "$dir")"
                   done
-                  restic forget --keep-daily 7 --keep-weekly 5 --keep-monthly 6 --prune
+                  # Group retention by source path, not by the pod's per-run
+                  # hostname restic would otherwise group by: every run is a
+                  # fresh pod name, so without this each snapshot is its own
+                  # group and nothing ever prunes. Keeps the policy per source
+                  # — t3state stays distinct from the repo data in /mnt/t3code.
+                  restic forget --group-by paths --keep-daily 7 --keep-weekly 5 --keep-monthly 6 --prune
                   echo "==> backup complete"
               envFrom:
                 - secretRef:

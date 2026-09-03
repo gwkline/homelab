@@ -32,7 +32,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: collector
-              image: ghcr.io/gwkline/homelab/factory/collector:latest
+              image: ghcr.io/gwkline/homelab/factory/collector@sha256:5a81fa42375a15522764a25d79f9fa0a4d9d101db48ea55456704639aec7e1b5
               imagePullPolicy: Always
               env:
                 - name: FACTORY_REPOS

@@ -22,7 +22,7 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: t3code
-          image: ghcr.io/gwkline/homelab/t3code
+          image: ghcr.io/gwkline/homelab/t3code@sha256:44eadb74b150da72ea43d4210edab86e0d6759f49763a8354999a665d56231bd
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -46,7 +46,9 @@ spec:
             # t3code state (environment-id, pairings, sessions, agent creds).
             # Standalone PVC (not a VCT — those are immutable after creation)
             # so pairing survives pod replacement; without this, every rollout
-            # orphans the browser session.
+            # orphans the browser session. Contains credentials — backed up
+            # nightly (deploy/backup/base, tag `t3state`); restore recipe in
+            # runbook section 11.
             - name: t3state
               mountPath: /home/node/.t3
             - name: github-token
@@ -68,7 +70,7 @@ spec:
         # Runs as root only to fix volume ownership, then exits. Main
         # containers run as uid 1000 regardless of provisioner fsGroup support.
         - name: volume-init
-          image: busybox:1.36
+          image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
           command: ["chown", "-R", "1000:1000", "/data"]
           securityContext:
             allowPrivilegeEscalation: false
@@ -78,6 +80,60 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+        # Skills sync (#81): apps/shared/skills-lib.sh clones the private
+        # skills repo at the pinned commit from t3code-skills-sync (token
+        # answered via throwaway GIT_ASKPASS — nothing lands in Git config),
+        # verifies the pin, and installs only the allowlisted skill paths
+        # into the generated store /data/skills-generated. Linking into the
+        # CLIs' skill dirs happens in init-workspace.sh AFTER the agent-state
+        # restore, so a snapshot file can never write through a fresh sync
+        # symlink. Degrades explicitly on failure: records
+        # /data/skills-sync/status.json and always exits 0 — the server
+        # starts on stale skills; init-workspace.sh prints the warning.
+        - name: skills-sync
+          image: ghcr.io/gwkline/homelab/t3code
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -c
+            - |
+              if sh /usr/local/lib/skills-lib.sh; then
+                echo "[skills-sync] OK"
+              else
+                echo "[skills-sync] FAILED (degraded) — see ${SKILLS_STATUS_FILE}; pod continues on stale skills" >&2
+              fi
+              exit 0
+          env:
+            - name: HOME
+              value: /tmp
+            - name: GITHUB_TOKEN_FILE
+              value: /secrets/token
+            - name: SKILLS_REF
+              valueFrom:
+                configMapKeyRef:
+                  name: t3code-skills-sync
+                  key: ref
+            - name: SKILLS_ALLOWLIST
+              valueFrom:
+                configMapKeyRef:
+                  name: t3code-skills-sync
+                  key: allowlist
+            - name: SKILLS_TARGET
+              value: /data/skills-generated
+            - name: SKILLS_STATUS_FILE
+              value: /data/skills-sync/status.json
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: github-token
+              mountPath: /secrets
+              readOnly: true
       volumes:
         - name: github-token
           secret:

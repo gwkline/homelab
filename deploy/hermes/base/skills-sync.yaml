@@ -7,69 +7,24 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/part-of: homelab
 data:
-  # Ref of gwkline/.dotfiles to install. Pin to a tag or SHA for the
-  # reproducibility contract (homelab#81); "main" means track latest.
+  # Pinned commit of gwkline/.dotfiles (private skills repo, #81). The sync
+  # verifies that the fetched HEAD equals this SHA and records both in
+  # $HERMES_HOME/skills-sync/status.json. Updates are opt-in: bumping this
+  # pin (or the allowlist below) is a reviewed PR, never automatic.
+  # A tag or branch name also works (resolved commit is recorded), but a
+  # full SHA is the reproducibility contract.
   ref: |
-    main
-  # Skills-sync init script (runs in the skills-sync initContainer).
-  # Clones the private skills repo, runs the repo's own `dot install` (which
-  # enforces the manifest allowlist + secret scan) into $HERMES_HOME/skills.
-  #
-  # Degradation contract (#81): NEVER hard-fail the pod. On any error, record
-  # an error in $HERMES_HOME/skills-sync/status.json and exit 0 — the gateway
-  # starts on stale skills, and run-hermes.sh prints the stale warning loudly.
-  # Requires git + python3 in the image (verified in the hermes image; if
-  # upstream ever drops them, install them in apps/hermes/Dockerfile).
-  sync.py: |
-    import json, os, shutil, subprocess, sys, time
-
-    HERMES = os.environ.get("HERMES_HOME", "/data/hermes")
-    TARGET = os.path.join(HERMES, "skills")
-    STATUS_DIR = os.path.join(HERMES, "skills-sync")
-    STATUS = os.path.join(STATUS_DIR, "status.json")
-    TOKEN_FILE = os.environ.get("GITHUB_TOKEN_FILE", "/secrets/token")
-    REPO_URL = "https://github.com/gwkline/.dotfiles"
-    REPO_DIR = "/tmp/dotfiles"
-    REF = os.environ.get("SYNC_REF", "main").strip() or "main"
-
-    def write_status(ok, **kw):
-        os.makedirs(STATUS_DIR, exist_ok=True)
-        doc = {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-               "ref": REF, "ok": ok, **kw}
-        with open(STATUS, "w") as f:
-            json.dump(doc, f, indent=2)
-        print(f"skills-sync status: {json.dumps(doc)}")
-
-    def fail(msg):
-        print(f"skills-sync FAILED: {msg}", file=sys.stderr)
-        write_status(False, error=msg[-800:])
-        sys.exit(0)  # degrade explicitly, never block pod start
-
-    def run(cmd, **kw):
-        return subprocess.run(cmd, capture_output=True, text=True, **kw)
-
-    try:
-        token = open(TOKEN_FILE).read().strip()
-    except OSError as e:
-        fail(f"token file unreadable: {e}")
-    if not token:
-        fail(f"{TOKEN_FILE} empty")
-
-    shutil.rmtree(REPO_DIR, ignore_errors=True)
-    clone_url = f"https://x-access-token:{token}@github.com/gwkline/.dotfiles"
-    r = run(["git", "clone", "--depth", "1", "--branch", REF, clone_url, REPO_DIR])
-    if r.returncode:
-        fail(f"clone {REF} failed: {r.stderr.strip()[-400:]}")
-
-    # secrets hygiene: strip the token from origin before anything else runs
-    run(["git", "-C", REPO_DIR, "remote", "set-url", "origin", REPO_URL])
-    sha = run(["git", "-C", REPO_DIR, "rev-parse", "HEAD"]).stdout.strip()
-
-    dot = os.path.join(REPO_DIR, "dot")
-    r = run([sys.executable, dot, "install", "--target", TARGET])
-    print(r.stdout)
-    if r.returncode:
-        fail(f"dot install failed: {(r.stderr or r.stdout).strip()[-400:]}")
-
-    write_status(True, commit=sha,
-                 summary=r.stdout.strip().splitlines()[-1][:200] if r.stdout.strip() else "")
+    445e4255288732efb00c8878151610c2669f5e93
+  # Homelab-side allowlist: only these skill paths (relative to skills/ in
+  # the source repo) are installed — fetched code never runs unreviewed
+  # (#69). One <category>/<skill> per line; # comments allowed. The source
+  # repo's own manifest is not trusted on its own.
+  allowlist: |
+    autonomous-ai-agents/cron-jobs
+    autonomous-ai-agents/mcp-servers
+    autonomous-ai-agents/searching-coding-agent-history
+    devops/homelab-cluster-bringup
+    homelab/homelab-appsec
+    homelab/homelab-server-cluster
+    software-development/homelab-k3s-ops
+    software-development/poteto-mode

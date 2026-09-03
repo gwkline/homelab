@@ -35,12 +35,15 @@ jobs:
       - name: Install panel deps (tsc typecheck needs panel @types/node)
         run: npm ci --no-audit --no-fund
         working-directory: apps/panel
+      - name: Install factory github-app deps (tsc typecheck needs @types/node)
+        run: npm ci --no-audit --no-fund
+        working-directory: apps/factory/github-app
       - name: oxlint (ultracite core preset, 0 errors 0 warnings)
         run: npx ultracite check
       - name: oxfmt --check (refuse unformatted files)
         run: npx oxfmt --check .
-      - name: tsc --noEmit (max-strict panel tsconfig)
-        run: npx tsc -p apps/panel --noEmit
+      - name: tsc --noEmit (max-strict tsconfigs, panel + factory github-app)
+        run: npm run typecheck
       - name: No CommonJS anywhere (require/module.exports)
         run: |
           if grep -rn --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.js' \
@@ -135,6 +138,26 @@ jobs:
         working-directory: apps/knowledge
         run: npm run eval -- --json --subset
 
+  # GitHub App token service (#70): integration tests with mocked JWT/token
+  # exchange (no network, no real App needed).
+  github-app-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/factory/github-app/package-lock.json
+      - name: Install deps
+        working-directory: apps/factory/github-app
+        run: npm ci --no-audit --no-fund
+      - name: Test (mocked JWT/token exchange)
+        working-directory: apps/factory/github-app
+        run: npm test
+
   validate:
     runs-on: ubuntu-latest
     permissions:
@@ -145,9 +168,18 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
       - name: Verify (lint, manifests, secrets, image refs)
         run: ./scripts/verify.sh
+      # Skills-sync fixture tests (#81): a local fixture repo proves
+      # pinned-commit verification, allowlist enforcement, idempotent
+      # install, obsolete-file removal, private>public precedence, and
+      # credential-free Git config. Run beside verify.sh, not inside it:
+      # verify.sh itself is bash and must stay untouched by dash-gated
+      # worker edits.
+      - name: Skills-sync fixture tests
+        run: sh apps/shared/tests/skills-sync.test.sh
 
   build:
-    needs: [validate, lint, panel-smoke, panel-test, knowledge-eval]
+    needs:
+      [validate, lint, panel-smoke, panel-test, knowledge-eval, github-app-test]
     strategy:
       matrix:
         include:
@@ -198,6 +230,15 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+      # #74: the worker image must be smoke-tested before it is trusted —
+      # every advertised coding CLI answers, non-root holds, pinned skills
+      # match their recorded sha. Rebuilds from cache, so it is cheap.
+      - name: Smoke test factory/worker image
+        if: matrix.app == 'factory/worker'
+        run: |
+          docker buildx build --load -t factory-worker-smoke -f apps/factory/worker/Dockerfile .
+          docker run --rm --entrypoint /usr/local/bin/smoke-test factory-worker-smoke
 
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       - name: Sign image (keyless)
