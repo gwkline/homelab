@@ -14,13 +14,9 @@ metadata:
     app: alloy
 data:
   config.alloy: |
-    // Single collector replica reads the whole cluster via the API. Keep its
-    // positions/WAL on the data volume so container restarts don't replay
-    // old lines.
-    loki {
-      data_dir = "/var/lib/alloy/data"
-    }
-
+    // Single collector replica reads the whole cluster via the API. Positions
+    // live on the data volume (--storage.path flag on the Deployment) so
+    // container restarts don't replay old lines.
     discovery.kubernetes "pods" {
       role = "pod"
     }
@@ -152,6 +148,7 @@ spec:
       securityContext:
         seccompProfile:
           type: RuntimeDefault
+        fsGroup: 65534
       containers:
         - name: alloy
           image: grafana/alloy:v1.5.1
@@ -166,6 +163,8 @@ spec:
               containerPort: 12345
           securityContext:
             runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
