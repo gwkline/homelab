@@ -67,6 +67,13 @@ export interface K8sConfig {
 export const loadConfig = (env = process.env): K8sConfig => {
   const override = env.PANEL_K8S_BASE;
   if (override) {
+    // Dev-only override for local mock APIs and port-forwards. TLS behavior:
+    // certificate verification is intentionally disabled here because the
+    // target usually presents a private/self-signed cert that is not the
+    // service-account CA. Never set PANEL_K8S_BASE in-cluster — the in-cluster
+    // path below keeps verification on and trusts the mounted service-account
+    // CA (/var/run/secrets/kubernetes.io/serviceaccount/ca.crt), which k3s
+    // signs its API certificate with.
     return {
       base: override.replace(/\/$/u, ""),
       rejectUnauthorized: false,
