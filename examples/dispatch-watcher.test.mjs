@@ -15,9 +15,9 @@ const envOf = (manifest) =>
     manifest.spec.template.spec.containers[0].env.map((e) => [e.name, e.value])
   );
 
-// kubectl consumes the serialized document, so the round-trip through
-// JSON.parse(JSON.stringify(...)) is exactly what the pod would receive.
-const roundTrip = (manifest) => JSON.parse(JSON.stringify(manifest));
+// kubectl consumes the serialized document, so the test round-trips through
+// a deep clone — exactly what the pod would receive.
+const roundTrip = (manifest) => structuredClone(manifest);
 
 const loopCommandOf = (manifest) => envOf(manifest).LOOP_COMMAND;
 
@@ -44,7 +44,7 @@ const defaultDispatchCommand = () => {
     "utf-8"
   ).split("\n");
   const start = lines.findIndex((l) => l.trim() === "- name: DISPATCH_COMMAND");
-  assert.ok(start >= 0, "DISPATCH_COMMAND env not found in cronjob.yaml");
+  assert.ok(start !== -1, "DISPATCH_COMMAND env not found in cronjob.yaml");
   const value = lines.findIndex(
     (l, i) => i > start && i <= start + 2 && l.trim() === "value: |"
   );
@@ -57,11 +57,11 @@ const defaultDispatchCommand = () => {
     }
     raw.push(line.slice(indent));
   }
-  while (raw.length > 0 && raw[raw.length - 1] === "") {
+  while (raw.length > 0 && raw.at(-1) === "") {
     raw.pop();
   }
   // `|` clip semantics: keep a single trailing newline.
-  return raw.join("\n") + "\n";
+  return `${raw.join("\n")  }\n`;
 };
 
 test("single-line command round-trips exactly", () => {
@@ -74,17 +74,20 @@ test("single-line command round-trips exactly", () => {
   assert.equal(manifest.metadata.namespace, "sandbox");
 });
 
-test("multiline, quoted, colon-laden, ${...} and newline commands survive byte-for-byte", () => {
+// eslint-disable-next-line no-template-curly-in-string -- ${...} in the name is literal
+test('multiline, quoted, colon-laden, ${...} and newline commands survive byte-for-byte', () => {
   const commands = [
     // backslash continuation like the default dispatcher command
     "node loop-hello.mjs && \\\n  echo done",
     "echo \"double quotes\" && echo 'single quotes'",
     'echo "key: value" && echo "url: http://example.invalid:8080/p?a=1"',
+    // eslint-disable-next-line no-template-curly-in-string -- literal ${} is the test data
     'echo "issue ${WATCHER_ISSUE}: all checks passed"',
     "line one\nline two\nline three",
     "trailing newline kept\n",
     "\nleading blank line kept",
     "  leading indentation\n    and deeper  \tindentation\n",
+    // eslint-disable-next-line no-template-curly-in-string -- literal ${} is the test data
     "heredoc<<'EOF'\n\"quotes\" : colons : ${vars}\nEOF",
   ];
   for (const command of commands) {
@@ -100,7 +103,7 @@ test("multiline, quoted, colon-laden, ${...} and newline commands survive byte-f
 test("repo and issue values are data, not YAML syntax", () => {
   const repo = 'owner/repo "with junk": and colons';
   const manifest = roundTrip(
-    jobManifest({ ...baseOpts, repo, command: "true" })
+    jobManifest({ ...baseOpts, command: "true", repo })
   );
   const env = envOf(manifest);
   assert.equal(env.WATCHER_REPO, repo);
@@ -132,14 +135,14 @@ test("default DISPATCH_COMMAND from cronjob.yaml builds a valid Job", () => {
   assert.deepEqual(c.securityContext.capabilities.drop, ["ALL"]);
   assert.equal(manifest.spec.template.spec.automountServiceAccountToken, false);
   assert.equal(manifest.spec.backoffLimit, 1);
-  assert.equal(manifest.spec.ttlSecondsAfterFinished, 604800);
+  assert.equal(manifest.spec.ttlSecondsAfterFinished, 604_800);
 });
 
 test("jobName stays deterministic and dns-1123 safe", () => {
   assert.equal(jobName("dispatched", 42), "dispatched-issue-42");
   assert.equal(jobName("dispatched", 42), jobName("dispatched", 42));
   assert.match(jobName("dispatched", 42), /^dispatched-issue-\d+$/u);
-  assert.match(jobName("dispatched", 42), /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/u);
+  assert.match(jobName("dispatched", 42), /^[a-z0-9](?<rest>[-a-z0-9]*[a-z0-9])?$/u);
   assert.throws(() => jobName("bad prefix!", 1));
   assert.throws(() => jobName("Dispatched", 1));
 });

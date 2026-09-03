@@ -103,9 +103,12 @@ export const jobManifest = ({ command, issueNumber, name, repo }) => ({
         ],
       },
     },
-    ttlSecondsAfterFinished: 604800,
+    ttlSecondsAfterFinished: 604_800,
   },
 });
+
+const sh = (cmd, args, opts = {}) =>
+  execFileSync(cmd, args, { encoding: "utf-8", ...opts });
 
 const main = () => {
   const REPO = process.env.WATCHER_REPO;
@@ -118,9 +121,6 @@ const main = () => {
     console.error("WATCHER_REPO and DISPATCH_COMMAND are required");
     process.exit(2);
   }
-
-  const sh = (cmd, args, opts = {}) =>
-    execFileSync(cmd, args, { encoding: "utf-8", ...opts });
 
   const ghJson = (path) => JSON.parse(sh("gh", ["api", path]));
 
