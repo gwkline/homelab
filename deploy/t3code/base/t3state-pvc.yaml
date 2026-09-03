@@ -1,5 +1,10 @@
 # t3code's own state dir: environment-id, browser pairings, sessions, agent
-# credentials. Backed up nightly by deploy/backup/base (snapshot tag
+# credentials. This file is the single authoritative claim declaration for
+# t3state: the StatefulSet mounts it by name and deliberately declares no
+# volumeClaimTemplate for it (VCTs are immutable after creation). The claim
+# name carries the replica ordinal — the workload is capped at one replica,
+# so scaling the StatefulSet out is not supported without per-replica claims.
+# Backed up nightly by deploy/backup/base (snapshot tag
 # `t3state`, read at /mnt/t3state). A lost PVC is restored per runbook
 # section 11 — the snapshot's /mnt/t3state paths map back onto this PVC's
 # root, which the StatefulSet mounts at /home/node/.t3. Contents are
