@@ -4,15 +4,42 @@
   "timezone": "America/New_York",
   "schedule": ["after 6am and before 10am every weekday"],
   "prConcurrentLimit": 4,
+  "pinDigests": true,
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": ["before 6am on monday"]
   },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Version pins recorded next to a `renovate:` comment (ARG/ENV lines in Dockerfiles)",
+      "fileMatch": ["(^|/)Dockerfile$"],
+      "matchStrings": [
+        "datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*(?:ARG|ENV) [A-Za-z0-9_]+=(?<currentValue>\\S+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Digest-pinned homelab image refs outside k8s manifests (panel jobs.ts, factory orchestrator, profile ConfigMaps)",
+      "fileMatch": [
+        "apps/panel/server/jobs\\.ts$",
+        "apps/factory/orchestrator/run\\.sh$",
+        "deploy/factory/base/profile-.*\\.yaml$"
+      ],
+      "matchStrings": [
+        "ghcr\\.io/gwkline/homelab/(?<depName>[a-z0-9/-]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
   "packageRules": [
     {
       "description": "Agent CLIs: weekly, grouped, auto-merge patch/minor after CI passes",
       "groupName": "agent CLIs (codex/claude-code/opencode/t3)",
-      "matchFileNames": ["apps/t3code/Dockerfile"],
+      "matchFileNames": [
+        "apps/t3code/Dockerfile",
+        "apps/factory/worker/Dockerfile"
+      ],
       "matchDatasources": ["npm"],
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true,
@@ -23,23 +50,57 @@
     {
       "description": "Major bumps of agent CLIs: separate PR, no automerge — review breaking changes",
       "groupName": "agent CLI majors",
-      "matchFileNames": ["apps/t3code/Dockerfile"],
+      "matchFileNames": [
+        "apps/t3code/Dockerfile",
+        "apps/factory/worker/Dockerfile"
+      ],
       "matchDatasources": ["npm"],
       "matchUpdateTypes": ["major"],
       "automerge": false
     },
     {
-      "description": "Base images: pin digest via pinDigests, automerge patch only",
-      "matchDatasources": ["docker"],
-      "matchPackagePatterns": ["node", "python", "busybox"],
-      "pinDigests": true,
-      "matchUpdateTypes": ["patch"],
-      "automerge": true
+      "description": "t3 rides the nightly channel (issue #35): the pin is a recorded nightly version and Renovate bumps within the channel — never to a stable release",
+      "matchDatasources": ["npm"],
+      "matchDepNames": ["t3"],
+      "allowedVersions": "/-nightly\\./"
     },
     {
-      "description": "k8s manifests reference ghcr images by :latest on purpose (CI builds them); Renovate must not 'help' here",
-      "matchManagers": ["kubernetes"],
-      "enabled": false
+      "description": "opencode-ai installed from the beta prefix in t3code: beta prereleases only, never dev builds",
+      "matchDatasources": ["npm"],
+      "matchDepNames": ["opencode-ai"],
+      "matchCurrentVersion": "/^0\\.0\\.0-beta-/",
+      "allowedVersions": "/^0\\.0\\.0-beta-/"
+    },
+    {
+      "description": "Third-party base/runtime images: keep tag+digest pins current, automerge digest/pin once CI is green",
+      "matchDatasources": ["docker"],
+      "matchPackagePatterns": [
+        "^library/",
+        "^restic/",
+        "^gethomepage/",
+        "^nousresearch/"
+      ],
+      "matchUpdateTypes": ["digest", "pin", "patch", "minor"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Homelab images: manifests pin CI-produced digests (issue #35); one grouped PR per republish, automerged after CI so the auto-deploy watcher lands it",
+      "groupName": "homelab image digests",
+      "matchManagers": ["kubernetes", "regex"],
+      "matchPackagePatterns": ["ghcr\\.io/gwkline/homelab/"],
+      "matchUpdateTypes": ["digest", "pin", "patch", "minor", "major"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Downloaded build-time tools (kubectl, gh, scanners, semgrep): grouped, no automerge — checksums are re-verified in CI",
+      "groupName": "pinned build tools",
+      "matchManagers": ["regex"],
+      "matchDatasources": ["github-releases", "pypi"],
+      "automerge": false
     },
     {
       "description": "GitHub Actions: monthly, grouped",

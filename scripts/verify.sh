@@ -172,10 +172,13 @@ fi
 
 echo '==> secret patterns (working tree + all reachable history)'
 pattern='(github_pat_|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|tskey-auth-)'
-if git grep --untracked -nIE "$pattern" -- ':!scripts/verify.sh' 2>/dev/null | grep .; then
+# alloy.yaml carries the log-redaction patterns themselves (literals required
+# by design); docs describe shapes without literals. Exclude only that file.
+secret_exclusions=':!scripts/verify.sh :!deploy/loki/base/alloy.yaml'
+if git grep --untracked -nIE "$pattern" -- $secret_exclusions 2>/dev/null | grep .; then
   fail 'secret-looking string in working tree'
 fi
-if git grep -nIE "$pattern" "$(git rev-list --all)" -- ':!scripts/verify.sh' 2>/dev/null | grep .; then
+if git grep -nIE "$pattern" "$(git rev-list --all)" -- $secret_exclusions 2>/dev/null | grep .; then
   fail 'secret-looking string found in history'
 fi
 
