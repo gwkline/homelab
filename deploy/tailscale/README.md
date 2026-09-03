@@ -4,15 +4,32 @@ Two components: the **Tailscale Kubernetes operator** (provisions proxy pods for
 
 ## Operator install (rebuild)
 
+The operator's OAuth credential lives in 1Password and is synced into the cluster by External Secrets — the helm command carries references only, never OAuth values (issue #43). Prerequisite: External Secrets Operator is running and the hand-entered `onepassword-service-account` token exists in this namespace (issue #41).
+
 ```sh
+kubectl apply -k deploy/tailscale # namespace + SecretStore + ExternalSecret -> Secret operator-oauth
 helm repo add tailscale https://pkgs.tailscale.com/helmcharts
 helm upgrade --install tailscale-operator tailscale/tailscale-operator \
+  --version 1.102.3 \
   -n tailscale --create-namespace \
-  --set oauth.clientId="$TS_CLIENT_ID" \
-  --set oauth.clientSecret="$TS_CLIENT_SECRET"
+  -f deploy/tailscale/values.yaml
 ```
 
-Credentials: Gavin's macOS Keychain, service `homelab-tailscale` (`client-id`, `client-secret` items). The OAuth client must have the tag `tag:k8s-operator` assigned at generation time (cannot be added later — regenerate if missed), scopes: Devices/Core + Auth Keys read-or-modify, Routes read. Secrets are passed via `--set` only — never commit them.
+Mechanisms confirmed against the chart v1.102.3 source (`cmd/k8s-operator/deploy/chart`):
+
+- **Existing-Secret mode**: with `oauth.clientId`/`oauth.clientSecret` unset, the chart creates no Secret and mounts the pre-created Secret `operator-oauth` (name hardcoded in `templates/deployment.yaml`) at `/oauth`, read via `CLIENT_ID_FILE=/oauth/client_id` and `CLIENT_SECRET_FILE=/oauth/client_secret`. The ExternalSecret produces exactly that shape; the chart would only create `operator-oauth` itself if `oauth.clientId` were set.
+- **Proxy tags**: `templates/deployment.yaml` sets `PROXY_TAGS` directly from `proxyConfig.defaultTags` (chart default `"tag:k8s"`), so `deploy/tailscale/values.yaml` pins `tag:k8s-operator` — the old out-of-band `kubectl set env` workaround is removed.
+
+## 1Password item contract (issue #43)
+
+|  |  |
+| --- | --- |
+| vault | `homelab` |
+| item | `tailscale-operator-oauth` — fields `client_id`, `client_secret` |
+| scopes | Devices/Core + Auth Keys read-or-modify, Routes read |
+| tags | the OAuth client must be created WITH `tag:k8s-operator` (cannot be added later — regenerate if missed) |
+
+Reinstalling the operator from a clean cluster requires only the 1Password bootstrap token (`onepassword-service-account`, issue #41); everything else here is declarative.
 
 ## Tailnet policy requirements (tag owners / ACLs)
 
@@ -29,20 +46,24 @@ The policy file must own the operator tag and let tag-carrying proxies serve:
 - ACLs must allow devices tagged `tag:k8s-operator` (the operator's proxy pods) to reach the exposed services' ports; tailnet identity is the auth layer for every UI here.
 - Exposed Services tag their proxies via the required `tailscale.com/tags: tag:k8s-operator` annotation (below).
 
-## Known chart bug (1.102.3) and workaround
+## Operator credential rotation (tested drill, issue #43)
 
-The chart hardcodes `PROXY_TAGS=tag:k8` for proxy devices, and `operatorConfig.defaultTags` does NOT override that env (it feeds a ProxyClass instead). `--set operatorConfig.extraEnv[...]` produces a **duplicate** env entry → server-side apply fails with "expected string, got unstructured list", leaving the Helm release in `failed`.
+1. Create a NEW OAuth client with the same tag + scopes (the old one keeps working until deleted) and update the `tailscale-operator-oauth` fields in 1Password. Do not delete the old client until step 4 passes.
+2. Sync now instead of waiting out the 1h refresh: `kubectl -n tailscale annotate externalsecret operator-oauth external-secrets.io/force-sync="$(date +%s)" --overwrite`
+3. Restart the operator to re-read the mounted Secret: `kubectl -n tailscale rollout restart deploy/operator`
+4. Verify nothing was orphaned: `kubectl get statefulset -n tailscale` — existing proxy StatefulSets (`ts-*`) are NOT recreated or deleted; the operator pod goes Ready on the new credential; the exposed LB URL still returns 200 (`scripts/rebuild-check.sh` section 5) and the operator still reports `PROXY_TAGS=tag:k8s-operator` (section 7).
 
-Workaround (documented, deliberate):
+Why rotation does not orphan proxies: rotation only swaps the operator's control-plane credential. Proxy devices are long-lived StatefulSets keyed by each Service's `tailscale.com/hostname` annotation and tagged `tag:k8s-operator`; as long as the new client can assume the same tag (same tagOwners), the operator reconnects to and keeps reconciling the existing devices. Orphaning only happens if the tag ownership changes or the Secret/item/field names drift — keep the contract above fixed.
 
-```sh
-kubectl -n tailscale set env deploy/operator PROXY_TAGS=tag:k8s-operator
-kubectl -n tailscale rollout restart deploy/operator
-```
+## Known chart constraints (1.102.3, verified from chart source)
+
+- `PROXY_TAGS` comes from `proxyConfig.defaultTags` — pinned in `deploy/tailscale/values.yaml`; no out-of-band patch.
+- `operatorConfig.defaultTags` maps to `OPERATOR_INITIAL_TAGS` (the operator device's own tag) and does NOT touch proxy tags.
+- `operatorConfig.extraEnv` is appended after the fixed env block, so putting `PROXY_TAGS` there creates a duplicate env entry → server-side apply fails with "expected string, got unstructured list", leaving the Helm release in `failed`. This was the origin of the old "chart bug" report.
 
 Additionally, any Service exposed via the operator should carry `tailscale.com/tags: tag:k8s-operator` (see `deploy/t3code/base/service.yaml`) so its proxy devices are tagged correctly regardless of the env default.
 
-This workaround is **pinned and tested**, not optional:
+This stays pinned and enforced, not optional:
 
 - `scripts/verify.sh` fails if any built Service with `loadBalancerClass: tailscale` is missing the annotations below, so the service-level tags stay the source of truth in git.
 - `scripts/rebuild-check.sh` asserts the live operator still runs with `PROXY_TAGS=tag:k8s-operator` (section 7) and that every exposed Service in the cluster carries the annotations (section 6).
@@ -68,7 +89,7 @@ The tailnet DNS suffix (e.g. `tailabc1234.ts.net`) is never hard-coded in script
 1. **Discovered**: the operator-assigned LB hostname of an exposed Service (`kubectl get svc t3code-0 -n agents -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'` — strip the leading `<hostname>.`). `scripts/serve-https.sh` does this automatically.
 2. **Provided**: set `TAILNET_NAME` in the environment (shell) or `homepage-env` ConfigMap key `tailnet-name` (deployed, wired into Homepage as `HOMEPAGE_VAR_TAILNET_NAME` so its service links resolve without editing per-service hrefs).
 
-Retry-with-fix after a failed upgrade: because SSA recorded the failed attempt, prefer `helm uninstall` + fresh `--install`, then re-apply the env override. Do NOT use `proxyConfig.defaultTags` values on this chart version.
+Retry-with-fix after a failed upgrade: because SSA recorded the failed attempt, prefer `helm uninstall` + fresh `--install` with `-f deploy/tailscale/values.yaml`. Do NOT inject `PROXY_TAGS` via `operatorConfig.extraEnv` (duplicate env entry, see above).
 
 ## serve-fixer (deploy/tailscale/serve-fixer*.yaml)
 

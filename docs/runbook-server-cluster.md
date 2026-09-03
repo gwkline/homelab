@@ -95,18 +95,23 @@ kubectl get nodes
 
 ## 5. Tailscale operator (tailnet HTTPS for services)
 
-1. Log into https://login.tailscale.com/admin/settings/oauth → generate an OAuth client (no extra scopes needed)
+Prerequisite: External Secrets Operator is running and the 1Password service-account token exists in the `tailscale` namespace (section 6 / issue #41).
+
+1. Generate an OAuth client at https://login.tailscale.com/admin/settings/oauth — Devices/Core + Auth Keys read-or-modify, Routes read, and it must be created WITH the `tag:k8s-operator` tag. Store it as the `client_id` / `client_secret` fields of the `tailscale-operator-oauth` item in the `homelab` vault (item contract: deploy/tailscale/README.md).
 2. Install Helm anywhere kubectl works:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 helm repo add tailscale https://pkgs.tailscale.com/helmcharts && helm repo update
 
+kubectl apply -k deploy/tailscale   # namespace + SecretStore + ExternalSecret -> Secret operator-oauth
 helm upgrade --install tailscale-operator tailscale/tailscale-operator \
+  --version 1.102.3 \
   --namespace tailscale --create-namespace \
-  --set-string oauth.clientId="<CLIENT_ID>" \
-  --set-string oauth.clientSecret="<CLIENT_SECRET>"
+  -f deploy/tailscale/values.yaml   # references Secret operator-oauth; never --set oauth.* (issue #43)
 ```
+
+Rotation procedure (keeps existing proxy devices): deploy/tailscale/README.md.
 
 ## 6. Secrets (private repo access)
 
