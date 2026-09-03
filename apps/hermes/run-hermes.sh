@@ -107,14 +107,43 @@ if [ -d "${_sid_src}" ]; then
     "${_sid_dst}/" 2>/dev/null || true
 fi
 
-# Agent CLI state (claude/codex logins + sessions) lives under /home/node but
-# is container-local. Restore from /data (survives rollouts); a snapshot hook
-# elsewhere writes it back before pod termination.
+# ---------------------------------------------------------------------------
+# Agent CLI state (#19): claude and codex both read/write under $HOME —
+# /data/home/.claude and /data/home/.codex. HOME is set to /data/home in the
+# StatefulSet, on the hermes PVC, so auth/session state is persistent in
+# place: no /home/node copy, no periodic write-back loop, nothing to flush
+# at termination — the CLIs write straight to the PVC.
+#
+# One-time migration: older deployments snapshotted these dirs at
+# /data/agent-state and restored them into container-local /home/node (never
+# the value of $HOME), so logins were lost on every rollout. If such a legacy
+# snapshot still exists and $HOME has no state yet, adopt it once, then drop
+# the migrated marker so a later logout can't be resurrected by a stale
+# restore.
+# ---------------------------------------------------------------------------
+_home="${HOME:-/data/home}"
+if [ ! -e "${_home}/.agent-state-migrated" ] && [ -d /data/agent-state ]; then
+  for _d in .claude .codex; do
+    if [ -d "/data/agent-state/${_d}" ] && [ ! -d "${_home}/${_d}" ]; then
+      cp -a "/data/agent-state/${_d}" "${_home}/" || true
+    fi
+  done
+  : > "${_home}/.agent-state-migrated"
+  echo "[hermes] migrated /data/agent-state into ${_home} (one-time)"
+fi
+
+# Harmless persistence probe (#19): a per-boot marker in each state dir. If
+# the previous boot's marker is still present, the PVC-backed state survived
+# the restart — persistence is provable from pod logs alone.
 for _d in .claude .codex; do
-  if [ -d "/data/agent-state/${_d}" ]; then
-    cp -a "/data/agent-state/${_d}/." "/home/node/${_d}/" 2>/dev/null || true
+  _probe="${_home}/${_d}/.persistence-probe"
+  [ -d "${_home}/${_d}" ] || mkdir -p "${_home}/${_d}"
+  if [ -f "${_probe}" ]; then
+    echo "[hermes] ${_d}: state persisted across restart (probe from $(cat "${_probe}"))"
   fi
+  date -u +%Y-%m-%dT%H:%M:%SZ > "${_probe}"
 done
+unset _home _d _probe
 
 # First boot requires `hermes setup` (provider/model config) — run it once
 # interactively via kubectl exec; this entrypoint refuses to guess.
