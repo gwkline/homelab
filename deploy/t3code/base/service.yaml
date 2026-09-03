@@ -1,4 +1,5 @@
-# Governs the StatefulSet's pod identity. Not used for traffic.
+# Governs the StatefulSet's pod identity. Headless: DNS resolves to pod IPs
+# and the declared port is what Homepage's siteMonitor targets (issue #14).
 apiVersion: v1
 kind: Service
 metadata:
@@ -8,6 +9,10 @@ spec:
   clusterIP: None
   selector:
     app: t3code
+  ports:
+    - name: http
+      port: 3773
+      targetPort: http
 ---
 # Per-replica tailnet exposure via the Tailscale operator.
 # Each replica gets https://<hostname>.<tailnet>.ts.net with automatic certs.

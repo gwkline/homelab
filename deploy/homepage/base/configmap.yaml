@@ -18,7 +18,9 @@ data:
             icon: mdi-view-dashboard
             description: launch runs, watch jobs
             href: https://panel.${HOMEPAGE_VAR_TAILNET_NAME}
-            siteMonitor: http://panel.agents.svc.cluster.local:3000
+            # panel-http: internal ClusterIP Service declaring the app's
+            # plaintext HTTP port (panel's tailscale Service is 443-only).
+            siteMonitor: http://panel-http.agents.svc.cluster.local:3000
         - T3 Code:
             icon: mdi-console
             description: Interactive agent servers
