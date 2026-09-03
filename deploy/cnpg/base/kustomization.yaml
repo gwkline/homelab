@@ -1,0 +1,52 @@
+# CloudNativePG operator 1.30.0 (issue #49).
+#
+# `upstream.yaml` is the verbatim operator bundle from the official v1.30.0
+# release (https://github.com/cloudnative-pg/cloudnative-pg/releases/tag/v1.30.0,
+# asset cnpg-1.30.0.yaml; same bytes as
+# https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/v1.30.0/releases/cnpg-1.30.0.yaml).
+# Do NOT hand-edit it — refresh it from the next release instead (see
+# ../README.md "Upgrading").
+#
+# The only local mutation is the digest pin below (repo convention, issue
+# #91): the operator Deployment image resolves to
+# ghcr.io/cloudnative-pg/cloudnative-pg:1.30.0 pinned to the multi-arch
+# manifest digest, and OPERATOR_IMAGE_NAME is set to the same reference so
+# anything the operator spawns from that env var pulls immutable bytes too.
+# The tag portion is kept so any tag-parsing logic keeps working.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: homelab
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false
+
+resources:
+  - upstream.yaml
+
+images:
+  - name: ghcr.io/cloudnative-pg/cloudnative-pg
+    newTag: 1.30.0
+    digest: sha256:a2701eb97cdd2a34b1fdb2cb51987f544b706e40bec72ae7146cd8580efefebb
+
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: cnpg-controller-manager
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: cnpg-controller-manager
+        namespace: cnpg-system
+      spec:
+        template:
+          spec:
+            containers:
+              - name: manager
+                env:
+                  - name: OPERATOR_IMAGE_NAME
+                    value: ghcr.io/cloudnative-pg/cloudnative-pg:1.30.0@sha256:a2701eb97cdd2a34b1fdb2cb51987f544b706e40bec72ae7146cd8580efefebb
