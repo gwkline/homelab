@@ -175,6 +175,12 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
       - name: Verify (lint, manifests, secrets, image refs)
         run: ./scripts/verify.sh
+      # Immutable digests for homelab image refs (issue #91): admission
+      # signature verification (deploy/image-policy/base) binds to digests,
+      # so every deployed homelab ref must be digest-pinned. Runs beside
+      # verify.sh, not inside it, for the same reason as the tests above.
+      - name: Homelab image digest pins
+        run: sh scripts/check-image-pins.sh
       # Skills-sync fixture tests (#81): a local fixture repo proves
       # pinned-commit verification, allowlist enforcement, idempotent
       # install, obsolete-file removal, private>public precedence, and

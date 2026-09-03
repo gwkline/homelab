@@ -97,7 +97,10 @@ spec:
         # /data/skills-sync/status.json and always exits 0 — the server
         # starts on stale skills; init-workspace.sh prints the warning.
         - name: skills-sync
-          image: ghcr.io/gwkline/homelab/t3code
+          # Same digest as the main container above (issue #91): admission
+          # verification binds to digests, and skills-lib.sh must match the
+          # server that links the skills it syncs.
+          image: ghcr.io/gwkline/homelab/t3code@sha256:44eadb74b150da72ea43d4210edab86e0d6759f49763a8354999a665d56231bd
           imagePullPolicy: Always
           command:
             - sh

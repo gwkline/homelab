@@ -63,6 +63,7 @@ apps/hermes/        persistent orchestrator image (kubectl included)
 deploy/
   namespaces.yaml   agents + sandbox + database namespaces with PSA labels
   policies/base/    default-deny NetworkPolicies
+  image-policy/base/ cosign image-signature admission policy (ClusterImagePolicy; ADR-004)
   postgres/base/    CNPG PostgreSQL 18 cluster (factory + knowledge durable state)
   backup/base/      opt-in nightly restic backups of stateful PVCs
   gvisor/base/      opt-in loop-agent variant under gVisor
@@ -107,6 +108,7 @@ Decisions and their reasons, so future-you can audit them:
   - _Pinned_: every image a manifest deploys is pinned to an immutable `@sha256` digest (Renovate re-pins as CI republishes, so a deploy always lands through a reviewed PR — the auto-deploy watcher applies those manifests on an interval). Dockerfile base images are pinned to tag+digest. npm CLIs (t3, codex, claude-code, opencode) and downloaded tools (kubectl, gh, hadolint, gitleaks, trivy, semgrep, cursor-agent) are pinned to exact recorded versions — nightlies and betas included: their current resolution is written into the Dockerfile and automation bumps it within the channel.
   - _Verified_: downloaded binaries are sha256-checked against the upstream checksum file published with the release (or a recorded digest where none exists, e.g. the Cursor tarball). npm deps resolve through lockfiles.
   - _Signed_: images are rebuilt on every push to `main` and signed keylessly with cosign — verify with `cosign verify <image>@<digest>` against the GitHub workflow identity. A signature proves who built a digest; the digest pin proves you run it.
+  - _Enforced at admission_: the sigstore policy-controller (ADR-004) makes the signature check mandatory, not optional: `agents` and `sandbox` are opt-in namespaces (`policy.sigstore.dev/include=true`), and the ClusterImagePolicy in `deploy/image-policy/base` admits a homelab image only when its exact digest carries a keyless signature from this repo's CI workflow (`ci.yaml@refs/heads/main`) verified against Fulcio + Rekor. Unsigned or foreign-signed homelab images are rejected at admission; CI (`scripts/check-image-pins.sh`) keeps every homelab ref a digest so there is always something to verify. Third-party images are explicitly default-allowed (we can't produce their signatures) — they are digest-pinned and Renovate-bumped instead. Break-glass and failure behavior: `deploy/image-policy/base/README.md`.
   - _Known gaps_: the `rustup.rs` bootstrap script is not checksum-pinnable (the pinned toolchain it installs is what code builds against), and OS packages inside a digest-pinned base track the distro's own stable repos — everything else moves only through a Renovate PR.
 
 - **Known gap**: dind sidecar is privileged by necessity. Next escalation step if wanted: gVisor (`runsc` RuntimeClass) for inner containers. An opt-in variant lives in `deploy/gvisor/base`; see the server runbook.
