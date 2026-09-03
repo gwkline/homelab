@@ -10,8 +10,8 @@
 # Preconditions before applying (deploy/postgres/README.md):
 #   - CloudNativePG operator >= 1.29 installed (#49; extension catalogs and
 #     ImageVolume support are required).
-#   - The pg-textsearch image digest from #48 pinned below. The all-zero
-#     placeholder refuses to pull; scripts/pg-smoke.sh flags it explicitly.
+#   - The pg-textsearch image digest from #48 pinned below (immutable GHCR
+#     digest published by main CI).
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -49,9 +49,9 @@ spec:
       # (PostgreSQL 18, Debian trixie, amd64).
       - name: pg-textsearch
         image:
-          # TODO(#48): replace with the immutable digest CI publishes, e.g.
-          # ghcr.io/gwkline/homelab/pg-textsearch@sha256:<64 hex chars>.
-          reference: ghcr.io/gwkline/homelab/pg-textsearch@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          # Immutable digest published by main CI (images/pg-textsearch,
+          # pg_textsearch v1.4.0). Bump only with a reviewed operand rebuild.
+          reference: ghcr.io/gwkline/homelab/pg-textsearch@sha256:8076cc6902d6ebadbd66419988bd0612a3ca93ed0601eb6a5edd21857bca2790
 
   bootstrap:
     initdb:
