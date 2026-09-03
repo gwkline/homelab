@@ -16,6 +16,8 @@ spec:
   suspend: false
   jobTemplate:
     spec:
+      # 24h: finished Jobs GCd; live ledger is GitHub labels, not Job objects.
+      ttlSecondsAfterFinished: 86400
       activeDeadlineSeconds: 600
       backoffLimit: 0
       template:

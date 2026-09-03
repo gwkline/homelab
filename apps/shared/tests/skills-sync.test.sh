@@ -139,17 +139,21 @@ grep -q 'private-poteto' "$STORE/software-development/poteto-mode/SKILL.md" \
 echo '==> 7. pinned-commit verification catches a resolving mismatch'
 SHIM="$FIX/bin"
 mkdir -p "$SHIM"
-cat > "$SHIM/git" <<'EOF'
+REAL_GIT="$(command -v git)"
+cat > "$SHIM/git" <<SHIMEOF
 #!/bin/sh
-case "$*" in
+REAL_GIT="$REAL_GIT"
+case "\$*" in
   *rev-parse*HEAD*) echo "1111111111111111111111111111111111111111" ;;
-  *) command git "$@" ;;
+  *) exec "\$REAL_GIT" "\$@" ;;
 esac
-EOF
+SHIMEOF
 chmod +x "$SHIM/git"
-if SKILLS_REF="$SHA1" PATH="$SHIM:$PATH" skills_verify_pin 2>/dev/null; then
+export PATH="$SHIM:$PATH"
+if SKILLS_REF="$SHA1" skills_verify_pin 2>/dev/null; then
   die "pinned-commit mismatch was not detected"
 fi
+export PATH="${PATH#$SHIM:}"
 grep -q 'mismatch' "$STATUS" || die "mismatch reason not recorded"
 
 echo '==> 8. secret-looking skill content is refused'
@@ -166,4 +170,31 @@ SKILLS_REF="main" sh "$LIB"
 grep -q '"ok":true' "$STATUS" || die "status not ok after branch sync"
 grep -q "\"commit\":\"$SHA2\"" "$STATUS" || die "branch sync did not record resolved commit"
 
-echo "PASS: skills-sync fixture tests (allowlist, pin verification, idempotency, obsolete removal, precedence, secret scan)"
+echo '==> 10. askpass helper is executable (mktemp is 600; non-root git child must exec it)'
+SHIM2="$FIX/bin2"
+mkdir -p "$SHIM2"
+REAL_GIT2="$(command -v git)"
+cat > "$SHIM2/git" <<SHIM2EOF
+#!/bin/sh
+# Simulate an authenticated remote: git must exec \$GIT_ASKPASS as a child.
+# Without the exec bit this fails exactly like the worker did:
+#   fatal: cannot exec '/tmp/tmp.XXXX': Permission denied
+REAL_GIT="$REAL_GIT2"
+case "\$*" in
+  *fetch*)
+    [ -n "\$GIT_ASKPASS" ] || { echo "GIT_ASKPASS unset" >&2; exit 1; }
+    "\$GIT_ASKPASS" "Password for 'https://github.com': " >/dev/null 2>&1 \\
+      || { echo "cannot exec \$GIT_ASKPASS" >&2; exit 128; }
+    ;;
+esac
+exec "\$REAL_GIT" "\$@"
+SHIM2EOF
+chmod +x "$SHIM2/git"
+export PATH="$SHIM2:$PATH"
+SKILLS_REF="$SHA1" SKILLS_ALLOWLIST="software-development/poteto-mode" \
+  sh "$LIB" \
+  || die "askpass regression: sync failed when git execs GIT_ASKPASS"
+export PATH="${PATH#$SHIM2:}"
+grep -q '"ok":true' "$STATUS" || die "askpass regression: status not ok"
+
+echo "PASS: skills-sync fixture tests (allowlist, pin verification, idempotency, obsolete removal, precedence, secret scan, askpass exec)"
