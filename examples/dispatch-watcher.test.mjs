@@ -33,7 +33,14 @@ const baseOpts = {
 // runs with) so the test fails if the manifest builder ever drifts from it.
 const defaultDispatchCommand = () => {
   const lines = readFileSync(
-    path.join(import.meta.dirname, "..", "deploy", "dispatcher", "base", "cronjob.yaml"),
+    path.join(
+      import.meta.dirname,
+      "..",
+      "deploy",
+      "dispatcher",
+      "base",
+      "cronjob.yaml"
+    ),
     "utf-8"
   ).split("\n");
   const start = lines.findIndex((l) => l.trim() === "- name: DISPATCH_COMMAND");
@@ -45,10 +52,7 @@ const defaultDispatchCommand = () => {
   const indent = lines[value].length - lines[value].trimStart().length;
   const raw = [];
   for (const line of lines.slice(value + 1)) {
-    if (
-      line.trim() !== "" &&
-      line.length - line.trimStart().length <= indent
-    ) {
+    if (line.trim() !== "" && line.length - line.trimStart().length <= indent) {
       break;
     }
     raw.push(line.slice(indent));
@@ -74,14 +78,14 @@ test("multiline, quoted, colon-laden, ${...} and newline commands survive byte-f
   const commands = [
     // backslash continuation like the default dispatcher command
     "node loop-hello.mjs && \\\n  echo done",
-    'echo "double quotes" && echo \'single quotes\'',
+    "echo \"double quotes\" && echo 'single quotes'",
     'echo "key: value" && echo "url: http://example.invalid:8080/p?a=1"',
     'echo "issue ${WATCHER_ISSUE}: all checks passed"',
     "line one\nline two\nline three",
     "trailing newline kept\n",
     "\nleading blank line kept",
     "  leading indentation\n    and deeper  \tindentation\n",
-    'heredoc<<\'EOF\'\n"quotes" : colons : ${vars}\nEOF',
+    "heredoc<<'EOF'\n\"quotes\" : colons : ${vars}\nEOF",
   ];
   for (const command of commands) {
     const manifest = roundTrip(jobManifest({ ...baseOpts, command }));
