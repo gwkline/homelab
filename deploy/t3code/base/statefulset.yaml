@@ -5,6 +5,10 @@ metadata:
   namespace: agents
 spec:
   serviceName: t3code-headless
+  # One replica by design: the t3state claim (see volumes) is
+  # replica-specific — t3state-t3code-0, ReadWriteOnce — so a second replica
+  # would have to mount the same PVC. Scaling out needs per-replica claims
+  # (a volumeClaimTemplate), deliberately not used here; keep this at 1.
   replicas: 1
   selector:
     matchLabels:
@@ -44,10 +48,12 @@ spec:
             - name: data
               mountPath: /data
             # t3code state (environment-id, pairings, sessions, agent creds).
-            # Standalone PVC (not a VCT — those are immutable after creation)
-            # so pairing survives pod replacement; without this, every rollout
-            # orphans the browser session. Contains credentials — backed up
-            # nightly (deploy/backup/base, tag `t3state`); restore recipe in
+            # Backed by the standalone PVC t3state-t3code-0 — the only claim
+            # declaration for this volume (declared in t3state-pvc.yaml, see
+            # volumes below). The PVC survives pod replacement, so pairing
+            # survives rollouts; without it, every rollout orphans the browser
+            # session. Contains credentials — backed up nightly
+            # (deploy/backup/base, tag `t3state`); restore recipe in
             # runbook section 11.
             - name: t3state
               mountPath: /home/node/.t3
@@ -139,10 +145,33 @@ spec:
           secret:
             secretName: github-token
             optional: true
+        # Single authoritative claim declaration for t3code's own state dir
+        # (env-id, pairings, sessions). The claim is created by
+        # t3state-pvc.yaml in this kustomization — deliberately NOT a
+        # volumeClaimTemplate: VCTs are immutable after creation (a storage
+        # bump could never be applied without recreating the StatefulSet), and
+        # a same-named VCT would let the controller override this explicit
+        # volume. The claim name carries the replica ordinal (t3state-t3code-0)
+        # and is ReadWriteOnce — keep spec.replicas at 1; multi-replica would
+        # need per-replica claims, which is deliberately out of scope.
+        # One-time migration for clusters still carrying the old dual
+        # declaration (explicit volume + t3state VCT): removing a
+        # volumeClaimTemplate cannot be applied in place (the API forbids
+        # spec changes outside replicas/template/updateStrategy/
+        # persistentVolumeClaimRetentionPolicy/minReadySeconds), so delete and
+        # recreate the StatefulSet while the claim keeps its data:
+        #   kubectl -n agents delete statefulset t3code --cascade=orphan
+        #   kubectl apply -k deploy/t3code/base
+        #   kubectl -n agents rollout restart statefulset t3code
+        # Orphaned pods keep serving and are adopted as-is; the claim
+        # t3state-t3code-0 is untouched, so pairings and sessions survive.
+        # Replace the pod once to prove pairing state survives.
         - name: t3state
           persistentVolumeClaim:
             claimName: t3state-t3code-0
   volumeClaimTemplates:
+    # /data only (repo workspaces — churn is recoverable, they re-clone).
+    # t3state's claim lives in t3state-pvc.yaml, not here: see volumes.
     - metadata:
         name: data
       spec:
@@ -150,12 +179,3 @@ spec:
         resources:
           requests:
             storage: 20Gi
-    # Small dedicated volume for t3code's own state dir (env-id, pairings,
-    # sessions). Kept separate from /data so repo churn never risks state.
-    - metadata:
-        name: t3state
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 5Gi
