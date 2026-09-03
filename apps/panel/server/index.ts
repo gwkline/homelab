@@ -50,6 +50,7 @@ interface GhPull {
   labels?: { name: string }[] | null;
   mergeable?: boolean;
   mergeable_state?: string;
+  merged_at?: string | null;
   number: number;
   state: string;
   title: string;
@@ -437,6 +438,209 @@ app.get("/api/factory/prs", async (c) => {
     );
     prs.sort((a, b) => a.number - b.number);
     return c.json({ prs, repo });
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, 502);
+  }
+});
+
+// ── Factory output stats (health card) ─────────────────────────────────────
+// Bounded enrichment windows: the API cost stays flat no matter how busy the
+// repo is (3 list calls + per-PR detail only for the most recent items).
+const STATS_DETAIL_CAP = 20;
+const STATS_OPEN_CAP = 10;
+const STATS_WEEKS = 6;
+
+// PR detail fields used for autonomous output (commits/LOC).
+interface GhPullDetail {
+  additions?: number;
+  commits?: number;
+  deletions?: number;
+}
+
+// Queue depth tallies from factory/* labels on open issues.
+interface FactoryQueue {
+  draftPr: number;
+  inProgress: number;
+  queued: number;
+}
+
+const MONTHS_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+// Monday 00:00 UTC of the week containing `ms` (trend buckets are UTC weeks).
+const weekStartMs = (ms: number): number => {
+  const d = new Date(ms);
+  const mondayOffset = (d.getUTCDay() + 6) % 7;
+  return (
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) -
+    mondayOffset * 86_400_000
+  );
+};
+
+const weekLabel = (ms: number): string => {
+  const d = new Date(ms);
+  return `${MONTHS_SHORT[d.getUTCMonth()] ?? "?"} ${d.getUTCDate()}`;
+};
+
+// Queue depth from factory/* labels on open issues (GitHub is the ledger).
+const queueCountsFor = (issues: GhIssue[]): FactoryQueue => {
+  const queue: FactoryQueue = { draftPr: 0, inProgress: 0, queued: 0 };
+  for (const i of issues) {
+    if (i.pull_request) {
+      continue;
+    }
+    const labels = new Set((i.labels ?? []).map((l) => l.name));
+    if (labels.has("factory/draft-pr")) {
+      queue.draftPr += 1;
+    }
+    if (labels.has("factory/in-progress")) {
+      queue.inProgress += 1;
+    }
+    if (labels.has("factory/queued")) {
+      queue.queued += 1;
+    }
+  }
+  return queue;
+};
+
+// UTC Monday-aligned week buckets covering the last STATS_WEEKS weeks
+// (oldest first) plus a counter slot per bucket.
+const weekBuckets = (): { counts: number[]; starts: number[] } => {
+  const currentWeek = weekStartMs(Date.now());
+  const starts = Array.from(
+    { length: STATS_WEEKS },
+    (_, i) => currentWeek - (STATS_WEEKS - 1 - i) * 7 * 86_400_000
+  );
+  return { counts: starts.map(() => 0), starts };
+};
+
+// Review + CI rates over the open factory PRs (bounded enrichment).
+const openPrRates = async (
+  repo: string,
+  openFactory: GhPull[]
+): Promise<{ ciGreen: number; ciTotal: number; reviewApproved: number }> => {
+  let ciGreen = 0;
+  let ciTotal = 0;
+  let reviewApproved = 0;
+  await Promise.all(
+    openFactory.slice(0, STATS_OPEN_CAP).map(async (p) => {
+      try {
+        const cr = (await ghFetch(
+          `/repos/${repo}/commits/${p.head?.sha}/check-runs?per_page=100`
+        )) as GhCheckRuns;
+        const { state } = checksSummary(cr.check_runs ?? []);
+        if (state !== "none") {
+          ciTotal += 1;
+          if (state === "success") {
+            ciGreen += 1;
+          }
+        }
+      } catch {
+        // check-runs unavailable — leave it out of the CI rate
+      }
+      try {
+        const reviews = (await ghFetch(
+          `/repos/${repo}/pulls/${p.number}/reviews?per_page=100`
+        )) as GhReview[];
+        if ((reviews ?? []).some((r) => r.state === "APPROVED")) {
+          reviewApproved += 1;
+        }
+      } catch {
+        // reviews unavailable — leave it out of the review rate
+      }
+    })
+  );
+  return { ciGreen, ciTotal, reviewApproved };
+};
+
+// Autonomous output: commits/LOC summed over the recent merged factory PRs.
+const autonomousOutput = async (
+  repo: string,
+  mergedFactory: GhPull[]
+): Promise<{ additions: number; commits: number; deletions: number }> => {
+  const details = await Promise.all(
+    mergedFactory.slice(0, STATS_DETAIL_CAP).map((p) =>
+      ghFetch(`/repos/${repo}/pulls/${p.number}`)
+        .then((d) => d as GhPullDetail)
+        .catch(() => null)
+    )
+  );
+  const out = { additions: 0, commits: 0, deletions: 0 };
+  for (const d of details) {
+    out.additions += d?.additions ?? 0;
+    out.commits += d?.commits ?? 0;
+    out.deletions += d?.deletions ?? 0;
+  }
+  return out;
+};
+
+app.get("/api/factory/stats", async (c) => {
+  const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) {
+    return c.json(
+      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
+      400
+    );
+  }
+  try {
+    const [issues, closedPulls, openPulls] = (await Promise.all([
+      ghFetch(`/repos/${repo}/issues?state=open&per_page=100`),
+      ghFetch(`/repos/${repo}/pulls?state=closed&per_page=100`),
+      ghFetch(`/repos/${repo}/pulls?state=open&per_page=50`),
+    ])) as [GhIssue[], GhPull[], GhPull[]];
+
+    const queue = queueCountsFor(issues ?? []);
+
+    const isFactoryPr = (p: GhPull): boolean =>
+      FACTORY_PR_HEAD_RE.test(p.head?.ref ?? "");
+
+    // Merge rate + weekly trend come from the closed factory PR window.
+    const closedFactory = (closedPulls ?? []).filter(isFactoryPr);
+    const mergedFactory = closedFactory.filter(
+      (p) => p.merged_at !== null && p.merged_at !== undefined
+    );
+    const { counts, starts } = weekBuckets();
+    for (const p of mergedFactory) {
+      const ms = Date.parse(p.merged_at ?? "");
+      if (Number.isNaN(ms)) {
+        continue;
+      }
+      const idx = starts.lastIndexOf(weekStartMs(ms));
+      if (idx !== -1) {
+        counts[idx] = (counts[idx] ?? 0) + 1;
+      }
+    }
+
+    const openFactory = (openPulls ?? []).filter(isFactoryPr);
+    const [rates, autonomous] = await Promise.all([
+      openPrRates(repo, openFactory),
+      autonomousOutput(repo, mergedFactory),
+    ]);
+
+    return c.json({
+      autonomous,
+      ci: { green: rates.ciGreen, total: rates.ciTotal },
+      merge: { merged: mergedFactory.length, total: closedFactory.length },
+      queue,
+      repo,
+      review: { approved: rates.reviewApproved, total: openFactory.length },
+      weeklyMerges: starts.map((ms, i) => ({
+        label: weekLabel(ms),
+        merged: counts[i] ?? 0,
+      })),
+    });
   } catch (error: unknown) {
     return c.json({ error: errMessage(error) }, 502);
   }
