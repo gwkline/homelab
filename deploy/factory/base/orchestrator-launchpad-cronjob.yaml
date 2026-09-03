@@ -1,0 +1,62 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: factory-orchestrator-launchpad
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+    factory.gwkline.io/component: orchestrator
+spec:
+  # Second orchestrator instance targeting gwkline/launchpad (ADR-002 ledger).
+  # Staggered 7 past the homelab tick so two workers rarely overlap on the
+  # single node. Reuses the factory-orchestrator ServiceAccount/RBAC below —
+  # same permissions (Jobs + pods in sandbox ONLY).
+  concurrencyPolicy: Forbid
+  schedule: "7,17,27,37,47,57 * * * *" # every 10 min, offset from homelab (:00,:10,…)
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 3900 # 65 min: covers 3600s worker + publish overhead
+      backoffLimit: 0 # a failed tick stays failed — visible
+      template:
+        metadata:
+          labels:
+            factory.gwkline.io/component: orchestrator
+        spec:
+          restartPolicy: Never
+          serviceAccountName: factory-orchestrator
+          automountServiceAccountToken: true # needs k8s API to spawn worker Jobs
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: orchestrator
+              image: ghcr.io/gwkline/homelab/factory/orchestrator@sha256:23785428a121d9eb8dbf9dac6d71215a310a62205ab3879e1fc171ed6e014fdd
+              imagePullPolicy: Always
+              env:
+                - name: FACTORY_REPO
+                  value: gwkline/launchpad
+                - name: OPENCODE_AUTH_B64
+                  valueFrom:
+                    secretKeyRef: { name: factory-opencode-auth, key: auth-b64 }
+                - name: WORKER_CMD
+                  value: "opencode run"
+                - name: GH_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      { name: github-token, key: token, optional: false }
+              resources:
+                requests: { cpu: 100m, memory: 128Mi }
+                limits: { cpu: 500m, memory: 512Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+                readOnlyRootFilesystem: true
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+                - { name: home, mountPath: /home/nonroot }
+          volumes:
+            - { name: tmp, emptyDir: {} }
+            - { name: home, emptyDir: {} }
