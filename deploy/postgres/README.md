@@ -6,7 +6,7 @@ CloudNativePG-managed PostgreSQL 18 cluster shared by the factory and knowledge 
 
 ## Prerequisites
 
-1. **CloudNativePG operator >= 1.29** (issue #49) installed in `cnpg-system` — extension catalogs and the `Cluster`/`Database` CRDs used here need 1.29+.
+1. **CloudNativePG operator >= 1.29** (issue #49) installed in `cnpg-system` — extension catalogs and the `Cluster`/`Database` CRDs used here need 1.29+. The pinned operator bundle lives in `deploy/cnpg` (currently 1.30.0; see its README for apply/upgrade).
 2. **Kubernetes 1.35+ with containerd 2.1+** on the nodes (Kubernetes ImageVolume support, per the CNPG image-volume-extensions docs).
 3. **pg-textsearch image published** (issue #48) and its digest pinned in `base/cluster.yaml`. The manifest ships an all-zero placeholder digest that cannot pull; `scripts/pg-smoke.sh` flags it with a pointed error.
 
