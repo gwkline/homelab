@@ -88,9 +88,14 @@ spec:
                 limits:
                   memory: 1Gi
           volumes:
+            # VCT names are `<claim-template>-<statefulset>-<ordinal>`:
+            # t3code's /data claim is data-t3code-0, hermes's is
+            # data-hermes-0. RWO + local-path pins these to the node their
+            # pods run on; same-node co-location is what makes the mount
+            # possible at all (see the header comment).
             - name: t3code-data
               persistentVolumeClaim:
-                claimName: t3code-data-t3code-0
+                claimName: data-t3code-0
                 readOnly: true
             - name: t3state-data
               persistentVolumeClaim:
@@ -98,11 +103,11 @@ spec:
                 readOnly: true
             - name: hermes-data
               persistentVolumeClaim:
-                claimName: hermes-data-hermes-0
+                claimName: data-hermes-0
                 readOnly: true
             # Executor's database+keys (deploy/executor/base). Referenced by
             # claim name, so enabling backups implies executor is deployed.
             - name: executor-data
               persistentVolumeClaim:
-                claimName: executor-data-executor-0
+                claimName: data-executor-0
                 readOnly: true
