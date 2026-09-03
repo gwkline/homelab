@@ -140,6 +140,10 @@ skills_fetch_repo() {
     echo '  Password*) printf %s "$SKILLS_TOKEN_SESSION" ;;'
     echo 'esac'
   } > "$_ap"
+  # mktemp creates mode 600: without the exec bit the child git process (and
+  # any non-root UID, e.g. the factory worker's `node` user) gets
+  # "cannot exec ...: Permission denied". workspace-lib.sh already does this.
+  chmod 700 "$_ap" || { skills_fail "chmod askpass helper failed"; return 1; }
   _rc=0
   GIT_ASKPASS="$_ap" GIT_TERMINAL_PROMPT=0 \
     git -C "$_repo" fetch -q --depth 1 origin "$SKILLS_REF" 2>"$_err" || _rc=$?

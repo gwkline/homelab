@@ -48,6 +48,9 @@ rules:
   - apiGroups: ["metrics.k8s.io"]
     resources: ["nodes", "pods"]
     verbs: ["get", "list"]
+  # Health/version endpoints the UI probes (no resource access implied).
+  - nonResourceURLs: ["*"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

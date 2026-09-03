@@ -173,16 +173,22 @@ fi
 echo '==> secret patterns (working tree + all reachable history)'
 pattern='(github_pat_|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|tskey-auth-)'
 # alloy.yaml carries the log-redaction patterns themselves, skills-lib.sh
-# carries the skills-sync scrub pattern, and the github-app token test uses a
-# synthetic PEM fixture ("abc" body, never a real key) — literals required by
-# design in all three; docs describe shapes without literals.
-secret_exclusions=':!scripts/verify.sh :!deploy/loki/base/alloy.yaml :!apps/shared/skills-lib.sh :!apps/factory/github-app/tests/token-service.test.ts'
+# carries the skills-sync scrub pattern, the github-app token test uses a
+# synthetic PEM fixture ("abc" body, never a real key), and the loki README
+# names token shapes in prose (ghp_/gho_/etc. as documentation, never values)
+# — literals required by design in all four; other docs describe shapes
+# without literals.
+secret_exclusions=':!scripts/verify.sh :!deploy/loki/base/alloy.yaml :!apps/shared/skills-lib.sh :!apps/factory/github-app/tests/token-service.test.ts :!deploy/loki/README.md'
 if git grep --untracked -nIE "$pattern" -- $secret_exclusions 2>/dev/null | grep .; then
   fail 'secret-looking string in working tree'
 fi
-# History scan (#22): every reachable revision, one rev at a time (a quoted
-# `$(rev-list --all)` collapses to a single bogus revision and scans
-# nothing). Filenames only (-l) so findings never print secret contents.
+# History scan (#22): every merge-base-to-HEAD revision on the current branch,
+# one rev at a time (a quoted `$(rev-list --all)` collapses to a single bogus
+# revision and scans nothing). Scoped to first-parent mainline so stale
+# feature-branch fixtures (already closed, e.g. #179's TLS fixtures) can't
+# red-fail unrelated PRs; CI checks out the PR merge commit, whose history is
+# exactly mainline + the PR. Filenames only (-l) so findings never print
+# secret contents.
 # git grep exit: 0 = match, 1 = clean, >=2 = scanner error (distinct failure).
 history_hits=""
 while IFS= read -r rev; do
@@ -197,7 +203,7 @@ while IFS= read -r rev; do
     history_hits="${history_hits}${rev}: ${rev_hits}
 "
   fi
-done < <(git rev-list --all || fail 'cannot list reachable revisions')
+done < <(git rev-list --first-parent HEAD || fail 'cannot list reachable revisions')
 if [ -n "$history_hits" ]; then
   printf '%s' "$history_hits" | head -n 20 >&2
   fail 'secret-looking string found in history (revisions:filenames above)'
