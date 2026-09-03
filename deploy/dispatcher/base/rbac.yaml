@@ -3,12 +3,16 @@
 # runs without a human in the loop. One principal, one auditable purpose.
 # (Hermes lost this write path in #82 — it now goes through Executor.)
 #
+# The identity lives in `sandbox`, the same namespace as the dispatch-watcher
+# CronJob pods: pods can only use a ServiceAccount from their own namespace.
+# It has zero permissions in `agents`.
+#
 # Depends on hermes/base being applied first (reuses its loop-manager Role).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: dispatcher
-  namespace: agents
+  namespace: sandbox
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -16,10 +20,10 @@ metadata:
   name: dispatcher-loop-manager
   namespace: sandbox
 roleRef:
-  apiGroup: rbac.authorization.k8s.io/v1
+  apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: loop-manager
 subjects:
   - kind: ServiceAccount
     name: dispatcher
-    namespace: agents
+    namespace: sandbox
