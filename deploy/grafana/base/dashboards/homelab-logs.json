@@ -1,1 +1,78 @@
-{"annotations": {"list": []}, "editable": false, "fiscalYearStartMonth": 0, "graphTooltip": 0, "panels": [{"datasource": {"type": "loki", "uid": "loki"}, "description": "Log lines per second across homelab namespaces.", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0}, "id": 1, "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}}, "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "sum by (namespace) (rate({namespace=~\".+\"}[$__auto]))", "refId": "A"}], "title": "Log volume by namespace", "type": "timeseries"}, {"datasource": {"type": "loki", "uid": "loki"}, "description": "Live tail of the agents namespace (panel, headlamp, workers).", "gridPos": {"h": 12, "w": 24, "x": 0, "y": 8}, "id": 2, "options": {"showTime": true, "sortOrder": "Descending", "wrapLogMessage": true}, "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "{namespace=\"agents\"}", "refId": "A"}], "title": "Agents namespace logs", "type": "logs"}, {"datasource": {"type": "loki", "uid": "loki"}, "description": "Lines mentioning error/fail/exception in the last hour.", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 4, "w": 24, "x": 0, "y": 20}, "id": 3, "options": {}, "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "sum(count_over_time({namespace=~\".+\"} |~ \"(?i)error|fail|exception\" [1h]))", "refId": "A"}], "title": "Error lines (1h)", "type": "stat"}], "refresh": "30s", "schemaVersion": 39, "tags": ["homelab", "loki"], "templating": {"list": []}, "time": {"from": "now-1h", "to": "now"}, "timepicker": {}, "timezone": "", "title": "Homelab Logs", "uid": "homelab-logs", "version": 1}
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Log lines per second across homelab namespaces.",
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "sum by (namespace) (rate({namespace=~\".+\"}[$__auto]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Log volume by namespace",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Live tail of the agents namespace (panel, headlamp, workers).",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 8 },
+      "id": 2,
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{namespace=\"agents\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Agents namespace logs",
+      "type": "logs"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Lines mentioning error/fail/exception in the last hour.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 20 },
+      "id": 3,
+      "options": {},
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "sum(count_over_time({namespace=~\".+\"} |~ \"(?i)error|fail|exception\" [1h]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Error lines (1h)",
+      "type": "stat"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["homelab", "loki"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Homelab Logs",
+  "uid": "homelab-logs",
+  "version": 1
+}
