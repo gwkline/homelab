@@ -173,8 +173,10 @@ fi
 echo '==> secret patterns (working tree + all reachable history)'
 pattern='(github_pat_|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|tskey-auth-)'
 # alloy.yaml carries the log-redaction patterns themselves (literals required
-# by design); docs describe shapes without literals. Exclude only that file.
-secret_exclusions=':!scripts/verify.sh :!deploy/loki/base/alloy.yaml'
+# by design); the github-app token test uses a synthetic PEM fixture
+# ("abc" body, never a real key); docs describe shapes without literals.
+# Exclude only those files.
+secret_exclusions=':!scripts/verify.sh :!deploy/loki/base/alloy.yaml :!apps/factory/github-app/tests/token-service.test.ts'
 if git grep --untracked -nIE "$pattern" -- $secret_exclusions 2>/dev/null | grep .; then
   fail 'secret-looking string in working tree'
 fi
