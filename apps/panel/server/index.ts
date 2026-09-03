@@ -44,12 +44,15 @@ interface GhIssue {
   title: string;
 }
 interface GhPull {
+  additions?: number;
+  deletions?: number;
   draft?: boolean;
   head?: { ref?: string; sha?: string };
   html_url: string;
   labels?: { name: string }[] | null;
   mergeable?: boolean;
   mergeable_state?: string;
+  merged_at?: string | null;
   number: number;
   state: string;
   title: string;
@@ -437,6 +440,216 @@ app.get("/api/factory/prs", async (c) => {
     );
     prs.sort((a, b) => a.number - b.number);
     return c.json({ prs, repo });
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, 502);
+  }
+});
+
+// ── Factory impact stats ──
+// One aggregated response (commits, LOC, review/merge/CI rates, queue
+// snapshot, weekly merge trend, factory share) so the panel, Grafana, and
+// briefings all read the same numbers.
+interface FactoryStats {
+  ciPassRate: { pass: number; pct: number; total: number };
+  commits: { total: number };
+  generatedAt: string;
+  loc: { additions: number; deletions: number; net: number };
+  mergeRate: { merged: number; pct: number; total: number };
+  queue: {
+    draftPr: number;
+    failed: number;
+    inProgress: number;
+    queued: number;
+  };
+  reviewRate: { approved: number; pct: number; total: number };
+  share: { factory: number; pct: number; total: number };
+  weekly: {
+    additions: number;
+    deletions: number;
+    merged: number;
+    weekStart: string;
+  }[];
+}
+
+// Short server-side TTL cache so panel refresh does not hammer GitHub.
+const STATS_TTL_MS = 120_000;
+const statsCache = new Map<string, { atMs: number; payload: FactoryStats }>();
+
+const ratePct = (part: number, total: number): number =>
+  total > 0 ? Math.round((part / total) * 1000) / 10 : 0;
+
+const computeFactoryStats = async (repo: string): Promise<FactoryStats> => {
+  const DAY_MS = 86_400_000;
+  const WEEKS = 8;
+  const nowMs = Date.now();
+
+  // All PRs (open + closed) drive the share/merge/LOC math; open issues drive
+  // the queue snapshot. Factory repos are small — one page covers them.
+  const pulls = (await ghFetch(
+    `/repos/${repo}/pulls?state=all&per_page=100`
+  )) as GhPull[];
+  const issues = (await ghFetch(
+    `/repos/${repo}/issues?state=open&per_page=100`
+  )) as GhIssue[];
+
+  const factoryPrs = pulls.filter((p) =>
+    FACTORY_PR_HEAD_RE.test(p.head?.ref ?? "")
+  );
+
+  const queue: FactoryStats["queue"] = {
+    draftPr: 0,
+    failed: 0,
+    inProgress: 0,
+    queued: 0,
+  };
+  for (const i of issues) {
+    if (i.pull_request) {
+      // /issues also returns PRs — they are not queue state
+      continue;
+    }
+    const names = new Set((i.labels ?? []).map((l) => l.name));
+    if (names.has("factory/queued")) {
+      queue.queued += 1;
+    }
+    if (names.has("factory/in-progress")) {
+      queue.inProgress += 1;
+    }
+    if (names.has("factory/draft-pr")) {
+      queue.draftPr += 1;
+    }
+    if (names.has("factory/failed")) {
+      queue.failed += 1;
+    }
+  }
+
+  // Weekly merge trend: 8 fixed 7-day windows ending now, oldest first.
+  const weekly = Array.from({ length: WEEKS }, (_, i) => ({
+    additions: 0,
+    deletions: 0,
+    merged: 0,
+    weekStart: new Date(nowMs - (WEEKS - i) * 7 * DAY_MS)
+      .toISOString()
+      .slice(0, 10),
+  }));
+
+  const enriched = await Promise.all(
+    factoryPrs.map(async (p) => {
+      let commits = 0;
+      try {
+        const list = (await ghFetch(
+          `/repos/${repo}/pulls/${p.number}/commits?per_page=100`
+        )) as unknown[];
+        commits = list?.length ?? 0;
+      } catch {
+        // commit list unavailable — count as 0
+      }
+      let approved = false;
+      try {
+        const reviews = (await ghFetch(
+          `/repos/${repo}/pulls/${p.number}/reviews?per_page=100`
+        )) as GhReview[];
+        approved = (reviews ?? []).some((r) => r.state === "APPROVED");
+      } catch {
+        // reviews unavailable — not approved
+      }
+      let ciPass = false;
+      if (p.state === "open") {
+        try {
+          const cr = (await ghFetch(
+            `/repos/${repo}/commits/${p.head?.sha}/check-runs?per_page=100`
+          )) as GhCheckRuns;
+          ciPass = checksSummary(cr.check_runs ?? []).state === "success";
+        } catch {
+          // check-runs unavailable — not passing
+        }
+      }
+      return {
+        additions: p.additions ?? 0,
+        approved,
+        ciPass,
+        commits,
+        deletions: p.deletions ?? 0,
+        isOpen: p.state === "open",
+        mergedAt: p.merged_at ?? null,
+      };
+    })
+  );
+
+  let additions = 0;
+  let deletions = 0;
+  let mergedCount = 0;
+  for (const e of enriched) {
+    additions += e.additions;
+    deletions += e.deletions;
+    if (e.mergedAt === null) {
+      continue;
+    }
+    mergedCount += 1;
+    const week = Math.floor((nowMs - Date.parse(e.mergedAt)) / (7 * DAY_MS));
+    const bucket =
+      week >= 0 && week < WEEKS ? weekly[WEEKS - 1 - week] : undefined;
+    if (bucket) {
+      bucket.additions += e.additions;
+      bucket.deletions += e.deletions;
+      bucket.merged += 1;
+    }
+  }
+
+  const open = enriched.filter((e) => e.isOpen);
+  const passCount = open.reduce((acc, e) => acc + (e.ciPass ? 1 : 0), 0);
+  const approvedCount = enriched.reduce(
+    (acc, e) => acc + (e.approved ? 1 : 0),
+    0
+  );
+
+  return {
+    ciPassRate: {
+      // CI is only meaningful on open PRs — merged ones already passed the gate.
+      pass: passCount,
+      pct: ratePct(passCount, open.length),
+      total: open.length,
+    },
+    commits: {
+      total: enriched.reduce((acc, e) => acc + e.commits, 0),
+    },
+    generatedAt: new Date(nowMs).toISOString(),
+    loc: { additions, deletions, net: additions - deletions },
+    mergeRate: {
+      merged: mergedCount,
+      pct: ratePct(mergedCount, factoryPrs.length),
+      total: factoryPrs.length,
+    },
+    queue,
+    reviewRate: {
+      approved: approvedCount,
+      pct: ratePct(approvedCount, factoryPrs.length),
+      total: factoryPrs.length,
+    },
+    share: {
+      factory: factoryPrs.length,
+      pct: ratePct(factoryPrs.length, pulls.length),
+      total: pulls.length,
+    },
+    weekly,
+  };
+};
+
+app.get("/api/factory/stats", async (c) => {
+  const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) {
+    return c.json(
+      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
+      400
+    );
+  }
+  const cached = statsCache.get(repo);
+  if (cached && Date.now() - cached.atMs < STATS_TTL_MS) {
+    return c.json({ ...cached.payload, cached: true });
+  }
+  try {
+    const payload = await computeFactoryStats(repo);
+    statsCache.set(repo, { atMs: Date.now(), payload });
+    return c.json({ ...payload, cached: false });
   } catch (error: unknown) {
     return c.json({ error: errMessage(error) }, 502);
   }

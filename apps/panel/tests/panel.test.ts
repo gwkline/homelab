@@ -687,3 +687,322 @@ test("server serves SPA and proxies k8s with locked-down manifests", async () =>
     mock.close();
   }
 });
+
+test("GET /api/factory/stats aggregates factory math and caches ~120s", async () => {
+  const stage = mkdtempSync(path.join(tmpdir(), "panel-stats-"));
+  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
+  for (const f of ["index.js", "jobs.js", "k8s.js"]) {
+    copyFileSync(path.join(root, "dist", f), path.join(stage, f));
+  }
+  copyFileSync(
+    path.join(root, "web", "dist", "index.html"),
+    path.join(stage, "web", "dist", "index.html")
+  );
+
+  const now = Date.now();
+  const DAY = 86_400_000;
+  const isoAgo = (days: number) => new Date(now - days * DAY).toISOString();
+
+  // Fixture math (factory PRs: 8, 9, 10, 12, 13; manual PR 11 excluded):
+  //   commits: 3+5+2+1+1 = 12
+  //   LOC:     +375/-87 (120+200+10+5+40 / 30+50+2+1+4), net +288
+  //   reviews: APPROVED on 8, 9, 13 → 3/5 = 60%
+  //   merged:  9, 10, 13 → 3/5 = 60%
+  //   CI:      8 green, 12 red (open factory PRs only) → 1/2 = 50%
+  //   weekly:  #9 (1d) → current window, #10 (22d) → window idx 3,
+  //            #13 (70d) → outside the 8-week trend
+  //   share:   5 factory of 6 total = 83.3%
+  const commitCounts = new Map<number, number>([
+    [8, 3],
+    [9, 5],
+    [10, 2],
+    [12, 1],
+    [13, 1],
+  ]);
+  const reviewStates = new Map<number, string>([
+    [8, "APPROVED"],
+    [9, "APPROVED"],
+    [10, "COMMENT"],
+    [12, "CHANGES_REQUESTED"],
+    [13, "APPROVED"],
+  ]);
+
+  // Mock GitHub API server: all-PR list, open issues, per-PR enrichment
+  const ghCalls: string[] = [];
+  const gh = createServer((req, res) => {
+    const url = req.url ?? "";
+    if (req.headers.authorization !== "Bearer test-token") {
+      res.writeHead(401).end('{"message":"unauthorized"}');
+      return;
+    }
+    if (req.url === null) {
+      throw new Error("no url");
+    }
+    ghCalls.push(url);
+    if (url.startsWith("/repos/gwkline/launchpad/pulls?state=all")) {
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify([
+          {
+            additions: 120,
+            deletions: 30,
+            draft: true,
+            head: { ref: "factory/issue-6/code-pr", sha: "sha-8" },
+            html_url: "https://github.com/gwkline/launchpad/pull/8",
+            merged_at: null,
+            number: 8,
+            state: "open",
+            title: "factory pr open",
+          },
+          {
+            additions: 200,
+            deletions: 50,
+            draft: false,
+            head: { ref: "factory/issue-7/code-pr", sha: "sha-9" },
+            html_url: "https://github.com/gwkline/launchpad/pull/9",
+            merged_at: isoAgo(1),
+            number: 9,
+            state: "closed",
+            title: "factory pr merged this week",
+          },
+          {
+            additions: 10,
+            deletions: 2,
+            draft: false,
+            head: { ref: "factory/issue-3/code-pr", sha: "sha-10" },
+            html_url: "https://github.com/gwkline/launchpad/pull/10",
+            merged_at: isoAgo(22),
+            number: 10,
+            state: "closed",
+            title: "factory pr merged 3 weeks ago",
+          },
+          {
+            additions: 5,
+            deletions: 1,
+            draft: false,
+            head: { ref: "factory/issue-2/code-pr", sha: "sha-13" },
+            html_url: "https://github.com/gwkline/launchpad/pull/13",
+            merged_at: isoAgo(70),
+            number: 13,
+            state: "closed",
+            title: "factory pr merged 10 weeks ago",
+          },
+          {
+            additions: 40,
+            deletions: 4,
+            draft: false,
+            head: { ref: "factory/issue-9/code-pr", sha: "sha-12" },
+            html_url: "https://github.com/gwkline/launchpad/pull/12",
+            merged_at: null,
+            number: 12,
+            state: "open",
+            title: "factory pr red",
+          },
+          {
+            additions: 999,
+            deletions: 999,
+            draft: false,
+            head: { ref: "feat/manual", sha: "sha-11" },
+            html_url: "https://github.com/gwkline/launchpad/pull/11",
+            merged_at: null,
+            number: 11,
+            state: "open",
+            title: "manual pr",
+          },
+        ])
+      );
+      return;
+    }
+    if (url === "/repos/gwkline/launchpad/issues?state=open&per_page=100") {
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify([
+          {
+            labels: [{ name: "factory/queued" }],
+            number: 1,
+            state: "open",
+            title: "queued",
+          },
+          {
+            labels: [
+              { name: "factory/in-progress" },
+              { name: "factory/queued" },
+            ],
+            number: 2,
+            state: "open",
+            title: "claimed",
+          },
+          {
+            labels: [{ name: "factory/draft-pr" }],
+            number: 3,
+            state: "open",
+            title: "published",
+          },
+          {
+            labels: [{ name: "factory/failed" }],
+            number: 4,
+            state: "open",
+            title: "failed",
+          },
+          { labels: [], number: 5, state: "open", title: "untouched" },
+          {
+            labels: [{ name: "factory/queued" }],
+            number: 6,
+            pull_request: {},
+            state: "open",
+            title: "pr item — not queue state",
+          },
+        ])
+      );
+      return;
+    }
+    const commitMatch = /\/pulls\/(?<num>\d+)\/commits/u.exec(url);
+    if (commitMatch?.groups?.num) {
+      const count = commitCounts.get(Number(commitMatch.groups.num)) ?? 0;
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(
+          JSON.stringify(Array.from({ length: count }, () => ({ sha: "x" })))
+        );
+      return;
+    }
+    const reviewMatch = /\/pulls\/(?<num>\d+)\/reviews/u.exec(url);
+    if (reviewMatch?.groups?.num) {
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify([
+          {
+            state:
+              reviewStates.get(Number(reviewMatch.groups.num)) ?? "COMMENT",
+          },
+        ])
+      );
+      return;
+    }
+    if (url.includes("/check-runs")) {
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          check_runs: [
+            {
+              conclusion: url.includes("sha-8") ? "success" : "failure",
+              name: "validate",
+              status: "completed",
+            },
+          ],
+          total_count: 1,
+        })
+      );
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" }).end("{}");
+  });
+  await new Promise<void>((r) => gh.listen(0, "127.0.0.1", r));
+  const ghPort = (gh.address() as AddressInfo).port;
+
+  const port = 3961;
+  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
+    env: {
+      ...process.env,
+      GH_API_BASE: `http://127.0.0.1:${ghPort}`,
+      GH_TOKEN: "test-token",
+      PANEL_K8S_BASE: "http://127.0.0.1:1",
+      PANEL_ROOT: stage,
+      PORT: String(port),
+    },
+    stdio: "pipe",
+  });
+  child.stderr.on("data", (d) => process.stderr.write(d));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(
+        () => reject(new Error("server did not start")),
+        5000
+      );
+      child.stdout.on(
+        "data",
+        (d) =>
+          d.toString().includes("listening") && (clearTimeout(t), resolve())
+      );
+    });
+    const base = `http://127.0.0.1:${port}`;
+
+    // allowlist guard, same FACTORY_REPOS set as /prs
+    assert.equal(
+      (await fetch(`${base}/api/factory/stats?repo=evil/repo`)).status,
+      400
+    );
+
+    interface Stats {
+      cached: boolean;
+      ciPassRate: { pass: number; pct: number; total: number };
+      commits: { total: number };
+      generatedAt: string;
+      loc: { additions: number; deletions: number; net: number };
+      mergeRate: { merged: number; pct: number; total: number };
+      queue: {
+        draftPr: number;
+        failed: number;
+        inProgress: number;
+        queued: number;
+      };
+      reviewRate: { approved: number; pct: number; total: number };
+      share: { factory: number; pct: number; total: number };
+      weekly: {
+        additions: number;
+        deletions: number;
+        merged: number;
+        weekStart: string;
+      }[];
+    }
+    const r1 = await fetch(`${base}/api/factory/stats?repo=gwkline/launchpad`);
+    assert.equal(r1.status, 200);
+    const s1 = (await r1.json()) as Stats;
+    assert.equal(s1.cached, false);
+    assert.match(s1.generatedAt, /^\d{4}-\d{2}-\d{2}T/u);
+
+    // aggregation math against the fixtures above
+    assert.equal(s1.commits.total, 12);
+    assert.deepEqual(s1.loc, { additions: 375, deletions: 87, net: 288 });
+    assert.deepEqual(s1.reviewRate, {
+      approved: 3,
+      pct: 60,
+      total: 5,
+    });
+    assert.deepEqual(s1.mergeRate, { merged: 3, pct: 60, total: 5 });
+    assert.deepEqual(s1.ciPassRate, { pass: 1, pct: 50, total: 2 });
+    assert.deepEqual(s1.queue, {
+      draftPr: 1,
+      failed: 1,
+      inProgress: 1,
+      queued: 2,
+    });
+    assert.deepEqual(s1.share, { factory: 5, pct: 83.3, total: 6 });
+
+    assert.equal(s1.weekly.length, 8);
+    for (const w of s1.weekly) {
+      assert.match(w.weekStart, /^\d{4}-\d{2}-\d{2}$/u);
+    }
+    // #9, merged 1d ago
+    assert.equal(s1.weekly[7]?.merged, 1);
+    assert.equal(s1.weekly[7]?.additions, 200);
+    assert.equal(s1.weekly[7]?.deletions, 50);
+    // #10, merged 22d ago → window 3
+    assert.equal(s1.weekly[4]?.merged, 1);
+    assert.equal(s1.weekly[4]?.additions, 10);
+    assert.equal(s1.weekly[4]?.deletions, 2);
+    // #13 (70d ago) falls outside the 8-week trend entirely
+    assert.equal(
+      s1.weekly.reduce((acc, w) => acc + w.merged, 0),
+      2
+    );
+
+    // cache: an immediate second read is served without touching GitHub
+    const callsAfterFirst = ghCalls.length;
+    const r2 = await fetch(`${base}/api/factory/stats?repo=gwkline/launchpad`);
+    assert.equal(r2.status, 200);
+    const s2 = (await r2.json()) as Stats;
+    assert.equal(s2.cached, true);
+    assert.equal(s2.commits.total, s1.commits.total);
+    assert.equal(ghCalls.length, callsAfterFirst);
+  } finally {
+    child.kill();
+    gh.close();
+  }
+});
