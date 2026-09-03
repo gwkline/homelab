@@ -1,26 +1,41 @@
 # Upstream distributes hermes-agent as an image (its setup.py refuses pip
 # builds), so we build on their pinned release instead of installing from git.
-FROM nousresearch/hermes-agent:v2026.8.19
+# The tag is also digest-pinned so the base cannot change under us (#35).
+FROM nousresearch/hermes-agent:v2026.8.19@sha256:3811ed13da874fba2ac99b6d492db9a203d34cb6dccf90d886948c00d0ccec09
 
+# kubectl pinned to a recorded version (the stable.txt resolution at pin
+# time — issue #35) and sha256-verified against dl.k8s.io's published
+# checksum for that exact version.
+# renovate: datasource=github-releases depName=kubernetes/kubernetes extractVersion=^v(?<version>.+)$
+ARG KUBECTL_VERSION=1.37.0
 RUN apt-get update \
   && apt-get install -y --no-install-recommends curl ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
   && curl -fsSLo /usr/local/bin/kubectl \
-      "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
-  && chmod +x /usr/local/bin/kubectl
+      "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+  && curl -fsSLo /tmp/kubectl.sha256 \
+      "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256" \
+  && echo "$(cat /tmp/kubectl.sha256)  /usr/local/bin/kubectl" | sha256sum -c - \
+  && chmod +x /usr/local/bin/kubectl \
+  && rm /tmp/kubectl.sha256
 
-# gh CLI baked into the image (pinned + checksum-verified). Before this, gh only
-# existed in the agent's ad-hoc ~/bin on the PVC — a PVC wipe silently removed
-# it, and non-interactive shells couldn't see it, pushing the agent toward
+# gh CLI baked into the image: pinned to an exact release and verified
+# against the checksums.txt file published alongside it (Renovate bumps the
+# ARG; the next build re-verifies). Before this, gh only existed in the
+# agent's ad-hoc ~/bin on the PVC — a PVC wipe silently removed it, and
+# non-interactive shells couldn't see it, pushing the agent toward
 # hand-rolled credential exports (see run-hermes.sh scrub).
-RUN gh_ver="2.98.0" \
-  && gh_arch="amd64" \
-  && curl -fsSLo /tmp/gh.tar.gz \
-      "https://github.com/cli/cli/releases/download/v${gh_ver}/gh_${gh_ver}_linux_${gh_arch}.tar.gz" \
-  && echo "3b8ac6b30336802fc1a858d7c084e11cdf24ac1a761ca90b68022d7d729208de  /tmp/gh.tar.gz" | sha256sum -c - \
-  && tar -xzf /tmp/gh.tar.gz -C /tmp \
-  && mv "/tmp/gh_${gh_ver}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh \
-  && rm -rf /tmp/gh.tar.gz "/tmp/gh_${gh_ver}_linux_${gh_arch}" \
+# renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.+)$
+ARG GH_VERSION=2.98.0
+RUN gh_arch="amd64" \
+  && curl -fsSLo "/tmp/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" \
+      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" \
+  && (cd /tmp \
+      && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_checksums.txt" \
+          | grep "gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" | sha256sum -c -) \
+  && tar -xzf "/tmp/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" -C /tmp \
+  && mv "/tmp/gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh \
+  && rm -rf /tmp/* \
   && gh --version
 
 COPY apps/shared/workspace-lib.sh /usr/local/lib/workspace-lib.sh

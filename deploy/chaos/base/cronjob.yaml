@@ -33,7 +33,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: chaos
-              image: ghcr.io/gwkline/homelab/loop-agent
+              image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
               # loop-agent ships kubectl + gh + shuf (coreutils) — no new
               # image needed. The script comes from the chaos-config
               # ConfigMap, so behaviour stays in git without a rebuild.

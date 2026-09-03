@@ -22,7 +22,7 @@ spec:
       initContainers:
         # Seed the writable config dir from git-reviewed ConfigMap content.
         - name: config-init
-          image: busybox:1.36
+          image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
           command:
             [
               "sh",
@@ -42,7 +42,7 @@ spec:
               mountPath: /app/config
       containers:
         - name: homepage
-          image: ghcr.io/gethomepage/homepage:v2.1.2
+          image: ghcr.io/gethomepage/homepage:v2.1.2@sha256:da9dca9ec258c628146bed1445da0853f2b88f0b10bafd97c091de807c363d60
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

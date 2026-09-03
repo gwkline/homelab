@@ -78,7 +78,7 @@ spec:
               mountPath: /var/run
       containers:
         - name: loop
-          image: ghcr.io/gwkline/homelab/loop-agent
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

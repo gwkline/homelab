@@ -2,8 +2,12 @@ import { createHash } from "node:crypto";
 
 import type { K8sObject } from "./k8s.js";
 
+// Digest-pinned default (issue #35): jobs run the exact loop-agent build the
+// pinned manifests were verified against. Renovate tracks this ref and opens
+// a bump PR whenever CI republishes the image.
 const IMAGE =
-  process.env.PANEL_LOOP_IMAGE ?? "ghcr.io/gwkline/homelab/loop-agent:latest";
+  process.env.PANEL_LOOP_IMAGE ??
+  "ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70";
 const MAX_NAME = 63;
 
 // DNS-1123 safe, deterministic per (command, second). Collisions mean the
