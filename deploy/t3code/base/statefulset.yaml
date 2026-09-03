@@ -22,7 +22,7 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: t3code
-          image: ghcr.io/gwkline/homelab/t3code
+          image: ghcr.io/gwkline/homelab/t3code@sha256:44eadb74b150da72ea43d4210edab86e0d6759f49763a8354999a665d56231bd
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -68,7 +68,7 @@ spec:
         # Runs as root only to fix volume ownership, then exits. Main
         # containers run as uid 1000 regardless of provisioner fsGroup support.
         - name: volume-init
-          image: busybox:1.36
+          image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
           command: ["chown", "-R", "1000:1000", "/data"]
           securityContext:
             allowPrivilegeEscalation: false

@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim
+FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
 
 # Fixed browsers path: identical for build (root) and runtime (uid 1000),
 # independent of $HOME.
@@ -9,25 +9,41 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # browsers install via that same pinned CLI. gh lets loops report back into
 # GitHub (comments, issues) when a writer token is mounted; kubectl supports
 # the dispatcher pattern. Neither has cluster credentials unless granted.
+# kubectl is pinned to a recorded version (the stable.txt resolution at pin
+# time — issue #35) and sha256-verified against dl.k8s.io's published
+# checksum for that exact version.
+# renovate: datasource=github-releases depName=kubernetes/kubernetes extractVersion=^v(?<version>.+)$
+ARG KUBECTL_VERSION=1.37.0
+# renovate: datasource=npm depName=playwright
+ARG PLAYWRIGHT_VERSION=1.62.1
+# renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.+)$
+ARG GH_VERSION=2.98.0
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
       git ca-certificates openssh-client curl xz-utils gnupg \
       docker.io \
   && rm -rf /var/lib/apt/lists/* \
-  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
-  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-      > /etc/apt/sources.list.d/github-cli.list \
-  && apt-get update \
-  && apt-get install -y --no-install-recommends gh \
+  && curl -fsSLo "/tmp/gh_${GH_VERSION}_linux_$(dpkg --print-architecture).tar.gz" \
+      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_$(dpkg --print-architecture).tar.gz" \
+  && (cd /tmp \
+      && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_checksums.txt" \
+          | grep "gh_${GH_VERSION}_linux_$(dpkg --print-architecture).tar.gz" | sha256sum -c -) \
+  && tar -xzf "/tmp/gh_${GH_VERSION}_linux_$(dpkg --print-architecture).tar.gz" -C /tmp --strip-components=1 \
+  && install -m755 /tmp/bin/gh /usr/local/bin/gh \
+  && rm -rf /tmp/* \
+  && gh --version \
   && curl -fsSLo /usr/local/bin/kubectl \
-      "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/$(dpkg --print-architecture)/kubectl" \
+      "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/$(dpkg --print-architecture)/kubectl" \
+  && curl -fsSLo /tmp/kubectl.sha256 \
+      "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/$(dpkg --print-architecture)/kubectl.sha256" \
+  && echo "$(cat /tmp/kubectl.sha256)  /usr/local/bin/kubectl" | sha256sum -c - \
   && chmod +x /usr/local/bin/kubectl \
+  && rm /tmp/kubectl.sha256 \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /opt/loop \
   && cd /opt/loop \
   && npm init -y >/dev/null \
-  && npm install playwright@1.62.1 \
+  && npm install "playwright@${PLAYWRIGHT_VERSION}" \
   && ln -s /opt/loop/node_modules /node_modules \
   && /opt/loop/node_modules/.bin/playwright install --with-deps chromium
 
