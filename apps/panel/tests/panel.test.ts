@@ -123,6 +123,220 @@ test("jobs sort newest-first by creation epoch, not lexical age text", async () 
   );
 });
 
+test("GET /api/factory/stats aggregates factory impact", async () => {
+  const stage = mkdtempSync(path.join(tmpdir(), "panel-stats-"));
+  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
+  for (const f of ["index.js", "jobs.js", "k8s.js"]) {
+    copyFileSync(path.join(root, "dist", f), path.join(stage, f));
+  }
+  copyFileSync(
+    path.join(root, "web", "dist", "index.html"),
+    path.join(stage, "web", "dist", "index.html")
+  );
+
+  const gh = createServer((req, res) => {
+    const url = req.url ?? "";
+    if (req.headers.authorization !== "Bearer test-token") {
+      res.writeHead(401).end('{"message":"unauthorized"}');
+      return;
+    }
+    const json = (v: unknown) => {
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify(v));
+    };
+    // Single-page responses: no Link header, so no pagination to emulate.
+    if (url.startsWith("/repos/gwkline/launchpad/issues?")) {
+      return json([
+        {
+          labels: [{ name: "factory/queued" }],
+          number: 6,
+          state: "open",
+          title: "queued one",
+        },
+        {
+          labels: [],
+          number: 7,
+          pull_request: {},
+          state: "open",
+          title: "a manual PR (excluded from queue)",
+        },
+        {
+          labels: [{ name: "factory/failed" }],
+          number: 9,
+          state: "open",
+          title: "failed one",
+        },
+      ]);
+    }
+    if (url.startsWith("/repos/gwkline/launchpad/pulls?")) {
+      return json([
+        {
+          head: { ref: "factory/issue-6/code-pr", sha: "abc123" },
+          number: 8,
+          state: "open",
+          title: "factory one",
+        },
+        {
+          head: { ref: "feat/manual-thing", sha: "def456" },
+          number: 11,
+          state: "open",
+          title: "manual one",
+        },
+        {
+          head: { ref: "factory/issue-5/code-pr", sha: "aaa111" },
+          number: 5,
+          state: "closed",
+          title: "merged factory one",
+        },
+      ]);
+    }
+    if (url === "/repos/gwkline/launchpad/pulls/8") {
+      return json({
+        additions: 100,
+        commits: 3,
+        deletions: 10,
+        head: { ref: "factory/issue-6/code-pr", sha: "abc123" },
+        merged_at: null,
+        number: 8,
+        state: "open",
+      });
+    }
+    if (url === "/repos/gwkline/launchpad/pulls/5") {
+      return json({
+        additions: 200,
+        commits: 2,
+        deletions: 20,
+        head: { ref: "factory/issue-5/code-pr", sha: "aaa111" },
+        merged_at: new Date().toISOString(),
+        number: 5,
+        state: "closed",
+      });
+    }
+    if (url.includes("/check-runs")) {
+      return json({
+        check_runs: [
+          { conclusion: "success", name: "validate", status: "completed" },
+        ],
+        total_count: 1,
+      });
+    }
+    if (/\/pulls\/\d+\/reviews(?:\?.*)?$/u.test(url)) {
+      return json([{ state: "APPROVED", user: { login: "gwkline" } }]);
+    }
+    res.writeHead(404).end('{"message":"not found"}');
+  });
+  await new Promise<void>((r) => gh.listen(0, "127.0.0.1", r));
+  const ghPort = (gh.address() as AddressInfo).port;
+
+  const port = 3946;
+  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
+    env: {
+      ...process.env,
+      GH_API_BASE: `http://127.0.0.1:${ghPort}`,
+      GH_TOKEN: "test-token",
+      PANEL_K8S_BASE: "http://127.0.0.1:1",
+      PANEL_ROOT: stage,
+      PORT: String(port),
+    },
+    stdio: "pipe",
+  });
+  child.stderr.on("data", (d) => process.stderr.write(d));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(
+        () => reject(new Error("server did not start")),
+        5000
+      );
+      child.stdout.on(
+        "data",
+        (d) =>
+          d.toString().includes("listening") && (clearTimeout(t), resolve())
+      );
+    });
+
+    const badRepo = await fetch(
+      `http://127.0.0.1:${port}/api/factory/stats?repo=evil/repo`
+    );
+    assert.equal(badRepo.status, 400);
+
+    const r = await fetch(
+      `http://127.0.0.1:${port}/api/factory/stats?repo=gwkline/launchpad`
+    );
+    assert.equal(r.status, 200);
+    const j = (await r.json()) as {
+      cached: boolean;
+      queue: {
+        draftPr: number;
+        failed: number;
+        inProgress: number;
+        queued: number;
+      };
+      totals: {
+        additions: number;
+        approvedOpen: number;
+        ciGreen: number;
+        ciPassRate: number | null;
+        commits: number;
+        deletions: number;
+        factoryPrs: number;
+        factoryShare: number;
+        loc: number;
+        mergeRate: number;
+        merged: number;
+        open: number;
+        reviewRate: number | null;
+      };
+      weekly: { loc: number; merged: number; week: string }[];
+    };
+    assert.equal(j.cached, false);
+    // Aggregation math: only factory/* heads counted; manual PR excluded.
+    assert.equal(j.totals.factoryPrs, 2);
+    assert.equal(j.totals.commits, 5);
+    assert.equal(j.totals.additions, 300);
+    assert.equal(j.totals.deletions, 30);
+    assert.equal(j.totals.loc, 330);
+    assert.equal(j.totals.merged, 1);
+    assert.equal(j.totals.open, 1);
+    assert.equal(j.totals.mergeRate, 0.5);
+    // 2 factory of 3 total PRs — proves the manual PR is filtered, not counted.
+    assert.equal(j.totals.factoryShare, 2 / 3);
+    // The single open factory PR is approved + green in the fixture.
+    assert.equal(j.totals.approvedOpen, 1);
+    assert.equal(j.totals.ciGreen, 1);
+    assert.equal(j.totals.reviewRate, 1);
+    assert.equal(j.totals.ciPassRate, 1);
+    // Queue snapshot: manual issue #7 has labels: [] on the issues payload but
+    // carries a pull_request marker, so it must not inflate any bucket.
+    assert.deepEqual(j.queue, {
+      draftPr: 0,
+      failed: 1,
+      inProgress: 0,
+      queued: 1,
+    });
+    // 8 weekly buckets; this week's merge landed in one of them.
+    assert.equal(j.weekly.length, 8);
+    assert.equal(
+      j.weekly.reduce((acc, w) => acc + w.merged, 0),
+      1
+    );
+    assert.equal(
+      j.weekly.reduce((acc, w) => acc + w.loc, 0),
+      220
+    );
+
+    // Second hit comes from the 120s server-side cache.
+    const r2 = await fetch(
+      `http://127.0.0.1:${port}/api/factory/stats?repo=gwkline/launchpad`
+    );
+    assert.equal(r2.status, 200);
+    assert.equal(((await r2.json()) as { cached: boolean }).cached, true);
+  } finally {
+    child.kill();
+    gh.close();
+  }
+});
+
 test("GET /api/factory/prs lists open factory PRs with CI + review status", async () => {
   const stage = mkdtempSync(path.join(tmpdir(), "panel-prs-"));
   mkdirSync(path.join(stage, "web", "dist"), { recursive: true });

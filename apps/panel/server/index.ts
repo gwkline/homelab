@@ -442,6 +442,302 @@ app.get("/api/factory/prs", async (c) => {
   }
 });
 
+// ── Factory impact stats ────────────────────────────────────────────────
+// One aggregated response for the factory health view: autonomous commits
+// and LOC, review/merge/CI rates, the queue snapshot, and an 8-week merge
+// trend. List endpoints are paginated through Link headers; the single-PR
+// GET supplies commits/additions/deletions, which the list endpoint omits.
+// The whole response is cached briefly so panel refreshes don't hammer
+// GitHub (merged-PR data is immutable, so staleness only affects the
+// open-PR enrichment and the queue snapshot).
+interface GhPullDetail extends GhPull {
+  additions?: number;
+  commits?: number;
+  deletions?: number;
+  merged_at?: string | null;
+}
+
+interface GhPage<T> {
+  items: T[];
+  next: string | null;
+}
+
+interface WeekBucket {
+  loc: number;
+  merged: number;
+  week: string;
+}
+
+interface FactoryStatsBody {
+  generatedAt: string;
+  queue: {
+    draftPr: number;
+    failed: number;
+    inProgress: number;
+    queued: number;
+  };
+  repo: string;
+  totals: {
+    additions: number;
+    approvedOpen: number;
+    ciGreen: number;
+    ciPassRate: number | null;
+    commits: number;
+    deletions: number;
+    factoryPrs: number;
+    factoryShare: number | null;
+    loc: number;
+    mergeRate: number | null;
+    merged: number;
+    open: number;
+    reviewRate: number | null;
+  };
+  weekly: WeekBucket[];
+}
+
+// Single GitHub page plus the Link-header cursor (null when last page).
+// Standalone from ghFetch because that helper discards response headers.
+const ghFetchPage = async <T>(route: string): Promise<GhPage<T>> => {
+  const token = ghToken();
+  if (!token) {
+    throw Object.assign(
+      new Error("GH_TOKEN not configured (mount github-token secret)"),
+      { status: 500 }
+    );
+  }
+  const url = route.startsWith("http") ? route : `${GH_API_BASE}${route}`;
+  const res = await fetch(url, {
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "x-github-api-version": "2022-11-28",
+    },
+  });
+  const text = await res.text();
+  let json: unknown;
+  try {
+    json = text ? JSON.parse(text) : undefined;
+  } catch {
+    // non-JSON response body — fall through to the status handling below
+  }
+  if (!res.ok) {
+    const msg =
+      (json as { message?: string } | undefined)?.message ??
+      `${res.status} ${res.statusText}`;
+    throw Object.assign(new Error(msg), { body: json, status: res.status });
+  }
+  let next: string | null = null;
+  const link = res.headers.get("link");
+  if (link) {
+    for (const m of link.matchAll(/<(?<url>[^>]+)>;\s*rel="(?<rel>[^"]+)"/gu)) {
+      if (m.groups?.rel === "next" && m.groups?.url) {
+        next = m.groups.url.startsWith(GH_API_BASE)
+          ? m.groups.url.slice(GH_API_BASE.length)
+          : m.groups.url;
+      }
+    }
+  }
+  return { items: (json ?? []) as T[], next };
+};
+
+const ghFetchAll = async <T>(route: string): Promise<T[]> => {
+  const page: GhPage<T> = await ghFetchPage<T>(route);
+  if (page.next === null) {
+    return page.items;
+  }
+  const rest = await ghFetchAll<T>(page.next);
+  return [...page.items, ...rest];
+};
+
+// Monday 00:00 UTC starting the week containing d.
+const mondayOf = (d: Date): Date => {
+  const out = new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+  );
+  out.setUTCDate(out.getUTCDate() - ((out.getUTCDay() + 6) % 7));
+  return out;
+};
+
+// One PR's contribution to the corpus-wide counters.
+const prCounters = (d: GhPullDetail) => ({
+  additions: d.additions ?? 0,
+  commits: d.commits ?? 0,
+  deletions: d.deletions ?? 0,
+});
+
+const sumCounters = (
+  ds: GhPullDetail[]
+): { additions: number; commits: number; deletions: number } => {
+  const totals = { additions: 0, commits: 0, deletions: 0 };
+  for (const d of ds.map(prCounters)) {
+    totals.additions += d.additions;
+    totals.commits += d.commits;
+    totals.deletions += d.deletions;
+  }
+  return totals;
+};
+
+// Reviews + CI for one open factory PR (both best-effort: a fetch failure
+// counts as not-approved / not-green, never as an endpoint failure).
+const enrichOpenPr = async (
+  repo: string,
+  d: GhPullDetail
+): Promise<{ approved: boolean; green: boolean }> => {
+  let approved = false;
+  let green = false;
+  try {
+    const reviews = (await ghFetch(
+      `/repos/${repo}/pulls/${d.number}/reviews?per_page=100`
+    )) as GhReview[];
+    approved = (reviews ?? []).some((r) => r.state === "APPROVED");
+  } catch {
+    // reviews unavailable — counts as not approved
+  }
+  const sha = d.head?.sha;
+  if (sha) {
+    try {
+      const cr = (await ghFetch(
+        `/repos/${repo}/commits/${sha}/check-runs?per_page=100`
+      )) as GhCheckRuns;
+      green = checksSummary(cr.check_runs ?? []).state === "success";
+    } catch {
+      // check-runs unavailable — counts as not green
+    }
+  }
+  return { approved, green };
+};
+
+// Merged factory PRs folded into their Monday-week buckets.
+const bucketWeekly = (
+  buckets: WeekBucket[],
+  ds: GhPullDetail[]
+): WeekBucket[] => {
+  const byWeek = new Map(buckets.map((b) => [b.week, b]));
+  for (const d of ds) {
+    if (!d.merged_at) {
+      continue;
+    }
+    const key = mondayOf(new Date(d.merged_at)).toISOString().slice(0, 10);
+    const bucket = byWeek.get(key);
+    if (bucket) {
+      bucket.merged += 1;
+      bucket.loc += (d.additions ?? 0) + (d.deletions ?? 0);
+    }
+  }
+  return buckets;
+};
+
+const emptyQueue = () => ({ draftPr: 0, failed: 0, inProgress: 0, queued: 0 });
+
+const countQueue = (openIssues: GhIssue[]): ReturnType<typeof emptyQueue> => {
+  const queue = emptyQueue();
+  for (const i of openIssues.filter((x) => !x.pull_request)) {
+    const names = new Set((i.labels ?? []).map((l) => l.name));
+    if (names.has("factory/queued")) {
+      queue.queued += 1;
+    }
+    if (names.has("factory/in-progress")) {
+      queue.inProgress += 1;
+    }
+    if (names.has("factory/draft-pr")) {
+      queue.draftPr += 1;
+    }
+    if (names.has("factory/failed")) {
+      queue.failed += 1;
+    }
+  }
+  return queue;
+};
+
+const emptyWeek = (monday: Date, weeksAgo: number): WeekBucket => {
+  const start = new Date(monday);
+  start.setUTCDate(start.getUTCDate() - weeksAgo * 7);
+  return { loc: 0, merged: 0, week: start.toISOString().slice(0, 10) };
+};
+
+const computeFactoryStats = async (repo: string): Promise<FactoryStatsBody> => {
+  const [openIssues, pulls] = await Promise.all([
+    ghFetchAll<GhIssue>(`/repos/${repo}/issues?state=open&per_page=100`),
+    ghFetchAll<GhPull>(`/repos/${repo}/pulls?state=all&per_page=100`),
+  ]);
+  const factoryPrs = pulls.filter((p) =>
+    FACTORY_PR_HEAD_RE.test(p.head?.ref ?? "")
+  );
+  // The list endpoint omits commits/additions/deletions — one GET per
+  // factory PR supplies them. Single burst per cache window, not per poll.
+  const details = await Promise.all(
+    factoryPrs.map(
+      (p) =>
+        ghFetch(`/repos/${repo}/pulls/${p.number}`) as Promise<GhPullDetail>
+    )
+  );
+  const { additions, commits, deletions } = sumCounters(details);
+  const merged = details.filter((d) => d.merged_at).length;
+  const openDetails = details.filter((d) => !d.merged_at && d.state === "open");
+
+  // Reviews + check-runs only for the (few) open factory PRs.
+  const enrichments = await Promise.all(
+    openDetails.map((d) => enrichOpenPr(repo, d))
+  );
+  const approvedOpen = enrichments.filter((e) => e.approved).length;
+  const ciGreen = enrichments.filter((e) => e.green).length;
+  const open = openDetails.length;
+
+  // 8 weekly buckets ending with the current (partial) week.
+  const thisMonday = mondayOf(new Date());
+  const weekly = bucketWeekly(
+    [7, 6, 5, 4, 3, 2, 1, 0].map((w) => emptyWeek(thisMonday, w)),
+    details
+  );
+  const queue = countQueue(openIssues);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    queue,
+    repo,
+    totals: {
+      additions,
+      approvedOpen,
+      ciGreen,
+      ciPassRate: open > 0 ? ciGreen / open : null,
+      commits,
+      deletions,
+      factoryPrs: factoryPrs.length,
+      factoryShare: pulls.length > 0 ? factoryPrs.length / pulls.length : null,
+      loc: additions + deletions,
+      mergeRate: factoryPrs.length > 0 ? merged / factoryPrs.length : null,
+      merged,
+      open,
+      reviewRate: open > 0 ? approvedOpen / open : null,
+    },
+    weekly,
+  };
+};
+
+const STATS_TTL_MS = 120_000;
+const statsCache = new Map<string, { at: number; body: FactoryStatsBody }>();
+
+app.get("/api/factory/stats", async (c) => {
+  const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) {
+    return c.json(
+      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
+      400
+    );
+  }
+  const hit = statsCache.get(repo);
+  if (hit && Date.now() - hit.at < STATS_TTL_MS) {
+    return c.json({ ...hit.body, cached: true });
+  }
+  try {
+    const body = await computeFactoryStats(repo);
+    statsCache.set(repo, { at: Date.now(), body });
+    return c.json({ ...body, cached: false });
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, 502);
+  }
+});
+
 const FACTORY_REVIEW_EVENTS = new Set([
   "APPROVE",
   "REQUEST_CHANGES",
