@@ -30,6 +30,6 @@ RUN ARCH=$(dpkg --print-architecture) \
   && gh --version
 
 WORKDIR /orch
-COPY apps/factory/orchestrator/run.sh apps/factory/orchestrator/approval.sh /orch/
-RUN chmod +x /orch/run.sh /orch/approval.sh
+COPY apps/factory/orchestrator/run.sh apps/factory/orchestrator/approval.sh apps/factory/orchestrator/knowledge-context.sh /orch/
+RUN chmod +x /orch/run.sh /orch/approval.sh /orch/knowledge-context.sh
 ENTRYPOINT ["/orch/run.sh"]
