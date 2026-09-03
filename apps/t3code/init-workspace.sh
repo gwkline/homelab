@@ -3,6 +3,14 @@
 set -eu
 
 . /usr/local/lib/workspace-lib.sh
+
+# gh CLI reads GH_TOKEN, not GITHUB_TOKEN_FILE: bridge the mounted secret
+# into the environment before anything (sync_repos, t3) shells out to gh.
+if [ -n "${GITHUB_TOKEN_FILE:-}" ] && [ -r "${GITHUB_TOKEN_FILE}" ]; then
+  GH_TOKEN="$(cat "${GITHUB_TOKEN_FILE}")"
+  GITHUB_TOKEN="${GH_TOKEN}"
+  export GH_TOKEN GITHUB_TOKEN
+fi
 setup_git_auth
 # gh (baked into the image, see Dockerfile) authenticates runtime-only:
 # exports GH_TOKEN when a writer token file is mounted (GITHUB_WRITER_TOKEN_FILE);

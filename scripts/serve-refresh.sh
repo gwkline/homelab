@@ -43,8 +43,11 @@ echo "== serve status before (proxy pod ${PROXY_POD}) =="
 printf '%s\n' "${STATUS_OUT:-<none>}"
 
 # Only the pod IP goes stale on pod replacement: keep the entry's backend
-# port, swap in the fresh IP.
-BACKEND=$(printf '%s\n' "$STATUS_OUT" | grep -oE 'http://[0-9]{1,3}(\.[0-9]{1,3}){3}:[0-9]+' | head -1) || true
+# port, swap in the fresh IP. Prefer the backend under the https entry (the
+# UI convention); fall back to the first backend when there is no https entry
+# yet (serve-https.sh will create it).
+BACKEND=$(printf '%s\n' "${STATUS_OUT}" | awk '/^https:\/\//{want=1; next} want&&/http:\/\/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+/{print; exit}' | grep -oE 'http://[0-9]{1,3}(\.[0-9]{1,3}){3}:[0-9]+' | head -1) || true
+[ -n "${BACKEND}" ] || BACKEND=$(printf '%s\n' "${STATUS_OUT}" | grep -oE 'http://[0-9]{1,3}(\.[0-9]{1,3}){3}:[0-9]+' | head -1) || true
 [ -n "$BACKEND" ] || { echo "no serve entry for ${APP}; run scripts/serve-https.sh (t3code) or re-check the Service's tailscale annotations" >&2; exit 1; }
 PORT=${BACKEND##*:}
 TARGET="http://${APP_IP}:${PORT}"
