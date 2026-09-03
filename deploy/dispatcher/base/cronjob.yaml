@@ -22,6 +22,8 @@ spec:
         spec:
           # The one thing this pod exists for: creating Jobs with this
           # identity. Scoped by rbac.yaml to sandbox Jobs, nothing else.
+          # The ServiceAccount is defined in this same namespace (pods can
+          # only use a ServiceAccount from their own namespace).
           serviceAccountName: dispatcher
           automountServiceAccountToken: true
           restartPolicy: Never
