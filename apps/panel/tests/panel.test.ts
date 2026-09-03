@@ -9,6 +9,9 @@ import { test } from "node:test";
 
 const root = path.join(import.meta.dirname, "..");
 
+const iso = (msAgo: number): string =>
+  new Date(Date.now() - msAgo).toISOString();
+
 test("jobNameFor is dns-1123 safe and deterministic", async () => {
   const { jobNameFor } = await import(path.join(root, "dist", "jobs.js"));
   const a = jobNameFor("node /data/repos/x/check.mjs --flag", 1000);
@@ -253,6 +256,245 @@ test("GET /api/factory/prs lists open factory PRs with CI + review status", asyn
     assert.equal(pr.reviewDecision, "APPROVED");
     assert.equal(pr.checks.state, "success");
     assert.equal(pr.linkedIssue, 6);
+  } finally {
+    child.kill();
+    gh.close();
+  }
+});
+
+test("GET /api/factory/stats aggregates queue, output and merge trend", async () => {
+  const stage = mkdtempSync(path.join(tmpdir(), "panel-stats-"));
+  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
+  for (const f of ["index.js", "jobs.js", "k8s.js"]) {
+    copyFileSync(path.join(root, "dist", f), path.join(stage, f));
+  }
+  copyFileSync(
+    path.join(root, "web", "dist", "index.html"),
+    path.join(stage, "web", "dist", "index.html")
+  );
+
+  const day = 86_400_000;
+
+  // Mock GitHub API server: issue labels, PR lists, per-PR detail enrichment
+  const gh = createServer((req, res) => {
+    const url = req.url ?? "";
+    if (req.headers.authorization !== "Bearer test-token") {
+      res.writeHead(401).end('{"message":"unauthorized"}');
+      return;
+    }
+    if (url.startsWith("/repos/gwkline/launchpad/issues?")) {
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify([
+          {
+            html_url: "https://github.com/gwkline/launchpad/issues/12",
+            labels: [{ name: "factory/queued" }],
+            number: 12,
+            state: "open",
+            title: "queued one",
+          },
+          {
+            html_url: "https://github.com/gwkline/launchpad/issues/13",
+            labels: [{ name: "factory/in-progress" }],
+            number: 13,
+            state: "open",
+            title: "running one",
+          },
+          {
+            html_url: "https://github.com/gwkline/launchpad/issues/14",
+            labels: [{ name: "factory/draft-pr" }],
+            number: 14,
+            state: "open",
+            title: "drafted one",
+          },
+          {
+            html_url: "https://github.com/gwkline/launchpad/issues/15",
+            labels: [],
+            number: 15,
+            state: "open",
+            title: "plain issue",
+          },
+        ])
+      );
+      return;
+    }
+    if (url.includes("state=closed")) {
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify([
+          {
+            head: { ref: "factory/issue-6/code-pr", sha: "sha-8" },
+            html_url: "https://github.com/gwkline/launchpad/pull/8",
+            merged_at: iso(2 * day),
+            number: 8,
+            state: "closed",
+            title: "merged recently",
+          },
+          {
+            head: { ref: "factory/issue-2/fix", sha: "sha-5" },
+            html_url: "https://github.com/gwkline/launchpad/pull/5",
+            merged_at: iso(22 * day),
+            number: 5,
+            state: "closed",
+            title: "merged earlier",
+          },
+          {
+            head: { ref: "factory/issue-9/x", sha: "sha-9" },
+            html_url: "https://github.com/gwkline/launchpad/pull/9",
+            merged_at: null,
+            number: 9,
+            state: "closed",
+            title: "closed unmerged",
+          },
+          {
+            head: { ref: "manual-branch", sha: "sha-m" },
+            html_url: "https://github.com/gwkline/launchpad/pull/20",
+            merged_at: iso(day),
+            number: 20,
+            state: "closed",
+            title: "manual merged",
+          },
+        ])
+      );
+      return;
+    }
+    if (url.startsWith("/repos/gwkline/launchpad/pulls?")) {
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify([
+          {
+            draft: false,
+            head: { ref: "factory/issue-6/code-pr", sha: "sha-open" },
+            html_url: "https://github.com/gwkline/launchpad/pull/11",
+            labels: [],
+            number: 11,
+            state: "open",
+            title: "open factory pr",
+          },
+          {
+            draft: false,
+            head: { ref: "feat/manual", sha: "sha-m2" },
+            html_url: "https://github.com/gwkline/launchpad/pull/21",
+            labels: [],
+            number: 21,
+            state: "open",
+            title: "manual open",
+          },
+        ])
+      );
+      return;
+    }
+    if (/\/pulls\/\d+$/u.test(url)) {
+      const n = Number(/(?<n>\d+)$/u.exec(url)?.groups?.n);
+      const detail =
+        n === 8
+          ? { additions: 120, commits: 3, deletions: 10 }
+          : { additions: 40, commits: 2, deletions: 5 };
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify(detail));
+      return;
+    }
+    if (url.includes("/check-runs")) {
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          check_runs: [
+            { conclusion: "success", name: "validate", status: "completed" },
+          ],
+          total_count: 1,
+        })
+      );
+      return;
+    }
+    if (/\/pulls\/\d+\/reviews(?:\?.*)?$/u.test(url)) {
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(
+          JSON.stringify([{ state: "APPROVED", user: { login: "gwkline" } }])
+        );
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" }).end("{}");
+  });
+  await new Promise<void>((r) => gh.listen(0, "127.0.0.1", r));
+  const ghPort = (gh.address() as AddressInfo).port;
+
+  const port = 3942;
+  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
+    env: {
+      ...process.env,
+      GH_API_BASE: `http://127.0.0.1:${ghPort}`,
+      GH_TOKEN: "test-token",
+      PANEL_K8S_BASE: "http://127.0.0.1:1",
+      PANEL_ROOT: stage,
+      PORT: String(port),
+    },
+    stdio: "pipe",
+  });
+  child.stderr.on("data", (d) => process.stderr.write(d));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(
+        () => reject(new Error("server did not start")),
+        5000
+      );
+      child.stdout.on(
+        "data",
+        (d) =>
+          d.toString().includes("listening") && (clearTimeout(t), resolve())
+      );
+    });
+
+    const badRepo = await fetch(
+      `http://127.0.0.1:${port}/api/factory/stats?repo=evil/repo`
+    );
+    assert.equal(badRepo.status, 400);
+
+    const r = await fetch(
+      `http://127.0.0.1:${port}/api/factory/stats?repo=gwkline/launchpad`
+    );
+    assert.equal(r.status, 200);
+    const j = (await r.json()) as {
+      autonomous: { additions: number; commits: number; deletions: number };
+      ci: { green: number; total: number };
+      merge: { merged: number; total: number };
+      queue: { draftPr: number; inProgress: number; queued: number };
+      repo: string;
+      review: { approved: number; total: number };
+      weeklyMerges: { label: string; merged: number }[];
+    };
+    assert.equal(j.repo, "gwkline/launchpad");
+    // queue depth from factory/* labels on open issues
+    assert.equal(j.queue.queued, 1);
+    assert.equal(j.queue.inProgress, 1);
+    assert.equal(j.queue.draftPr, 1);
+    // merge rate over closed factory PRs only (manual merged PR filtered out)
+    assert.equal(j.merge.merged, 2);
+    assert.equal(j.merge.total, 3);
+    // autonomous output summed over merged factory PR details
+    assert.equal(j.autonomous.commits, 5);
+    assert.equal(j.autonomous.additions, 160);
+    assert.equal(j.autonomous.deletions, 15);
+    // open factory PR enrichment (manual PR filtered out)
+    assert.equal(j.review.approved, 1);
+    assert.equal(j.review.total, 1);
+    assert.equal(j.ci.green, 1);
+    assert.equal(j.ci.total, 1);
+    // 6 UTC-week buckets, each merged PR lands in its own week's bucket
+    const weekStart = (ms: number): number => {
+      const d = new Date(ms);
+      const off = (d.getUTCDay() + 6) % 7;
+      return (
+        Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) -
+        off * day
+      );
+    };
+    const idxFor = (msAgo: number): number =>
+      5 - (weekStart(Date.now()) - weekStart(Date.now() - msAgo)) / (7 * day);
+    assert.equal(j.weeklyMerges.length, 6);
+    assert.equal(j.weeklyMerges[idxFor(2 * day)]?.merged, 1);
+    assert.equal(j.weeklyMerges[idxFor(22 * day)]?.merged, 1);
+    assert.equal(
+      j.weeklyMerges.reduce((acc, w) => acc + w.merged, 0),
+      2
+    );
   } finally {
     child.kill();
     gh.close();
