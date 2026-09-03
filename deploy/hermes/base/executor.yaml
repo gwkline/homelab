@@ -1,0 +1,19 @@
+# Executor MCP connection for hermes (#82): the shared gateway endpoint and
+# the client identity hermes presents there. The matching credential comes
+# from secret executor-client (key token, optional so the gateway still boots
+# before deploy/executor/base lands) — see statefulset.yaml and README.md.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-executor
+  namespace: agents
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/part-of: homelab
+data:
+  # Streamable-HTTP MCP endpoint of the shared Executor gateway. Matches the
+  # Service the panel's dev-tools catalog already expects (executor/agents:8080).
+  mcp-url: http://executor.agents.svc:8080/mcp
+  # Identifiable client identity, asserted on every tool call so Executor
+  # policy decisions and factory audit events attribute actions to hermes.
+  client-id: hermes
