@@ -63,6 +63,42 @@ else
   bad 'panel-serve-fixer.yaml: agents read not pinned to panel endpoints'
 fi
 
+echo '==> static: ConfigMap carries byte-exact copies of the repo scripts (issue #11)'
+# The fixer Deployment runs the ConfigMap copies; humans run the repo files.
+# Drift between them is how HTTP-only serve fixing survived the HTTPS 443
+# switch (issue #11): the cluster repaired a different thing than the manual
+# command. Dedent each embedded block scalar and compare byte-for-byte.
+cm_script() {
+  # cm_script <cm-yaml> "<2-space-indented 'key: |' header line>"
+  # Prints the dedented block-scalar content. Stops at the first line that
+  # is not blank and not indented >= 4 spaces (next key / next document).
+  awk -v hdr="$2" '
+    $0 == hdr { want = 1; next }
+    want {
+      if ($0 == "") { print ""; next }
+      if (substr($0, 1, 4) != "    ") { exit }
+      print substr($0, 5)
+    }
+  ' "$1"
+}
+check_cm_copy() {
+  # check_cm_copy <cm-yaml> <key> <repo-file>
+  _cmf="$1" _key="$2" _repo="$3"
+  _tmp=$(mktemp) || { bad "mktemp failed for $_key"; return 0; }
+  cm_script "$_cmf" "  ${_key}: |" >"$_tmp"
+  # YAML clip chomping makes trailing blank lines ambiguous — strip them
+  # from the extracted copy before comparing.
+  sed -e :a -e '/^[[:space:]]*$/{$d;N;ba;}' "$_tmp" >"${_tmp}.s" && mv "${_tmp}.s" "$_tmp"
+  if cmp -s "$_tmp" "$_repo"; then
+    note "ok: ConfigMap '${_key}' matches ${_repo}"
+  else
+    bad "ConfigMap '$_key' differs from $_repo — regenerate the ConfigMap copy"
+  fi
+  rm -f "$_tmp"
+}
+check_cm_copy deploy/tailscale/serve-fixer-cm.yaml serve-fixer.sh deploy/tailscale/serve-fixer.sh
+check_cm_copy deploy/tailscale/serve-fixer-cm.yaml serve-https.sh scripts/serve-https.sh
+
 if ! command -v kubectl >/dev/null 2>&1; then
   note 'kubectl unavailable — live RBAC checks skipped'
   if [ "$fail" -eq 0 ]; then echo 'CHECKS PASS (static)'; else echo 'CHECKS FAILED'; fi
@@ -70,6 +106,11 @@ if ! command -v kubectl >/dev/null 2>&1; then
 fi
 if ! kubectl get nodes >/dev/null 2>&1; then
   note 'cluster unreachable — live RBAC checks skipped (KUBECONFIG=... to enable)'
+  if [ "$fail" -eq 0 ]; then echo 'CHECKS PASS (static)'; else echo 'CHECKS FAILED'; fi
+  exit "$fail"
+fi
+if ! kubectl auth can-i get pods -n agents --as=system:serviceaccount:tailscale:serve-fixer >/dev/null 2>&1; then
+  note 'kubeconfig cannot impersonate service accounts — live RBAC checks skipped (bootstrap admin kubeconfig to enable)'
   if [ "$fail" -eq 0 ]; then echo 'CHECKS PASS (static)'; else echo 'CHECKS FAILED'; fi
   exit "$fail"
 fi
