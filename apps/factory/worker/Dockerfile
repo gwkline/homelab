@@ -2,8 +2,12 @@
 # Reuses t3code's tested CLI-install layers; runtime state stays in-task.
 # Differences vs t3code: no t3 serve, no pairing, no persistent volumes,
 # explicit /task (input) and /out (output) contract dirs.
+#
+# Reproducibility (#74): every CLI is pinned via ARG (t3code floats @latest by
+# design for pairing sessions; the unattended worker must rebuild identical
+# toolchains). Bump the ARGs in lockstep with t3code so builds stay equivalent.
 
-FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS worker-base
 
 ARG RUST_VERSION=1.98.0
 ENV RUSTUP_HOME=/usr/local/rustup \
@@ -83,6 +87,11 @@ RUN curl -fsSL "https://codeload.github.com/${PSTACK_REPO}/tar.gz/${PSTACK_REF}"
   && grep -q "\"version\": \"${PSTACK_VERSION}\"" /opt/pstack/.cursor-plugin/plugin.json \
   && grep -q "License" /opt/pstack/LICENSE \
   && rm /tmp/pstack.tar.gz
+# Run contract assets: typed run-input schema (#74) and the verification
+# skills selected by #68, shipped at a pinned version (manifest.json carries
+# the content sha the smoke test enforces).
+COPY apps/factory/worker/brief.schema.json /usr/local/share/worker/brief.schema.json
+COPY apps/factory/worker/skills /usr/local/share/worker/skills
 
 # Non-root worker; task I/O on explicit volume-style paths.
 # node:24 base already ships a non-root 'node' user (uid 1000) — reuse it.
@@ -92,7 +101,6 @@ WORKDIR /work
 
 COPY --chmod=755 --chown=node:node apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
 COPY --chmod=755 --chown=node:node apps/factory/worker/entrypoint.sh /usr/local/bin/entrypoint
-
 # Pinned private skills (#81): the entrypoint syncs these before the agent
 # runs. Defaults are reviewed image changes — bumping SKILLS_REF (full SHA,
 # verified by the sync) or SKILLS_ALLOWLIST is the opt-in update path; a Job
@@ -102,5 +110,28 @@ ENV SKILLS_REF=445e4255288732efb00c8878151610c2669f5e93 \
     SKILLS_ALLOWLIST="software-development/homelab-k3s-ops software-development/poteto-mode" \
     SKILLS_TARGET=/work/skills-generated \
     SKILLS_STATUS_FILE=/out/skills-sync.json
+COPY --chmod=755 --chown=node:node apps/factory/worker/smoke-test.sh /usr/local/bin/smoke-test
 
 ENTRYPOINT ["/usr/local/bin/entrypoint"]
+
+# --- optional capability layers (#74) ---------------------------------------
+# The default image (worker-base) grants NEITHER browser NOR container-build
+# power; a profile opts in by shipping an image built with
+# `--target worker-browser` / `--target worker-container-build`. Both layers
+# stay unprivileged: no docker socket, no privileged mode, no extra caps.
+#   worker-browser          headless Chromium (agents that must inspect web UIs)
+#   worker-container-build  rootless podman (fuse-overlayfs + user namespaces)
+FROM worker-base AS worker-browser
+USER root
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends chromium fonts-liberation \
+  && rm -rf /var/lib/apt/lists/*
+ENV CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage"
+USER node
+
+FROM worker-base AS worker-container-build
+USER root
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends podman fuse-overlayfs uidmap \
+  && rm -rf /var/lib/apt/lists/*
+USER node

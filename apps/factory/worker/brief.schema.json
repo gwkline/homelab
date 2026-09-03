@@ -1,0 +1,26 @@
+{
+  "$id": "https://raw.githubusercontent.com/gwkline/homelab/main/apps/factory/worker/brief.schema.json",
+  "title": "Factory worker run input (ADR-001 D5)",
+  "description": "Typed run input mounted at /task/brief.json. Validated by the entrypoint before any work starts.",
+  "type": "object",
+  "required": ["run_id", "repository", "issue"],
+  "properties": {
+    "run_id": { "type": "string", "minLength": 1 },
+    "repository": {
+      "type": "string",
+      "pattern": "^[^/\\s]+/[^/\\s]+$",
+      "description": "owner/name"
+    },
+    "issue": {
+      "type": "object",
+      "required": ["number", "title"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string" },
+        "body": { "type": "string" }
+      }
+    },
+    "constraints": { "type": "array", "items": { "type": "string" } },
+    "verify_command": { "type": "string" }
+  }
+}

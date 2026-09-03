@@ -229,6 +229,15 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}
 
+      # #74: the worker image must be smoke-tested before it is trusted —
+      # every advertised coding CLI answers, non-root holds, pinned skills
+      # match their recorded sha. Rebuilds from cache, so it is cheap.
+      - name: Smoke test factory/worker image
+        if: matrix.app == 'factory/worker'
+        run: |
+          docker buildx build --load -t factory-worker-smoke -f apps/factory/worker/Dockerfile .
+          docker run --rm --entrypoint /usr/local/bin/smoke-test factory-worker-smoke
+
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       - name: Sign image (keyless)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
