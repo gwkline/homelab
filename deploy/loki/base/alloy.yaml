@@ -1,0 +1,200 @@
+# Alloy — cluster log collector feeding Loki (issue #47), per the stack
+# chosen in #36 (Loki + Grafana Alloy).
+#
+# Reads every pod's logs through the Kubernetes API (no hostPath, no
+# privilege — works under the `agents` namespace baseline PSA), relabels to
+# the bounded label vocabulary documented in deploy/loki/README.md, redacts
+# credentials at source, and pushes to Loki.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: agents
+  labels:
+    app: alloy
+data:
+  config.alloy: |
+    // Single collector replica reads the whole cluster via the API. Keep its
+    // positions/WAL on the data volume so container restarts don't replay
+    // old lines.
+    loki {
+      data_dir = "/var/lib/alloy/data"
+    }
+
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    // Target labels become Loki stream labels. ONLY bounded, identifier-ish
+    // values are promoted here. Pod env (LOOP_COMMAND command text, issue
+    // bodies, tokens) is never read, so it can never become a label —
+    // cardinality stays bounded, see deploy/loki/README.md.
+    discovery.relabel "pods" {
+      targets = discovery.kubernetes.pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+
+      // Workload: repo convention (`app:`), k8s convention
+      // (`app.kubernetes.io/name`), kube-system components (`k8s-app:`).
+      // All bounded sets; a pod normally carries only one of them.
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        target_label  = "workload"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+        target_label  = "workload"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_k8s_app"]
+        target_label  = "workload"
+      }
+
+      // Run identifier: the owning Job's name. Unique per run for panel
+      // (hash-suffixed), dispatcher, loop and factory Jobs alike, and
+      // factory Job names embed the issue number (factory-issue-<n>-...).
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_batch_kubernetes_io_job_name"]
+        target_label  = "job_name"
+      }
+
+      // Factory profile (collector/reviewer/security/orchestrator/...):
+      // small bounded set.
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_factory_gwkline_io_profile"]
+        target_label  = "profile"
+      }
+    }
+
+    loki.source.kubernetes "pods" {
+      targets    = discovery.relabel.pods.output
+      forward_to = [loki.process.redact.receiver]
+    }
+
+    // Redact credentials at source, before anything lands on disk in Loki.
+    // Best-effort pattern matching (see deploy/loki/README.md for what is
+    // covered and what is not).
+    loki.process "redact" {
+      // Bearer/basic credentials wherever they appear: Authorization
+      // headers, `curl -H` echoes, SDK dumps.
+      stage.replace {
+        expression = `(?i)bearer\s+[A-Za-z0-9\-._~+/=]{8,}`
+        replace    = "Bearer [REDACTED]"
+      }
+
+      // Generic auth headers with any scheme (`Authorization: token xyz`,
+      // `x-api-key: ...`, `private-token: ...`).
+      stage.replace {
+        expression = `(?i)(authorization|x-api-key|api-key|private-token)["']?\s*[:=]\s*"?[^\s"',}]+`
+        replace    = "${1}[REDACTED]"
+      }
+
+      // GitHub token shapes, classic and fine-grained (literals required:
+      // this is the redaction pattern itself).
+      stage.replace {
+        expression = `github_pat_[A-Za-z0-9_]{20,}|gh[posur]_[A-Za-z0-9]{20,}`
+        replace    = "[REDACTED]"
+      }
+
+      // Model-provider API keys (OpenAI/Anthropic request dumps).
+      stage.replace {
+        expression = `sk-[A-Za-z0-9\-_]{20,}`
+        replace    = "[REDACTED]"
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://loki.agents.svc:3100/loki/api/v1/push"
+      }
+    }
+---
+# One replica is deliberate: loki.source.kubernetes reads every pod via the
+# API, so a second replica would push every line twice. If the pod dies it
+# restarts automatically; lines logged during the gap that are still held by
+# the kubelet get picked up again (at-least-once semantics).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alloy
+  namespace: agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alloy
+  template:
+    metadata:
+      labels:
+        app: alloy
+    spec:
+      # The one token this stack needs: cluster-wide read of pods and their
+      # logs (rbac.yaml). No secrets, nodes, or writes anywhere.
+      serviceAccountName: alloy
+      automountServiceAccountToken: true
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: alloy
+          image: grafana/alloy:v1.5.1
+          args:
+            - run
+            - /etc/alloy/config.alloy
+            - --storage.path=/var/lib/alloy/data
+            - --server.http.listen-addr=0.0.0.0:12345
+            - --disable-reporting
+          ports:
+            - name: http
+              containerPort: 12345
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/alloy
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: alloy-config
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

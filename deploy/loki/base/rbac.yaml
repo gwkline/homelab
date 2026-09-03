@@ -1,0 +1,34 @@
+# The log collector's identity. This is the fourth deliberate, audited
+# exception to "pods cannot talk to Kubernetes" (see main README): read-only
+# pods list/watch plus pods/log get, cluster-wide — that is what reading every
+# pod's logs via the API takes. No secrets, no nodes, no writes.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+  namespace: agents
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloy-logs
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy-logs
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy-logs
+subjects:
+  - kind: ServiceAccount
+    name: alloy
+    namespace: agents
