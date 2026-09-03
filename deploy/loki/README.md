@@ -54,7 +54,7 @@ out of every line before it touches disk:
 
 - `Authorization: Bearer …` / basic credentials, wherever they appear
 - generic `Authorization:` / `x-api-key:` / `api-key:` / `private-token:` headers with any scheme
-- GitHub tokens: classic (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`) and fine-grained (`github_pat_`)
+- GitHub tokens, classic and fine-grained shapes (see the redaction patterns in `alloy.yaml`, excluded from the secret lint by design)
 - model-provider keys (`sk-…`)
 
 This is best-effort pattern matching, not a guarantee: an agent can print a

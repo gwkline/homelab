@@ -104,8 +104,8 @@ data:
         replace    = "${1}[REDACTED]"
       }
 
-      // GitHub tokens — classic (ghp_/gho_/ghu_/ghs_/ghr_) and fine-grained
-      // (github_pat_) PAT shapes.
+      // GitHub token shapes, classic and fine-grained (literals required:
+      // this is the redaction pattern itself).
       stage.replace {
         expression = `github_pat_[A-Za-z0-9_]{20,}|gh[posur]_[A-Za-z0-9]{20,}`
         replace    = "[REDACTED]"
