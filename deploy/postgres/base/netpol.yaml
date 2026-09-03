@@ -87,11 +87,19 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    - to: # Kubernetes API (k3s service IP)
+    - to: # Kubernetes API. kube-router evaluates egress after kube-proxy
+        # DNAT, so the filter sees the node's real endpoint (192.168.1.2:6443),
+        # not the 10.43.0.1 ClusterIP — both are listed so the rule survives
+        # either evaluation order. Single-node homelab: if the node IP ever
+        # changes (DHCP), update it here or initdb/operator traffic is
+        # REJECTed and the cluster never bootstraps.
         - ipBlock:
             cidr: 10.43.0.1/32
+        - ipBlock:
+            cidr: 192.168.1.2/32
       ports:
         - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
     - to: # Peer instances (streaming replication, basebackup when scaling)
         - podSelector: {}
       ports:
