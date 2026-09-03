@@ -1,3 +1,9 @@
+# t3code's own state dir: environment-id, browser pairings, sessions, agent
+# credentials. Backed up nightly by deploy/backup/base (snapshot tag
+# `t3state`, read at /mnt/t3state). A lost PVC is restored per runbook
+# section 11 — the snapshot's /mnt/t3state paths map back onto this PVC's
+# root, which the StatefulSet mounts at /home/node/.t3. Contents are
+# credentials: treat snapshots and restored copies as secret.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
