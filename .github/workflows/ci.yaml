@@ -189,6 +189,8 @@ jobs:
       # worker edits.
       - name: Skills-sync fixture tests
         run: sh apps/shared/tests/skills-sync.test.sh
+      - name: Reclaimer fixture test
+        run: sh apps/factory/orchestrator/tests/reclaimer.test.sh
       # Backup-secret input regression (#10): a stub kubectl proves the
       # emergency fallback captures interactive credentials byte-exactly
       # (no leading/trailing newline), keeps prompts and visual newlines on

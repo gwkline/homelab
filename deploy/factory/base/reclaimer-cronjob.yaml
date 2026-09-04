@@ -1,0 +1,82 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: factory-reclaimer
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+    factory.gwkline.io/component: reclaimer
+spec:
+  schedule: "25 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  suspend: false
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      activeDeadlineSeconds: 900
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            factory.gwkline.io/profile: reclaimer
+        spec:
+          restartPolicy: Never
+          serviceAccountName: factory-reclaimer
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: reclaimer
+              image: ghcr.io/gwkline/homelab/factory/orchestrator@sha256:23785428a121d9eb8dbf9dac6d71215a310a62205ab3879e1fc171ed6e014fdd
+              imagePullPolicy: Always
+              command: ["sh", "/orch/run-reclaimer.sh"]
+              env:
+                - name: FACTORY_REPOS
+                  value: gwkline/homelab,gwkline/launchpad
+                - name: GH_CONFIG_DIR
+                  value: /tmp/gh
+                - name: FACTORY_RECLAIM_DRY_RUN
+                  value: "false"
+                - name: GH_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: github-token, key: token, optional: false }
+              resources:
+                requests: { cpu: 100m, memory: 128Mi }
+                limits: { cpu: 500m, memory: 512Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+                readOnlyRootFilesystem: true
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: factory-reclaimer
+  namespace: sandbox
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: factory-reclaimer
+  namespace: sandbox
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: factory-reclaimer
+  namespace: sandbox
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: factory-reclaimer
+subjects:
+  - { kind: ServiceAccount, name: factory-reclaimer, namespace: sandbox }
