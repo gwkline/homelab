@@ -196,7 +196,7 @@ case "${PROFILE}" in
     WORKER_CPU="500m"; WORKER_MEM="4Gi"
     ;;
   code-pr|*)
-    WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/worker@sha256:0948d820dbff91478c71275ea84d5dd4ec31c5c58e9163f69492491c9a7c7a8b"
+    WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/worker@sha256:9e79f585e376f5360a0dd8396b77841adeceb06640febaac97fab92c40ba8b5b"
     WORKER_SA="factory-worker"
     WORKER_CPU="500m"; WORKER_MEM="12Gi"
     ;;
