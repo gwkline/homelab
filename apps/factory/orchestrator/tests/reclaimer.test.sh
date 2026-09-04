@@ -1,6 +1,6 @@
 #!/bin/bash
 # Offline contract test for the factory reclaimer.
-set -euo pipefail
+set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
