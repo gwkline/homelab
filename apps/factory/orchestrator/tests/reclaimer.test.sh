@@ -11,7 +11,7 @@ trap 'rm -rf "${FIX}"' EXIT
 
 cat > "${SHIM}/gh" <<'EOF'
 #!/bin/bash
-set -euo pipefail
+set -eu
 args="$*"
 case "$args" in
   *"auth status"*) exit 0 ;;

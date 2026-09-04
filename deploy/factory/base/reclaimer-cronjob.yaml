@@ -43,7 +43,8 @@ spec:
                   value: "false"
                 - name: GH_TOKEN
                   valueFrom:
-                    secretKeyRef: { name: github-token, key: token, optional: false }
+                    secretKeyRef:
+                      { name: github-token, key: token, optional: false }
               resources:
                 requests: { cpu: 100m, memory: 128Mi }
                 limits: { cpu: 500m, memory: 512Mi }
