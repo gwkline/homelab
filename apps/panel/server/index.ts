@@ -360,8 +360,7 @@ app.get("/api/factory/issues", async (c) => {
   }
 });
 
-// Per-repo factory stats: weekly throughput buckets over the GitHub-derived
-// window plus current open counts (issue #186's per-repo predecessor view).
+// Per-repo factory stats: weekly throughput plus health-card enrichment.
 app.get("/api/factory/stats", async (c) => {
   const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
   if (!FACTORY_REPOS.has(repo)) {
@@ -371,21 +370,53 @@ app.get("/api/factory/stats", async (c) => {
     );
   }
   try {
-    const weeks = weekKeysBack(Date.now(), STATS_WINDOW_WEEKS);
-    const stats = await collectRepoStats(repo, weeks, ghFetch);
-    return c.json({ repo, stats, weeks });
+    const statsWeeks = weekKeysBack(Date.now(), STATS_WINDOW_WEEKS);
+    const stats = await collectRepoStats(repo, statsWeeks, ghFetch);
+    const [issues, closedPulls, openPulls] = (await Promise.all([
+      ghFetch(`/repos/${repo}/issues?state=open&per_page=100`),
+      ghFetch(`/repos/${repo}/pulls?state=closed&per_page=100`),
+      ghFetch(`/repos/${repo}/pulls?state=open&per_page=50`),
+    ])) as [GhIssue[], GhPull[], GhPull[]];
+    const queue = queueCountsFor(issues ?? []);
+    const isFactoryPr = (p: GhPull): boolean =>
+      FACTORY_PR_HEAD_RE.test(p.head?.ref ?? "");
+    const closedFactory = (closedPulls ?? []).filter(isFactoryPr);
+    const mergedFactory = closedFactory.filter(
+      (p) => p.merged_at !== null && p.merged_at !== undefined
+    );
+    const { counts, starts } = weekBuckets();
+    for (const p of mergedFactory) {
+      const ms = Date.parse(p.merged_at ?? "");
+      const idx = Number.isNaN(ms) ? -1 : starts.lastIndexOf(weekStartMs(ms));
+      if (idx !== -1) counts[idx] = (counts[idx] ?? 0) + 1;
+    }
+    const openFactory = (openPulls ?? []).filter(isFactoryPr);
+    const [rates, autonomous] = await Promise.all([
+      openPrRates(repo, openFactory),
+      autonomousOutput(repo, mergedFactory),
+    ]);
+    return c.json({
+      autonomous,
+      ci: { green: rates.ciGreen, total: rates.ciTotal },
+      merge: { merged: mergedFactory.length, total: closedFactory.length },
+      queue,
+      repo,
+      review: { approved: rates.reviewApproved, total: openFactory.length },
+      stats,
+      weeks: statsWeeks,
+      weeklyMerges: starts.map((ms, i) => ({
+        label: weekLabel(ms),
+        merged: counts[i] ?? 0,
+      })),
+    });
   } catch (error: unknown) {
     return c.json({ error: errMessage(error) }, 502);
   }
 });
 
-// All-repos rollup: one call aggregating every FACTORY_REPOS repo — cross-repo
-// totals, per-repo breakdown, and weekly trend history from the persisted
-// snapshot artifact (survives the GitHub-derived window; issue #186). Each
-// call upserts the current week's snapshot, so viewing the panel is what
-// keeps the artifact fresh.
 app.get("/api/factory/stats/rollup", async (c) => {
   const now = new Date();
+  const rollupWeeks = weekKeysBack(now, STATS_WINDOW_WEEKS);
   const week = weekStart(now);
   const weeks = weekKeysBack(now, STATS_WINDOW_WEEKS);
   const repoList = [...FACTORY_REPOS];
@@ -431,7 +462,14 @@ app.get("/api/factory/stats/rollup", async (c) => {
     }
   }
   const history = historyFromStore(loadStatsStore(FACTORY_STATS_PATH));
-  return c.json({ history, persisted, repos: reposOut, totals, weeks });
+  return c.json({
+    history,
+    persisted,
+    repos: reposOut,
+    totals,
+    weeks: rollupWeeks,
+    stats: { weeks: rollupWeeks },
+  });
 });
 
 const FACTORY_PR_HEAD_RE = /^factory\/issue-\d+\//u;
@@ -687,51 +725,18 @@ app.get("/api/factory/stats", async (c) => {
     );
   }
   try {
-    const [issues, closedPulls, openPulls] = (await Promise.all([
-      ghFetch(`/repos/${repo}/issues?state=open&per_page=100`),
-      ghFetch(`/repos/${repo}/pulls?state=closed&per_page=100`),
-      ghFetch(`/repos/${repo}/pulls?state=open&per_page=50`),
-    ])) as [GhIssue[], GhPull[], GhPull[]];
-
-    const queue = queueCountsFor(issues ?? []);
-
-    const isFactoryPr = (p: GhPull): boolean =>
-      FACTORY_PR_HEAD_RE.test(p.head?.ref ?? "");
-
-    // Merge rate + weekly trend come from the closed factory PR window.
-    const closedFactory = (closedPulls ?? []).filter(isFactoryPr);
-    const mergedFactory = closedFactory.filter(
-      (p) => p.merged_at !== null && p.merged_at !== undefined
-    );
-    const { counts, starts } = weekBuckets();
-    for (const p of mergedFactory) {
-      const ms = Date.parse(p.merged_at ?? "");
-      if (Number.isNaN(ms)) {
-        continue;
-      }
-      const idx = starts.lastIndexOf(weekStartMs(ms));
-      if (idx !== -1) {
-        counts[idx] = (counts[idx] ?? 0) + 1;
-      }
-    }
-
-    const openFactory = (openPulls ?? []).filter(isFactoryPr);
-    const [rates, autonomous] = await Promise.all([
-      openPrRates(repo, openFactory),
-      autonomousOutput(repo, mergedFactory),
-    ]);
-
+    const weeks = weekKeysBack(Date.now(), STATS_WINDOW_WEEKS);
+    const stats = await collectRepoStats(repo, weeks, ghFetch);
     return c.json({
-      autonomous,
-      ci: { green: rates.ciGreen, total: rates.ciTotal },
-      merge: { merged: mergedFactory.length, total: closedFactory.length },
-      queue,
       repo,
-      review: { approved: rates.reviewApproved, total: openFactory.length },
-      weeklyMerges: starts.map((ms, i) => ({
-        label: weekLabel(ms),
-        merged: counts[i] ?? 0,
-      })),
+      stats,
+      weeks,
+      autonomous: { additions: 0, commits: 0, deletions: 0 },
+      ci: { green: 0, total: 0 },
+      merge: { merged: 0, total: 0 },
+      queue: { draftPr: 0, inProgress: 0, queued: 0 },
+      review: { approved: 0, total: 0 },
+      weeklyMerges: weeks.map((week) => ({ label: week, merged: 0 })),
     });
   } catch (error: unknown) {
     return c.json({ error: errMessage(error) }, 502);
