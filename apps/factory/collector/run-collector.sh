@@ -29,7 +29,7 @@ queue_repo() {
     number="$(printf '%s' "$issue" | jq -r '.number')"
     labels="$(printf '%s' "$issue" | jq -r '[(.labels // [])[].name] | join(",")')"
     case ",$labels," in
-      *,factory/queued,*|*,factory/in-progress,*|*,factory/draft-pr,*|*,factory/failed,*)
+      *,factory/queued,*|*,factory/in-progress,*|*,factory/draft-pr,*|*,factory/failed,*|*,factory/stuck,*)
         continue
         ;;
     esac

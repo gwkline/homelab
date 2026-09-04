@@ -29,7 +29,8 @@ cat > "$FIX/issues.json" <<'EOF'
   {"number":1,"title":"unlabeled","labels":[]},
   {"number":2,"title":"already queued","labels":[{"name":"factory/queued"}]},
   {"number":3,"title":"already failed","labels":[{"name":"factory/failed"}]},
-  {"number":4,"title":"pull request","pull_request":{},"labels":[]}
+  {"number":4,"title":"already stuck","labels":[{"name":"factory/stuck"}]},
+  {"number":5,"title":"pull request","pull_request":{},"labels":[]}
 ]
 EOF
 : > "$FIX/writes.log"
@@ -40,5 +41,5 @@ GH_AUTH_SKIP=1 GH_TOKEN=test GH_BIN="$SHIM/gh" GH_FIXTURE_DIR="$FIX" FACTORY_REP
 count=$(wc -l < "$FIX/writes.log" | tr -d ' ')
 [ "$count" = 1 ] || { echo "FAIL: expected one label write, got $count"; exit 1; }
 grep -q 'issues/1/labels' "$FIX/writes.log" || { echo "FAIL: issue #1 was not queued"; exit 1; }
-! grep -Eq 'issues/(2|3|4)/labels' "$FIX/writes.log" || { echo "FAIL: ineligible issue was queued"; exit 1; }
+! grep -Eq 'issues/(2|3|4|5)/labels' "$FIX/writes.log" || { echo "FAIL: ineligible issue was queued"; exit 1; }
 echo "PASS: collector queues only eligible issues"

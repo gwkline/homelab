@@ -360,32 +360,9 @@ app.get("/api/factory/issues", async (c) => {
   }
 });
 
-// Per-repo factory stats: weekly throughput buckets over the GitHub-derived
-// window plus current open counts (issue #186's per-repo predecessor view).
-app.get("/api/factory/stats", async (c) => {
-  const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
-  if (!FACTORY_REPOS.has(repo)) {
-    return c.json(
-      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
-      400
-    );
-  }
-  try {
-    const weeks = weekKeysBack(Date.now(), STATS_WINDOW_WEEKS);
-    const stats = await collectRepoStats(repo, weeks, ghFetch);
-    return c.json({ repo, stats, weeks });
-  } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
-  }
-});
-
-// All-repos rollup: one call aggregating every FACTORY_REPOS repo — cross-repo
-// totals, per-repo breakdown, and weekly trend history from the persisted
-// snapshot artifact (survives the GitHub-derived window; issue #186). Each
-// call upserts the current week's snapshot, so viewing the panel is what
-// keeps the artifact fresh.
 app.get("/api/factory/stats/rollup", async (c) => {
   const now = new Date();
+  const rollupWeeks = weekKeysBack(now, STATS_WINDOW_WEEKS);
   const week = weekStart(now);
   const weeks = weekKeysBack(now, STATS_WINDOW_WEEKS);
   const repoList = [...FACTORY_REPOS];
@@ -431,7 +408,14 @@ app.get("/api/factory/stats/rollup", async (c) => {
     }
   }
   const history = historyFromStore(loadStatsStore(FACTORY_STATS_PATH));
-  return c.json({ history, persisted, repos: reposOut, totals, weeks });
+  return c.json({
+    history,
+    persisted,
+    repos: reposOut,
+    stats: { weeks: rollupWeeks },
+    totals,
+    weeks: rollupWeeks,
+  });
 });
 
 const FACTORY_PR_HEAD_RE = /^factory\/issue-\d+\//u;
@@ -678,6 +662,7 @@ const autonomousOutput = async (
   return out;
 };
 
+// Per-repo factory stats: weekly throughput and current health-card data.
 app.get("/api/factory/stats", async (c) => {
   const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
   if (!FACTORY_REPOS.has(repo)) {
@@ -687,18 +672,16 @@ app.get("/api/factory/stats", async (c) => {
     );
   }
   try {
+    const statsWeeks = weekKeysBack(Date.now(), STATS_WINDOW_WEEKS);
+    const stats = await collectRepoStats(repo, statsWeeks, ghFetch);
     const [issues, closedPulls, openPulls] = (await Promise.all([
       ghFetch(`/repos/${repo}/issues?state=open&per_page=100`),
       ghFetch(`/repos/${repo}/pulls?state=closed&per_page=100`),
       ghFetch(`/repos/${repo}/pulls?state=open&per_page=50`),
     ])) as [GhIssue[], GhPull[], GhPull[]];
-
     const queue = queueCountsFor(issues ?? []);
-
     const isFactoryPr = (p: GhPull): boolean =>
       FACTORY_PR_HEAD_RE.test(p.head?.ref ?? "");
-
-    // Merge rate + weekly trend come from the closed factory PR window.
     const closedFactory = (closedPulls ?? []).filter(isFactoryPr);
     const mergedFactory = closedFactory.filter(
       (p) => p.merged_at !== null && p.merged_at !== undefined
@@ -714,13 +697,11 @@ app.get("/api/factory/stats", async (c) => {
         counts[idx] = (counts[idx] ?? 0) + 1;
       }
     }
-
     const openFactory = (openPulls ?? []).filter(isFactoryPr);
     const [rates, autonomous] = await Promise.all([
       openPrRates(repo, openFactory),
       autonomousOutput(repo, mergedFactory),
     ]);
-
     return c.json({
       autonomous,
       ci: { green: rates.ciGreen, total: rates.ciTotal },
@@ -728,10 +709,12 @@ app.get("/api/factory/stats", async (c) => {
       queue,
       repo,
       review: { approved: rates.reviewApproved, total: openFactory.length },
+      stats,
       weeklyMerges: starts.map((ms, i) => ({
         label: weekLabel(ms),
         merged: counts[i] ?? 0,
       })),
+      weeks: statsWeeks,
     });
   } catch (error: unknown) {
     return c.json({ error: errMessage(error) }, 502);
