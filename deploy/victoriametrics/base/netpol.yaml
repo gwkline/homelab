@@ -1,0 +1,45 @@
+# Workload-owned exposure rules for the metrics stack (default-deny ingress
+# lives in policies/base; agents egress stays open for the apiserver scrapes).
+#
+# VictoriaMetrics admits Grafana only — its query API carries no application
+# auth, so the default-deny + this single allow is the whole surface
+# (ADR-003 D5: tailnet boundary + netpol is the conscious substitute).
+# kube-state-metrics admits VictoriaMetrics only (its scraper).
+# Neither is exposed to the tailnet — Grafana fronts everything.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana-to-victoriametrics
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: victoriametrics
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: grafana
+      ports:
+        - protocol: TCP
+          port: 8428
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-victoriametrics-to-kube-state-metrics
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: kube-state-metrics
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: victoriametrics
+      ports:
+        - protocol: TCP
+          port: 8080

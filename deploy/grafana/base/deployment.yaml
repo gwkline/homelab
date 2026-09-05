@@ -1,11 +1,13 @@
-# Grafana — log/metrics UI over the Loki stack (issue #44).
+# Grafana — UI over the metrics (VictoriaMetrics) + logs (Loki) stack (issue #44).
 #
 # Single replica, anonymous Viewer behind the tailnet (tailnet identity is
-# the auth gate; read-only posture mirrors headlamp). The Loki datasource is
-# provisioned from datasources.yaml in this directory — a copy of the
-# canonical definition in deploy/loki/base/grafana-datasource.yaml, mounted
-# as a file so Grafana picks it up without a sidecar. Dashboards are
-# ephemeral (emptyDir); provisioning is the source of truth.
+# the auth gate; read-only posture mirrors headlamp). Datasources are
+# provisioned from datasources.yaml in this directory — the Loki copy of
+# deploy/loki/base/grafana-datasource.yaml plus this issue's VictoriaMetrics
+# datasource — mounted as files so Grafana picks them up without a sidecar.
+# Dashboards are provisioned from dashboard-files.yaml; alert rules from
+# alerting.yaml (provisioned alerting, evaluated in-Grafana). All ephemeral
+# (emptyDir); provisioning is the source of truth.
 #
 # Image is digest-pinned (tag + digest together); bump deliberately.
 # Runs as uid 1000 (repo convention): GF_PATHS_* below keep every writable
@@ -84,6 +86,13 @@ spec:
               mountPath: /etc/grafana/provisioning/datasources/loki.yaml
               subPath: loki.yaml
               readOnly: true
+            - name: provisioning-datasources
+              mountPath: /etc/grafana/provisioning/datasources/vm.yaml
+              subPath: vm.yaml
+              readOnly: true
+            - name: provisioning-alerting
+              mountPath: /etc/grafana/provisioning/alerting
+              readOnly: true
             - name: provisioning-dashboards
               mountPath: /etc/grafana/provisioning/dashboards/provider.yaml
               subPath: provider.yaml
@@ -117,6 +126,9 @@ spec:
         - name: provisioning-datasources
           configMap:
             name: grafana-datasources
+        - name: provisioning-alerting
+          configMap:
+            name: grafana-alerting
         - name: provisioning-dashboards
           configMap:
             name: grafana-dashboard-provider

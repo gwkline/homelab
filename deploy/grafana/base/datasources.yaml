@@ -1,11 +1,14 @@
-# Loki datasource provisioning for this Grafana (issue #44).
+# Datasource provisioning for this Grafana (issue #44).
 #
-# Copy of the canonical definition in
-# deploy/loki/base/grafana-datasource.yaml, mounted as a provisioning file
-# at /etc/grafana/provisioning/datasources/loki.yaml (see deployment.yaml).
-# Kept as a file here instead of referencing the loki base's ConfigMap so
-# this kustomization stays self-contained. If the Loki URL or derived
-# fields change there, mirror them here.
+# Mounted as provisioning files at /etc/grafana/provisioning/datasources/
+# (see deployment.yaml):
+#   loki.yaml — copy of the canonical definition in
+#     deploy/loki/base/grafana-datasource.yaml, kept as a file here so this
+#     kustomization stays self-contained. If the Loki URL or derived fields
+#     change there, mirror them here.
+#   vm.yaml — the VictoriaMetrics metrics datasource this issue deploys
+#     (deploy/victoriametrics/base), default for new panels; the logs
+#     dashboard targets Loki by uid, so the default flip is safe.
 #
 # The derived fields are the "jump from a failed Job to its logs" path: any
 # log line carrying job_name="..." or pod="..." renders a link that opens
@@ -37,3 +40,20 @@ data:
               matcherRegex: 'pod="([^"]+)"'
               datasourceUid: loki
               url: '{pod="${__value.raw}"}'
+  vm.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: VictoriaMetrics
+        uid: victoriametrics
+        type: prometheus
+        access: proxy
+        url: http://victoriametrics.agents.svc:8428
+        isDefault: true
+        editable: false
+        jsonData:
+          # Match the 30s scrape interval (vm.yaml in
+          # deploy/victoriametrics/base); identify as a Prometheus source —
+          # VictoriaMetrics speaks the Prometheus query API (ADR-003 D7).
+          timeInterval: 30s
+          prometheusType: Prometheus
+          prometheusVersion: 2.55.0

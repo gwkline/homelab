@@ -12,6 +12,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - datasources.yaml
+  - alerting.yaml
   - dashboards-provider.yaml
   - dashboard-files.yaml
   - netpol.yaml

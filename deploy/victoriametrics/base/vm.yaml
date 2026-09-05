@@ -1,0 +1,228 @@
+# VictoriaMetrics — single-node metrics store (issue #44, ADR-003 D7/D8).
+#
+# One pod, one PVC. The PVC size below IS the hard disk ceiling; 30-day
+# retention (~4 GB actual at this cluster's series count) keeps usage far
+# underneath it. Grafana (deploy/grafana/base) is the only allowed client
+# (netpol.yaml); scrape config is provisioned from the ConfigMap below.
+#
+# Image is digest-pinned (tag + digest together); bump deliberately.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: victoria-metrics-scrape
+  namespace: agents
+  labels:
+    app: victoriametrics
+data:
+  scrape.yaml: |
+    # Prometheus-compatible scrape config consumed by VM's built-in
+    # -promscrape.config (no vmagent, per ADR-003 D7). 30s base scrape per
+    # ADR-003 D3. kubelet/cAdvisor are reached through the apiserver proxy
+    # (/api/v1/nodes/<name>/proxy/…) so no pod ever talks to a node IP
+    # directly; the victoria-metrics ServiceAccount grants nodes/proxy.
+    global:
+      scrape_interval: 30s
+      scrape_timeout: 10s
+    scrape_configs:
+      # Self-scrape: VM's own ingestion/scraper health (up == 1 gate).
+      - job_name: victoria-metrics
+        static_configs:
+          - targets: ["localhost:8428"]
+      # Kubernetes object state: jobs, deployments, pods, PVCs… (issue #44
+      # dashboards + alert rules read these).
+      - job_name: kube-state-metrics
+        static_configs:
+          - targets: ["kube-state-metrics.agents.svc:8080"]
+      # kubelet's own metrics: node_* resource series + kubelet_volume_stats_*
+      # (PVC usage). Via apiserver proxy, node identity carried on the
+      # `node`/`instance` labels.
+      - job_name: kubelet
+        scheme: https
+        tls_config:
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: node
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: instance
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - action: replace
+            source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics
+      # cAdvisor: container_* series (per-pod CPU/memory/restarts) — same
+      # proxy path as kubelet, so the same read-only RBAC covers both.
+      - job_name: cadvisor
+        scheme: https
+        tls_config:
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: node
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: instance
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - action: replace
+            source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoriametrics
+  namespace: agents
+  labels:
+    app: victoriametrics
+spec:
+  type: ClusterIP
+  selector:
+    app: victoriametrics
+  ports:
+    - name: http
+      port: 8428
+      targetPort: http
+      protocol: TCP
+---
+# Headless service the StatefulSet pins its identity to (loki pattern).
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoriametrics-headless
+  namespace: agents
+  labels:
+    app: victoriametrics
+spec:
+  clusterIP: None
+  selector:
+    app: victoriametrics
+  ports:
+    - name: http
+      port: 8428
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: victoriametrics
+  namespace: agents
+spec:
+  serviceName: victoriametrics-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: victoriametrics
+  template:
+    metadata:
+      labels:
+        app: victoriametrics
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1000
+      initContainers:
+        # Same pattern as loki: the local-path provisioner hands us a
+        # hostPath-backed directory, so fix ownership once before the
+        # unprivileged vm user (1000) writes to it.
+        - name: volume-init
+          image: busybox:1.36
+          command: ["chown", "-R", "1000:1000", "/data"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: victoriametrics
+          # victoriametrics/victoria-metrics:v1.151.0 (multi-arch manifest
+          # list, 2026-09-05). Flag surface moves between VM versions —
+          # bump deliberately and re-check the args below.
+          image: victoriametrics/victoria-metrics:v1.151.0@sha256:6d164540a04f49ba4e696cbdb70f9fee78be1e94b8f2a1292743a0b1ab8275bd
+          args:
+            - -storageDataPath=/data
+            # Retention: 30 days (ADR-003 D3) — outlives every Job TTL in
+            # the repo with margin for a debugging weekend.
+            - -retentionPeriod=30d
+            - -promscrape.config=/etc/vm/scrape.yaml
+            # Cap VM's internal memory budget at ~15% of node RAM
+            # (~1.2Gi on the 8GB machines) so it cannot burst past the 2Gi
+            # container limit below and get OOMKilled under load.
+            - -memory.allowedPercent=15
+          ports:
+            - name: http
+              containerPort: 8428
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 30
+            failureThreshold: 6
+          resources:
+            # ADR-003 D8.1 budget — verified against D1 with
+            # `kubectl top pods -n agents` (see README.md).
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          volumeMounts:
+            - name: scrape
+              mountPath: /etc/vm
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: scrape
+          configMap:
+            name: victoria-metrics-scrape
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            # The hard ceiling for metrics on this machine: a PVC cannot
+            # grow past its request. 30-day retention (~4 GB) normally
+            # keeps usage far below; if it fills, VM refuses writes loudly
+            # (dashboard + alert) instead of the disk growing — see
+            # deploy/victoriametrics/README.md.
+            storage: 15Gi

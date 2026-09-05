@@ -1,0 +1,320 @@
+# Provisioned Grafana alert rules (issue #44). Mounted at
+# /etc/grafana/provisioning/alerting (see deployment.yaml); evaluated by
+# Grafana's built-in scheduler against the VictoriaMetrics datasource — no
+# vmalert, no Alertmanager, no extra pods (ADR-003 D7).
+#
+# The four categories #44 requires: disk pressure (node + PVC), failed
+# backups, unavailable core workloads, repeated Job failures. States are
+# visible in the Grafana Alerting UI; notifications are deliberately not
+# wired yet — nothing pages at 2 a.m. until a receiver exists for it
+# (ADR-003 "alerting stays a non-goal" applies to paging, not evaluation).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-alerting
+  namespace: agents
+data:
+  alerts.yaml: |
+    apiVersion: 1
+    groups:
+      - orgId: 1
+        name: homelab-core
+        folder: Homelab Alerts
+        interval: 1m
+        rules:
+          - uid: node-disk-pressure
+            title: Node disk pressure (root filesystem)
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: victoriametrics
+                model:
+                  datasource:
+                    type: prometheus
+                    uid: victoriametrics
+                  editorMode: code
+                  expr: '100 * (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"})'
+                  instant: true
+                  intervalMs: 1000
+                  legendFormat: __auto
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                relativeTimeRange:
+                  from: 0
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params: [85]
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params: [C]
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  datasource:
+                    type: __expr__
+                    uid: __expr__
+                  expression: A
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  type: threshold
+            for: 10m
+            noDataState: OK
+            execErrState: Error
+            annotations:
+              summary: 'Root filesystem on node {{ $labels.node }} has been over 85% full for 10 minutes — the local-path backing disk is running out.'
+            labels:
+              severity: warning
+            isPaused: false
+          - uid: pvc-usage-high
+            title: PVC usage high
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: victoriametrics
+                model:
+                  datasource:
+                    type: prometheus
+                    uid: victoriametrics
+                  editorMode: code
+                  expr: '100 * (1 - kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes)'
+                  instant: true
+                  intervalMs: 1000
+                  legendFormat: __auto
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                relativeTimeRange:
+                  from: 0
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params: [80]
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params: [C]
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  datasource:
+                    type: __expr__
+                    uid: __expr__
+                  expression: A
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  type: threshold
+            for: 10m
+            noDataState: OK
+            execErrState: Error
+            annotations:
+              summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has been over 80% full for 10 minutes. PVCs cannot grow past their request — shrink retention or move data.'
+            labels:
+              severity: warning
+            isPaused: false
+          - uid: backup-job-failed
+            title: Backup job failed
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 900
+                  to: 0
+                datasourceUid: victoriametrics
+                model:
+                  datasource:
+                    type: prometheus
+                    uid: victoriametrics
+                  editorMode: code
+                  expr: 'sum by (namespace, job_name) (increase(kube_job_status_failed{job_name=~"restic-backup-.*"}[24h]))'
+                  instant: true
+                  intervalMs: 1000
+                  legendFormat: __auto
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                relativeTimeRange:
+                  from: 0
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params: [0]
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params: [C]
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  datasource:
+                    type: __expr__
+                    uid: __expr__
+                  expression: A
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  type: threshold
+            noDataState: OK
+            execErrState: Error
+            annotations:
+              summary: 'Nightly restic backup Job {{ $labels.job_name }} failed in the last 24h — last good snapshot is aging out.'
+            labels:
+              severity: critical
+            isPaused: false
+          - uid: core-workload-unavailable
+            title: Core workload unavailable
+            condition: D
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: victoriametrics
+                model:
+                  datasource:
+                    type: prometheus
+                    uid: victoriametrics
+                  editorMode: code
+                  expr: 'count by (namespace, deployment) (kube_deployment_status_replicas_available{namespace=~"agents|database"} < kube_deployment_spec_replicas{namespace=~"agents|database"}) or count by (namespace, statefulset) (kube_statefulset_status_replicas_available{namespace=~"agents|database"} < kube_statefulset_spec_replicas{namespace=~"agents|database"})'
+                  instant: true
+                  intervalMs: 1000
+                  legendFormat: __auto
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                relativeTimeRange:
+                  from: 0
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params: []
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params: [C]
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  datasource:
+                    type: __expr__
+                    uid: __expr__
+                  expression: A
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  reducer: count
+                  settings:
+                    mode: strict
+                  type: reduce
+              - refId: D
+                relativeTimeRange:
+                  from: 0
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params: [0]
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params: [D]
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  datasource:
+                    type: __expr__
+                    uid: __expr__
+                  expression: C
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  type: threshold
+            for: 5m
+            noDataState: OK
+            execErrState: Error
+            annotations:
+              summary: 'Core workload in {{ $labels.namespace }} has been below its desired replica count for 5 minutes (short of the chaos-monkey flap window).'
+            labels:
+              severity: critical
+            isPaused: false
+          - uid: repeated-job-failures
+            title: Repeated Job failures
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 7200
+                  to: 0
+                datasourceUid: victoriametrics
+                model:
+                  datasource:
+                    type: prometheus
+                    uid: victoriametrics
+                  editorMode: code
+                  expr: 'sum by (namespace) (increase(kube_job_status_failed[2h]))'
+                  instant: true
+                  intervalMs: 1000
+                  legendFormat: __auto
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                relativeTimeRange:
+                  from: 0
+                  to: 0
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params: [1]
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params: [C]
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                  datasource:
+                    type: __expr__
+                    uid: __expr__
+                  expression: A
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  type: threshold
+            noDataState: OK
+            execErrState: Error
+            annotations:
+              summary: 'Two or more Job pods failed in namespace {{ $labels.namespace }} within 2h — check the Failed Jobs panel and query Loki by job_name.'
+            labels:
+              severity: warning
+            isPaused: false

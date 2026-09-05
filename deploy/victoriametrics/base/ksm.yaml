@@ -1,0 +1,92 @@
+# kube-state-metrics — Kubernetes object state as metrics (issue #44, ADR-003 D8.3).
+#
+# Watches the cluster API (read-only, rbac.yaml) and exposes kube_* series:
+# job/deployment/statefulset/pod/PVC status that the dashboards and alert
+# rules consume. Node, container, and volume-usage metrics come from the
+# kubelet/cAdvisor scrapes in vm.yaml — this pod only translates API objects.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-state-metrics
+  namespace: agents
+  labels:
+    app: kube-state-metrics
+spec:
+  type: ClusterIP
+  selector:
+    app: kube-state-metrics
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-state-metrics
+  namespace: agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-state-metrics
+  template:
+    metadata:
+      labels:
+        app: kube-state-metrics
+    spec:
+      serviceAccountName: kube-state-metrics
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kube-state-metrics
+          # registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1
+          # (2026-06 release; version-pinned, no :latest — repo rule).
+          image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1
+          args:
+            - --port=8080
+            - --telemetry-port=8081
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+            failureThreshold: 6
+          resources:
+            # ADR-003 D8.3 budget (tuned small; re-measure with kubectl top).
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

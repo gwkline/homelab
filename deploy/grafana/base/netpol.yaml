@@ -51,3 +51,10 @@ spec:
       ports:
         - protocol: TCP
           port: 3100
+    - to: # VictoriaMetrics query API + datasource health (same namespace)
+        - podSelector:
+            matchLabels:
+              app: victoriametrics
+      ports:
+        - protocol: TCP
+          port: 8428
