@@ -9,6 +9,16 @@ import { jobNameFor, jobManifest, viewJob } from "./jobs.js";
 import { loadConfig, api } from "./k8s.js";
 import type { K8sObject, JobTemplateSpec } from "./k8s.js";
 import {
+  createKnowledgeClient,
+  KnowledgeApiError,
+  KNOWLEDGE_MODE_SET,
+  KNOWLEDGE_QUERY_MAX,
+  KNOWLEDGE_TOP_K_MAX,
+  loadKnowledgeConfig,
+  NAMESPACE_PATTERN,
+  SOURCE_ID_PATTERN,
+} from "./knowledge.js";
+import {
   collectRepoStats,
   historyFromStore,
   loadStatsStore,
@@ -24,6 +34,8 @@ import type { RepoStats } from "./stats.js";
 const root = process.env.PANEL_ROOT ?? process.cwd();
 const app = new Hono();
 const k8s = api(loadConfig());
+const knowledgeCfg = loadKnowledgeConfig();
+const knowledge = createKnowledgeClient(knowledgeCfg);
 
 const FACTORY_NS = "sandbox";
 const FACTORY_CRONJOB = "factory-orchestrator";
@@ -342,6 +354,153 @@ app.get("/api/devtools", async (c) => {
     });
   } catch (error: unknown) {
     return c.json({ error: errMessage(error) }, 502);
+  }
+});
+
+// ── Knowledge: sources, sync, cited search (#65) ────────────────────────────
+// Proxy-only surface over the knowledge API. The bearer token stays in the
+// panel server env/secret and is never echoed into a response, and the
+// knowledge database is reached exclusively through the knowledge API
+// (ADR-002 D2) — no Postgres client exists in this process.
+
+// Map an upstream knowledge error to the response status: specific upstream
+// meanings surface verbatim (404 unknown job/source, 409 sync already
+// running, 422 invalid search, 504 timeout); everything else is 502.
+const knowledgeStatus = (error: unknown): 404 | 409 | 422 | 502 | 504 => {
+  const status = errStatus(error);
+  if (
+    error instanceof KnowledgeApiError &&
+    (status === 404 || status === 409 || status === 422 || status === 504)
+  ) {
+    return status;
+  }
+  return 502;
+};
+
+app.get("/api/knowledge/sources", async (c) => {
+  if (knowledgeCfg.base === null) {
+    return c.json({ configured: false, sources: [] });
+  }
+  try {
+    const sources = await knowledge.listSources();
+    return c.json({ configured: true, sources });
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, knowledgeStatus(error));
+  }
+});
+
+app.post("/api/knowledge/sync", async (c) => {
+  if (knowledgeCfg.base === null) {
+    return c.json({ error: "knowledge API is not configured" }, 503);
+  }
+  let body: { sourceId?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const sourceId = String(body.sourceId ?? "").trim();
+  if (!SOURCE_ID_PATTERN.test(sourceId)) {
+    return c.json(
+      {
+        error:
+          "sourceId must match ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ (as shown in the sources view)",
+      },
+      400
+    );
+  }
+  try {
+    const job = await knowledge.triggerSync(sourceId);
+    return c.json({ jobId: job.jobId, sourceId, status: job.status }, 202);
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, knowledgeStatus(error));
+  }
+});
+
+app.get("/api/knowledge/sync/:jobId", async (c) => {
+  if (knowledgeCfg.base === null) {
+    return c.json({ error: "knowledge API is not configured" }, 503);
+  }
+  const jobId = c.req.param("jobId");
+  if (!SOURCE_ID_PATTERN.test(jobId)) {
+    return c.json({ error: "invalid job id" }, 400);
+  }
+  try {
+    return c.json(await knowledge.syncJob(jobId));
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, knowledgeStatus(error));
+  }
+});
+
+app.post("/api/knowledge/search", async (c) => {
+  if (knowledgeCfg.base === null) {
+    return c.json({ error: "knowledge API is not configured" }, 503);
+  }
+  let body: {
+    includeSuperseded?: boolean;
+    mode?: string;
+    namespace?: string;
+    query?: string;
+    topK?: number | string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const query = typeof body.query === "string" ? body.query.trim() : "";
+  if (query.length === 0) {
+    return c.json({ error: "query must not be blank" }, 400);
+  }
+  if (query.length > KNOWLEDGE_QUERY_MAX) {
+    return c.json(
+      { error: `query exceeds ${KNOWLEDGE_QUERY_MAX} characters` },
+      400
+    );
+  }
+  // Strict mirror of the retrieval API's request contract; anything the panel
+  // would reject is rejected here so the upstream never sees a malformed body.
+  const upstream: Record<string, unknown> = { query };
+  if (body.namespace !== undefined) {
+    const namespace = String(body.namespace).trim();
+    if (!NAMESPACE_PATTERN.test(namespace)) {
+      return c.json(
+        { error: "namespace must match ^[a-z0-9][a-z0-9-]{0,63}$" },
+        400
+      );
+    }
+    upstream.namespace = namespace;
+  }
+  if (body.mode !== undefined) {
+    const mode = String(body.mode);
+    if (!KNOWLEDGE_MODE_SET.has(mode)) {
+      return c.json({ error: "mode must be one of bm25, vector, hybrid" }, 400);
+    }
+    upstream.mode = mode;
+  }
+  if (body.topK !== undefined) {
+    const topK = Number(body.topK);
+    if (!Number.isInteger(topK) || topK < 1 || topK > KNOWLEDGE_TOP_K_MAX) {
+      return c.json(
+        {
+          error: `topK must be an integer between 1 and ${KNOWLEDGE_TOP_K_MAX}`,
+        },
+        400
+      );
+    }
+    upstream.topK = topK;
+  }
+  if (body.includeSuperseded === true) {
+    upstream.filters = { includeSuperseded: true };
+  }
+  try {
+    const out = await knowledge.search(upstream);
+    return c.json({
+      results: out.results,
+      totalCandidates: out.totalCandidates,
+    });
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, knowledgeStatus(error));
   }
 });
 
