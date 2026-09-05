@@ -1,6 +1,6 @@
 # External Secrets Operator (ESO)
 
-Pinned ESO install for issue #38. Provider credentials (1Password Connect) are intentionally absent — see "Credentials" below (issue #41).
+Pinned ESO install for issue #38. The 1Password **SDK** provider connection (issue #41 — no Connect server) is documented under "Credentials" below.
 
 ## Pinned versions
 
@@ -17,8 +17,8 @@ To upgrade: pull the new chart, re-render with the same `--set resources.*` flag
 
 - `namespace.yaml` — `external-secrets` namespace (PSA baseline).
 - `eso.yaml` — full chart render (CRDs, RBAC, 3 Deployments, webhook configs).
-- `secretstore-placeholder.yaml` — `SecretStore/eso-placeholder` on the ESO **fake** provider (static pairs, no credentials). Stand-in until #41.
-- `externalsecret-smoke.yaml` — `ExternalSecret/eso-smoke` syncing `smoke-password` into Secret `eso-smoke-output`. Proves reconciliation.
+- `secretstore-placeholder.yaml` — `SecretStore/eso-placeholder` on the ESO **fake** provider (static pairs, no credentials). Credential-free reconciliation canary; the real 1Password path lives per namespace (see Credentials).
+- `externalsecret-smoke.yaml` — `ExternalSecret/eso-smoke` syncing `smoke-password` into Secret `eso-smoke-output`. Proves reconciliation without credentials. The provider-path smoke (`onepassword-smoke`, issue #41) lives in `deploy/github-tokens/base/onepassword-smoke.yaml`, next to the stores it exercises.
 - `README.md` — this file.
 
 ## Install / recover (plain kubectl, no Flux)
@@ -47,13 +47,56 @@ Flux compatibility: the layout is a plain kustomize base, so a later Flux `Kusto
 
 Other apps' `ExternalSecret` manifests must declare readiness on ESO: apply `deploy/eso/base` first and wait for the controller + CRDs (`kubectl wait --for=condition=Established crd/externalsecrets.external-secrets.io`) before applying any namespaced `ExternalSecret`/`SecretStore`.
 
-## Credentials (issue #41)
+## Credentials — 1Password SDK provider (issue #41)
 
-No real provider credentials exist on this machine (no 1Password CLI), so nothing here authenticates to 1Password. When they do:
+ESO reads the one dedicated 1Password vault **`homelab`** through the official `onepasswordSDK` provider (the pinned build above ships it — `onepasswordSDK` is in the rendered CRDs). No Connect server, no in-cluster 1Password dependency, no circular secret problem.
 
-1. Create the credential Secret out-of-band (never commit values): `kubectl -n external-secrets create secret generic onepassword-creds --from-literal=token=<token> --from-literal=connect-host=<url>`.
-2. Add a `SecretStore` (or `ClusterSecretStore`) with `provider.onePasswordSDK` referencing that Secret — new file in this dir, added to `kustomization.yaml`.
-3. Repoint consumers at it. Keep the fake placeholder until the last consumer migrates, then delete the placeholder files.
+- Namespace-scoped `SecretStore`s named `onepassword`, each pinned to exactly that one vault, wire the provider per namespace: `agents` + `sandbox` (`deploy/github-tokens/base/secretstore.yaml`), `tailscale` (`deploy/tailscale/secretstore.yaml`). No store spans vaults; no ClusterSecretStore is needed.
+- The 1Password **service-account token** (least-privilege, restricted to the `homelab` vault) is the only manually bootstrapped Kubernetes secret for this provider. Create it in 1Password (Developer → service accounts); never commit or paste it into issues.
+
+### Bootstrap
+
+`scripts/create-onepassword-secret.sh` writes Secret `onepassword-service-account` (key `token`) into every namespace hosting a `onepassword` SecretStore, creating missing namespaces on a virgin cluster:
+
+```sh
+export OP_SERVICE_ACCOUNT_TOKEN=... # or leave unset: hidden stdin prompt
+./scripts/create-onepassword-secret.sh
+```
+
+The script is idempotent (`--dry-run=client` + `kubectl apply`) and never logs the token: input is hidden and it is piped to kubectl on stdin, never on argv. Re-running is the rotation path (below).
+
+### Verification (harmless test item)
+
+1. In vault `homelab`, create item `eso-smoke` with a text field labeled `password` holding any harmless value.
+2. Store health: `kubectl -n agents get secretstore onepassword` → `READY=True`.
+3. Sync (`external-secrets.io/v1`): `kubectl -n agents get externalsecret onepassword-smoke` → `Ready=True`, and Secret `onepassword-smoke-output` carries the value:
+
+```sh
+kubectl -n agents get secret onepassword-smoke-output -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+4. Delete-and-restore: `kubectl -n agents delete secret onepassword-smoke-output`, then force the reconcile and watch it flip back to `Ready=True`:
+
+```sh
+kubectl -n agents annotate externalsecret onepassword-smoke \
+  external-secrets.io/force-sync="$(date +%s)" --overwrite
+kubectl -n agents get externalsecret onepassword-smoke -w
+```
+
+(Without the annotation ESO restores it at the next refresh, ≤ `refreshInterval` = 1h.)
+
+On a fresh cluster the smoke stays `Pending` until the token is bootstrapped and `kubectl apply -k deploy/github-tokens/base` has created the `agents` store — then it converges on its own.
+
+### Rotation
+
+**Service-account token** (the bootstrap secret): create a new least-privilege service account in 1Password first (create-then-swap — the old token keeps working until revoked), then re-run `scripts/create-onepassword-secret.sh` with the new token. It updates the same Secrets in place; ESO rebuilds its provider client from the changed Secret on the next reconcile. Force a proof on one ExternalSecret with the `external-secrets.io/force-sync` annotation above and confirm the store reports `READY=True`. Revoke the old service account only after a synced Secret refreshes successfully.
+
+**Vault item values** (github tokens, tailscale OAuth, backup credentials): update the item in 1Password; ESO converges within the ExternalSecret's `refreshInterval` (1h) plus the ~5m SDK cache. Per-workload pickup and drills: `deploy/github-tokens/base/README.md`, `deploy/tailscale/README.md`, `docs/runbook-server-cluster.md` §11.
+
+### Disaster recovery
+
+- The token is a documented prerequisite (`docs/rebuild-runbook.md` §1) and step 1 of the rebuild re-runs `scripts/create-onepassword-secret.sh`; every synced Secret is then recreated from the vault automatically (`creationPolicy: Owner` — deleting one is safe, ESO restores it).
+- If ESO itself is unavailable during a rebuild, `scripts/create-backup-secret.sh` is the documented emergency fallback for `backup-target` (`docs/runbook-server-cluster.md` §11); ESO reconciles the Secret back to vault state once healthy.
 
 ## Uninstall
 

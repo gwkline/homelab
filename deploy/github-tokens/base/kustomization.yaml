@@ -8,6 +8,7 @@ resources:
   - secretstore.yaml
   - github-token.yaml
   - github-token-writer.yaml
+  - onepassword-smoke.yaml
 
 labels:
   - pairs:

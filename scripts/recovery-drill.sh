@@ -127,10 +127,10 @@ end_stage
 
 # ---------------------------------------------------------------------------
 stage secrets
-kubectl -n agents create secret generic onepassword-service-account \
-  --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"
-kubectl -n sandbox create secret generic onepassword-service-account \
-  --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"
+# Idempotent bootstrap of the one hand-entered secret (issue #41): writes
+# onepassword-service-account into agents, sandbox AND tailscale from
+# OP_SERVICE_ACCOUNT_TOKEN (env/stdin, never logged). Safe on re-runs.
+./scripts/create-onepassword-secret.sh
 kubectl apply -k deploy/github-tokens/base
 if kubectl get crd externalsecrets.external-secrets.io >/dev/null 2>&1; then
   kubectl -n agents wait --for=condition=Ready externalsecret/github-token --timeout=120s ||

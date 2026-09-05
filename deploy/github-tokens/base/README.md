@@ -8,8 +8,8 @@ kubectl apply -k deploy/github-tokens/base
 
 ## Prerequisites
 
-1. External Secrets Operator installed with the `onepasswordSDK` provider, pinned version (issue #41).
-2. The 1Password **service-account token** — the only manually bootstrapped secret for this provider — in Secret `onepassword-service-account` (key `token`), restricted to the dedicated `homelab` vault. Create it at bootstrap via env/stdin; never log or commit it.
+1. External Secrets Operator installed with the `onepasswordSDK` provider, pinned version (issue #38/#41).
+2. The 1Password **service-account token** — the only manually bootstrapped secret for this provider — in Secret `onepassword-service-account` (key `token`), restricted to the dedicated `homelab` vault. Bootstrap it with `scripts/create-onepassword-secret.sh` (idempotent; token via `OP_SERVICE_ACCOUNT_TOKEN` or a hidden stdin prompt, never logged); never log or commit it.
 
 ## 1Password item contract
 
@@ -57,6 +57,27 @@ kubectl -n agents exec hermes-0 -- gh api user -q .login
 # 3. Private repository clone from a sandbox workload
 kubectl -n sandbox exec -it deploy/... -- git clone https://github.com/gwkline/launchpad /tmp/launchpad
 ```
+
+## Provider smoke (issue #41)
+
+`onepassword-smoke.yaml` is the harmless end-to-end proof of the 1Password SDK connection: item `eso-smoke` (field `password`, any non-sensitive value) in the `homelab` vault syncs into Secret `onepassword-smoke-output` in `agents`, touching no real credential. Until the item exists the ExternalSecret reports `Ready=False` and retries — expected, same as `github-token-writer`.
+
+```sh
+# 1. store health and sync status
+kubectl -n agents get secretstore onepassword           # Ready=True
+kubectl -n agents get externalsecret onepassword-smoke  # Ready=True
+
+# 2. the synced (non-sensitive) value
+kubectl -n agents get secret onepassword-smoke-output -o jsonpath='{.data.password}' | base64 -d; echo
+
+# 3. delete-and-restore: ESO recreates the Secret from the vault
+kubectl -n agents delete secret onepassword-smoke-output
+kubectl -n agents annotate externalsecret onepassword-smoke \
+  external-secrets.io/force-sync="$(date +%s)" --overwrite
+kubectl -n agents get externalsecret onepassword-smoke -w
+```
+
+Without the `force-sync` annotation the restore happens at the next refresh (≤ `refreshInterval` = 1h). Rotating the service-account token itself: re-run `scripts/create-onepassword-secret.sh` — see `deploy/eso/base/README.md`.
 
 ## Security notes
 

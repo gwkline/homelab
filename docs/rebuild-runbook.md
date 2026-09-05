@@ -58,9 +58,10 @@ git clone https://github.com/gwkline/homelab.git && cd homelab
 # 0. node ready per above
 
 # 1. secrets infra: External Secrets Operator (issue #41) + the one
-#    hand-entered 1Password bootstrap token (env/stdin, never logged)
-kubectl -n agents create secret generic onepassword-service-account \
-  --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"   # repeat for sandbox and tailscale
+#    hand-entered 1Password bootstrap token (env/stdin, never logged):
+#    scripts/create-onepassword-secret.sh writes onepassword-service-account
+#    into agents, sandbox AND tailscale (idempotent; safe on re-runs)
+./scripts/create-onepassword-secret.sh
 kubectl apply -k deploy/github-tokens/base       # syncs github-token(+writer) from 1Password
 
 # 2. namespaces + policies (before deploy/tailscale — its serve-fixer RBAC
