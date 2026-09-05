@@ -1,0 +1,464 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Factory Operations API",
+    "version": "1.0.0",
+    "description": "Request and inspect software-factory Runs without Kubernetes access (issue #84, ADR-002 GitHub-as-ledger). Imported into Executor (self-host MCP gateway) as an OpenAPI integration: MCP tool schemas derive from this document, so the surface agents see is exactly the surface described here. Rules the gateway enforces and callers must respect:\n\n- RunProfiles fix the execution environment (image, service account, network policy, resources). Callers provide only (repo, issue, profile); there are no Kubernetes fields or profile overrides in this API and none can be supplied.\n- Reads (list/get) are policy-allowed. Mutations (create/cancel/retry) are configured in Executor to require operator approval before they execute.\n- Caller identity travels via the `X-Factory-Requested-By` header, set host-side per MCP client connection (hermes, t3code, panel) — never as a tool argument. It is preserved into the factory audit events (Job `factory.gwkline.io/requested-by` label, FACTORY_TRIGGERED_BY env, and the run marker/audit comment on the issue).\n- All credentials (GitHub token, Kubernetes RBAC) stay host-side in Executor and the panel service. No credential is a caller input, and error responses carry actionable factory state only.",
+    "contact": {
+      "name": "homelab factory",
+      "url": "https://github.com/gwkline/homelab"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://panel-http.agents.svc:3000",
+      "description": "In-cluster factory API (panel). Reachable only from the Executor pod by NetworkPolicy; agents call it exclusively through the Executor MCP gateway."
+    }
+  ],
+  "paths": {
+    "/api/factory/profiles": {
+      "get": {
+        "operationId": "factory_list_profiles",
+        "summary": "List admitted RunProfiles, repos, and defaults",
+        "description": "Read-only. Returns the closed set of RunProfiles, the allowlisted repositories, and the default repo/profile used when a call omits them. Use this first: any create/retry call with values outside these lists is denied.",
+        "x-factory-policy": "read",
+        "responses": {
+          "200": {
+            "description": "Admitted profiles and defaults",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Profiles" }
+              }
+            }
+          },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      }
+    },
+    "/api/factory/run": {
+      "get": {
+        "operationId": "factory_get_run",
+        "summary": "Inspect one factory Run",
+        "description": "Read-only. Resolves the Run for an issue from the ledger labels and its run marker comment (the durable audit event): state, profile, requesting client, in-flight Jobs, and artifact links (draft PR URL, run comment URL, redacted log tail, worker report JSON).",
+        "x-factory-policy": "read",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "description": "owner/name repository; defaults to the factory default repo",
+            "schema": { "$ref": "#/components/schemas/Repository" }
+          },
+          {
+            "name": "issue",
+            "in": "query",
+            "required": true,
+            "description": "GitHub issue number hosting the Run",
+            "schema": { "$ref": "#/components/schemas/IssueNumber" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run state and artifact links",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RunDetail" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      },
+      "post": {
+        "operationId": "factory_create_run",
+        "summary": "Create a factory Run from a labeled issue",
+        "description": "Requires operator approval in Executor policy. Labels the issue `factory/queued`, immediately triggers the orchestrator Job, and records the run marker comment. Idempotent at the contract level: an issue already queued/in-progress/with a draft PR is refused with 409 — never re-label it or create a duplicate; inspect the existing Run instead. The profile must come from `factory_list_profiles`; no other inputs exist.",
+        "x-factory-policy": "approval-required",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateRun" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Run queued and orchestrator triggered",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RunQueued" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Denied" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      }
+    },
+    "/api/factory/runs": {
+      "get": {
+        "operationId": "factory_list_runs",
+        "summary": "List factory Runs",
+        "description": "Read-only. Every open issue carrying a factory/* ledger label, optionally filtered by run state.",
+        "x-factory-policy": "read",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "description": "owner/name repository; defaults to the factory default repo",
+            "schema": { "$ref": "#/components/schemas/Repository" }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/RunState" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Runs (issue, state, title, links)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RunList" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Denied" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      }
+    },
+    "/api/factory/run/cancel": {
+      "post": {
+        "operationId": "factory_cancel_run",
+        "summary": "Cancel a queued or in-flight factory Run",
+        "description": "Requires operator approval in Executor policy. Converges the ledger to `factory/cancelled` and stops in-flight worker Jobs. Only queued, running, or awaiting-approval Runs can be cancelled; published Runs are refused (409) — close the draft PR instead. Terminal states are final: retry instead.",
+        "x-factory-policy": "approval-required",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RunTarget" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run cancelled; ledger label swapped and in-flight Jobs stopped",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CancelResult" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Denied" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      }
+    },
+    "/api/factory/run/retry": {
+      "post": {
+        "operationId": "factory_retry_run",
+        "summary": "Retry a failed or cancelled factory Run",
+        "description": "Requires operator approval in Executor policy. Re-queues the issue and triggers a fresh orchestrator attempt. Only failed or cancelled Runs can be retried; anything else is refused with 409 naming the current state. An optional profile from `factory_list_profiles` may be re-selected — unknown profiles are denied.",
+        "x-factory-policy": "approval-required",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RetryRun" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Run re-queued and orchestrator triggered",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RunQueued" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Denied" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Repository": {
+        "type": "string",
+        "description": "owner/name — must be on the factory allowlist (see factory_list_profiles); others are denied",
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+        "maxLength": 120
+      },
+      "IssueNumber": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 10000000
+      },
+      "ProfileName": {
+        "type": "string",
+        "description": "Admitted RunProfile — the closed set returned by factory_list_profiles",
+        "enum": ["code-pr", "security"]
+      },
+      "RunState": {
+        "type": "string",
+        "description": "Run lifecycle state derived from the ledger labels",
+        "enum": [
+          "queued",
+          "running",
+          "awaiting-approval",
+          "published",
+          "needs-review",
+          "approved",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "RequestedBy": {
+        "type": "string",
+        "description": "Caller/run identity recorded in the factory audit events. Set host-side by the Executor integration (X-Factory-Requested-By, one value per MCP client connection); it is not a caller-supplied field.",
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$"
+      },
+      "CreateRun": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue"],
+        "properties": {
+          "repo": { "$ref": "#/components/schemas/Repository" },
+          "issue": { "$ref": "#/components/schemas/IssueNumber" },
+          "profile": { "$ref": "#/components/schemas/ProfileName" }
+        }
+      },
+      "RetryRun": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue"],
+        "properties": {
+          "repo": { "$ref": "#/components/schemas/Repository" },
+          "issue": { "$ref": "#/components/schemas/IssueNumber" },
+          "profile": { "$ref": "#/components/schemas/ProfileName" }
+        }
+      },
+      "RunTarget": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue"],
+        "properties": {
+          "repo": { "$ref": "#/components/schemas/Repository" },
+          "issue": { "$ref": "#/components/schemas/IssueNumber" }
+        }
+      },
+      "Profiles": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["profiles", "repos", "defaultProfile", "defaultRepo"],
+        "properties": {
+          "profiles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "description"],
+              "properties": {
+                "name": { "$ref": "#/components/schemas/ProfileName" },
+                "description": { "type": "string" }
+              }
+            }
+          },
+          "repos": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Repository" }
+          },
+          "defaultProfile": { "$ref": "#/components/schemas/ProfileName" },
+          "defaultRepo": { "$ref": "#/components/schemas/Repository" }
+        }
+      },
+      "RunSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue", "state", "title", "url"],
+        "properties": {
+          "issue": { "$ref": "#/components/schemas/IssueNumber" },
+          "state": { "$ref": "#/components/schemas/RunState" },
+          "title": { "type": "string" },
+          "updatedAt": {
+            "type": "string",
+            "description": "ISO-8601; omitted when unknown"
+          },
+          "url": { "type": "string", "description": "Ledger issue URL" }
+        }
+      },
+      "RunList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repo", "runs"],
+        "properties": {
+          "repo": { "$ref": "#/components/schemas/Repository" },
+          "runs": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/RunSummary" }
+          }
+        }
+      },
+      "RunDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue", "repo", "state", "title", "url", "artifacts"],
+        "properties": {
+          "issue": { "$ref": "#/components/schemas/IssueNumber" },
+          "repo": { "$ref": "#/components/schemas/Repository" },
+          "state": { "$ref": "#/components/schemas/RunState" },
+          "title": { "type": "string" },
+          "url": { "type": "string" },
+          "profile": {
+            "type": "string",
+            "description": "RunProfile recorded on the run marker comment"
+          },
+          "requestedBy": {
+            "type": "string",
+            "description": "Identity recorded on the run marker comment, when the run was requested through Executor"
+          },
+          "jobs": {
+            "type": "array",
+            "description": "In-flight or recent worker Jobs for this issue",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "status"],
+              "properties": {
+                "name": { "type": "string" },
+                "status": { "type": "string" }
+              }
+            }
+          },
+          "artifacts": { "$ref": "#/components/schemas/Artifacts" }
+        }
+      },
+      "Artifacts": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["runComment", "pr", "logTail", "report"],
+        "properties": {
+          "runComment": {
+            "type": "string",
+            "description": "URL of the run marker comment (audit event); null until the orchestrator claims the run"
+          },
+          "pr": {
+            "type": "string",
+            "description": "Draft PR URL; null until published"
+          },
+          "logTail": {
+            "type": "string",
+            "description": "Redacted worker log tail from the run comment; null while running"
+          },
+          "report": {
+            "type": "string",
+            "description": "Worker report JSON (verification verdict, base sha, run id); null until available"
+          }
+        }
+      },
+      "RunQueued": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "issue",
+          "repo",
+          "profile",
+          "jobName",
+          "queued",
+          "requestedBy"
+        ],
+        "properties": {
+          "issue": { "$ref": "#/components/schemas/IssueNumber" },
+          "repo": { "$ref": "#/components/schemas/Repository" },
+          "profile": { "$ref": "#/components/schemas/ProfileName" },
+          "jobName": {
+            "type": "string",
+            "description": "Triggered orchestrator Job name"
+          },
+          "queued": { "type": "boolean" },
+          "requestedBy": { "$ref": "#/components/schemas/RequestedBy" }
+        }
+      },
+      "CancelResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cancelled",
+          "issue",
+          "repo",
+          "jobsStopped",
+          "requestedBy"
+        ],
+        "properties": {
+          "cancelled": { "type": "boolean" },
+          "issue": { "$ref": "#/components/schemas/IssueNumber" },
+          "repo": { "$ref": "#/components/schemas/Repository" },
+          "jobsStopped": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "requestedBy": { "$ref": "#/components/schemas/RequestedBy" }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Actionable factory state: what was refused and what to do next (e.g. the admitted profiles/repos or the current Run state). Never contains credentials or stack internals."
+          }
+        }
+      }
+    },
+    "responses": {
+      "Denied": {
+        "description": "Denied — the call violated the contract (unknown profile, repo not allowlisted, malformed issue)",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "No such issue, or the issue carries no factory Run",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "Idempotent refusal — the Run exists in a state that forbids this transition; the error names the current state",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      },
+      "UpstreamError": {
+        "description": "Factory host could not reach GitHub/Kubernetes — retry later; the ledger was not changed",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      }
+    }
+  }
+}

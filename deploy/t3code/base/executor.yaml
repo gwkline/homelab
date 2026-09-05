@@ -1,0 +1,21 @@
+# Executor MCP connection for t3code (#84): the shared gateway endpoint and
+# the client identity t3code presents there. The matching credential comes
+# from secret executor-client (key token, optional so the gateway still boots
+# before Executor lands) — see statefulset.yaml. Both clients (hermes and
+# t3code) point at the SAME endpoint; the distinct client-id is what makes
+# Executor policy decisions and factory audit events attributable per client.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: t3code-executor
+  namespace: agents
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/part-of: homelab
+data:
+  # Streamable-HTTP MCP endpoint of the shared Executor gateway. In-cluster
+  # Service DNS (matches the Service the panel's dev-tools catalog probes).
+  mcp-url: http://executor.agents.svc:8080/mcp
+  # Identifiable client identity, asserted on every tool call so Executor
+  # policy decisions and factory audit events attribute actions to t3code.
+  client-id: t3code
