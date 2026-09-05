@@ -12,6 +12,7 @@ import { ClusterCard } from "./components/cluster-card";
 import { DevToolsCard } from "./components/dev-tools-card";
 import { FactoryHealthCard } from "./components/factory-health-card";
 import { JobsTable } from "./components/jobs-table";
+import { KnowledgeCard } from "./components/knowledge-card";
 import { ScheduleRow } from "./components/schedule-row";
 import { Card, CardHeader, Badge, Button, Input } from "./components/ui";
 
@@ -298,6 +299,8 @@ export default function App() {
       </header>
 
       <DevToolsCard />
+
+      <KnowledgeCard />
 
       <FactoryHealthCard
         onRepoChange={setFactoryRepo}
