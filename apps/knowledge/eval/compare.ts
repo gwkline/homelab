@@ -5,6 +5,7 @@ import {
   DEFAULT_WINDOW_SIZE,
   fuseReciprocalRank,
 } from "../src/fusion.ts";
+import { DEFAULT_EF_SEARCH, DEFAULT_VECTOR_LIMIT } from "../src/pgvector.ts";
 import type { EvalChunk, EvalCorpusQuery } from "./corpus.ts";
 import { docOfChunk } from "./corpus.ts";
 import type { EvalQuery } from "./fixtures.ts";
@@ -25,15 +26,19 @@ export type StrategyName = (typeof STRATEGIES)[number];
 
 /**
  * Retrieval configuration recorded with every run (#59): the cutoff, the RRF
- * parameters, and the per-channel abstention floors. A channel abstains when
- * its best score does not clear the floor, so unanswerable queries can return
- * nothing instead of a fabricated top hit.
+ * parameters, the per-channel abstention floors, and the pgvector channel
+ * settings (#62) — `hnsw.ef_search` and the candidate count — so approximate
+ * retrieval runs are comparable over time.
  */
 export interface RetrievalConfig {
   k: number;
   rrfK: number;
   windowSize: number;
   abstainBelow: { bm25: number; vector: number };
+  /** HNSW exploration breadth for the vector channel (#62). */
+  vectorEfSearch: number;
+  /** Candidate count requested from the vector channel per query (#62). */
+  vectorCandidateCount: number;
 }
 
 export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
@@ -43,6 +48,8 @@ export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   abstainBelow: { bm25: 0, vector: 0.2 },
   k: EVAL_K,
   rrfK: DEFAULT_RRF_K,
+  vectorCandidateCount: DEFAULT_VECTOR_LIMIT,
+  vectorEfSearch: DEFAULT_EF_SEARCH,
   windowSize: DEFAULT_WINDOW_SIZE,
 };
 
