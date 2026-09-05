@@ -45,6 +45,66 @@ const FACTORY_REPOS = new Set([
 const FACTORY_PROFILES = new Set(["code-pr", "security"]);
 const DEFAULT_FACTORY_REPO = process.env.FACTORY_REPO ?? "gwkline/launchpad";
 const DEFAULT_FACTORY_PROFILE = process.env.FACTORY_PROFILE ?? "code-pr";
+// RunProfile metadata served by GET /api/factory/profiles (#84) — the closed
+// set of admitted profiles. Anything else is rejected by the create/retry
+// endpoints, so agents can never supply unknown profile overrides.
+const FACTORY_PROFILE_INFO = [
+  {
+    description:
+      "Ephemeral coding worker: labeled issue → tested change → draft PR",
+    name: "code-pr",
+  },
+  {
+    description: "Security sweep profile (hardened worker, scoped egress)",
+    name: "security",
+  },
+] as const;
+// Run lifecycle states derived from the ledger labels (ADR-002). First match
+// wins when several factory labels co-exist on one issue.
+const FACTORY_RUN_STATES: [string, string][] = [
+  ["factory/queued", "queued"],
+  ["factory/in-progress", "running"],
+  ["factory/pending-approval", "awaiting-approval"],
+  ["factory/draft-pr", "published"],
+  ["factory/needs-review", "needs-review"],
+  ["factory/approved", "approved"],
+  ["factory/failed", "failed"],
+  ["factory/cancelled", "cancelled"],
+];
+const FACTORY_RUN_STATE_NAMES = new Set(FACTORY_RUN_STATES.map(([, s]) => s));
+const FACTORY_CANCELABLE = new Set(["queued", "running", "awaiting-approval"]);
+const FACTORY_RETRYABLE = new Set(["failed", "cancelled"]);
+const FACTORY_TERMINAL_DONE = new Set([
+  "published",
+  "needs-review",
+  "approved",
+]);
+// States whose labels must be stripped when a run is cancelled or retried.
+const FACTORY_ACTIVE_LABELS = [
+  "factory/queued",
+  "factory/in-progress",
+  "factory/pending-approval",
+];
+const FACTORY_FAILED_LABELS = ["factory/failed", "factory/cancelled"];
+// Caller/run identity for factory audit events (#84): the Executor factory
+// integration sets `X-Factory-Requested-By` host-side, one value per MCP
+// client connection (hermes, t3code). It is never a tool-call argument, so
+// MCP callers cannot claim someone else's identity; direct panel use records
+// as "panel". The charset is Kubernetes-label-safe so the identity can ride
+// both the FACTORY_TRIGGERED_BY env and a Job label into the orchestrator.
+const REQUESTED_BY_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$/u;
+const requestedByFrom = (value: string | undefined): string =>
+  value !== undefined && REQUESTED_BY_RE.test(value) ? value : "panel";
+
+const runStateFor = (issue: GhIssue): string | null => {
+  const labels = new Set((issue.labels ?? []).map((l) => l.name));
+  for (const [label, state] of FACTORY_RUN_STATES) {
+    if (labels.has(label)) {
+      return state;
+    }
+  }
+  return null;
+};
 // GitHub-derived trend window (weekly buckets). Older trend data comes from
 // the persisted snapshot artifact, not from GitHub (issue #186).
 const STATS_WINDOW_WEEKS = 8;
@@ -60,6 +120,11 @@ interface GhIssue {
   pull_request?: unknown;
   state: string;
   title: string;
+  updated_at?: string;
+}
+interface GhComment {
+  body: string;
+  html_url: string;
 }
 interface GhPull {
   draft?: boolean;
@@ -777,13 +842,32 @@ const mergeGateError = async (
   }
 };
 
+// Strict request shapes for the MCP surface (#84): unknown fields — any
+// attempt to smuggle Kubernetes-side settings (image, service account,
+// resources…) or future profile overrides — are rejected outright instead of
+// silently ignored. The OpenAPI contract marks these bodies
+// additionalProperties: false; the server enforces the same.
+const rejectUnknownFields = (
+  body: Record<string, unknown>,
+  allowed: string[]
+): string | null => {
+  const unknown = Object.keys(body).filter((k) => !allowed.includes(k));
+  return unknown.length
+    ? `unknown fields (allowed: ${allowed.join(", ")})`
+    : null;
+};
+
 // Kick off a factory run: clone the orchestrator CronJob's pod template into an
 // ad-hoc Job with FACTORY_ISSUE/FACTORY_PROFILE injected. Returns the job name,
 // or the failure message (the queued label is kept either way).
+// `requestedBy` rides as FACTORY_TRIGGERED_BY env + a Job label so the run
+// marker comment (the factory audit event) records which MCP client or panel
+// user requested the run (#84).
 const triggerFactoryJob = async (
   repo: string,
   profile: string,
-  issueNum: number
+  issueNum: number,
+  requestedBy: string
 ): Promise<string | Error> => {
   try {
     const cj = await k8s.getCronJob(FACTORY_CRONJOB);
@@ -801,6 +885,7 @@ const triggerFactoryJob = async (
         ...(containers[0].env ?? []),
         { name: "FACTORY_ISSUE", value: String(issueNum) },
         { name: "FACTORY_PROFILE", value: profile },
+        { name: "FACTORY_TRIGGERED_BY", value: requestedBy },
       ];
     }
     const job = {
@@ -811,6 +896,7 @@ const triggerFactoryJob = async (
           "factory.gwkline.io/issue": String(issueNum),
           "factory.gwkline.io/profile": profile,
           "factory.gwkline.io/repo": repo,
+          "factory.gwkline.io/requested-by": requestedBy,
           "factory.gwkline.io/trigger": "panel",
         },
         name: jobName,
@@ -953,6 +1039,10 @@ app.post("/api/factory/run", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
+  const unknown = rejectUnknownFields(body, ["issue", "profile", "repo"]);
+  if (unknown !== null) {
+    return c.json({ error: unknown }, 400);
+  }
   const repo = (body.repo ?? DEFAULT_FACTORY_REPO).trim();
   if (!FACTORY_REPOS.has(repo)) {
     return c.json(
@@ -1019,8 +1109,9 @@ app.post("/api/factory/run", async (c) => {
 
   // 2. Immediately trigger the orchestrator (create Job from CronJob), so the user doesn't wait 6h.
   // The CronJob's Job-from-CronJob run is the same path as the scheduled tick, just ad-hoc.
-  const trigger = await triggerFactoryJob(repo, profile, issueNum);
-  if (typeof trigger === "string") {
+  const requestedBy = requestedByFrom(c.req.header("x-factory-requested-by"));
+  const trigger = await triggerFactoryJob(repo, profile, issueNum, requestedBy);
+  if (typeof trigger !== "string") {
     // Label already applied — surface the k8s error but don't roll back the label (next tick will pick it up anyway).
     return c.json(
       { error: trigger, issue: issueNum, jobName: null, queued: true, repo },
@@ -1028,7 +1119,505 @@ app.post("/api/factory/run", async (c) => {
     );
   }
   return c.json(
-    { issue: issueNum, jobName: trigger, profile, queued: true, repo },
+    {
+      issue: issueNum,
+      jobName: trigger,
+      profile,
+      queued: true,
+      repo,
+      requestedBy,
+    },
+    201
+  );
+});
+
+// ── Factory run surface for MCP agents (#84) ────────────────────────────────
+// The contract for these routes lives in deploy/executor/factory-openapi.json
+// (imported into Executor's OpenAPI integration). Contract tests in
+// tests/factory-mcp.test.ts keep spec and server honest about each other.
+
+// Tool: list profiles — the closed set of admitted RunProfiles plus the
+// allowlisted repos and defaults, so agents can construct valid create calls
+// without ever guessing Kubernetes-side details.
+app.get("/api/factory/profiles", (c) =>
+  c.json({
+    defaultProfile: DEFAULT_FACTORY_PROFILE,
+    defaultRepo: DEFAULT_FACTORY_REPO,
+    profiles: FACTORY_PROFILE_INFO,
+    repos: [...FACTORY_REPOS],
+  })
+);
+
+// Shared validation for the run lifecycle routes: repo allowlist + issue
+// bounds. Agents can only express (repo, issue, profile) — no Kubernetes
+// fields exist anywhere in the request surface (#84).
+const parseRunTarget = (body: {
+  issue?: number | string;
+  repo?: string;
+}): { error: string; status: 400 } | { issue: number; repo: string } => {
+  const repo = (body.repo ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) {
+    return {
+      error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})`,
+      status: 400,
+    };
+  }
+  const issueNum = Number(body.issue);
+  if (!Number.isInteger(issueNum) || issueNum < 1 || issueNum > 10_000_000) {
+    return { error: "issue must be a positive integer", status: 400 };
+  }
+  return { issue: issueNum, repo };
+};
+
+// Parse the run marker comment (the durable audit event): status/profile/
+// requested-by rows, the redacted log tail, the worker report fence, and the
+// published PR link.
+const parseMarkerBody = (body: string) => {
+  const row = (name: string): string | null => {
+    const m = new RegExp(
+      `^\\|\\s*${name}\\s*\\|\\s*(?<value>[^|]+?)\\s*\\|`,
+      "mu"
+    ).exec(body);
+    return m?.groups?.value ?? null;
+  };
+  const fence = (summary: string): string | null => {
+    const m = new RegExp(
+      `<summary>${summary}</summary>\\s*\\n+\`\`\`[a-z]*\\n(?<fence>[\\s\\S]*?)\`\`\``,
+      "u"
+    ).exec(body);
+    return m?.groups?.fence?.trim() ?? null;
+  };
+  const prMatch = /Draft PR: (?<pr>\S+)/u.exec(body);
+  return {
+    logTail: fence("log tail"),
+    prUrl: prMatch?.groups?.pr ?? null,
+    profile: row("Profile"),
+    report: fence("worker report"),
+    requestedBy: row("Requested by"),
+    status: row("Status"),
+  };
+};
+
+// Fetch one issue for the run-inspection/lifecycle routes; maps upstream
+// failures to actionable statuses without leaking GitHub internals.
+type IssueFetch = { issue: GhIssue } | { error: string; status: 404 | 502 };
+const fetchIssue = async (
+  repo: string,
+  issueNum: number
+): Promise<IssueFetch> => {
+  try {
+    return {
+      issue: (await ghFetch(`/repos/${repo}/issues/${issueNum}`)) as GhIssue,
+    };
+  } catch (error: unknown) {
+    if (errStatus(error) === 404) {
+      return { error: `issue #${issueNum} not found in ${repo}`, status: 404 };
+    }
+    return { error: errMessage(error), status: 502 };
+  }
+};
+
+// Latest run marker comment = the durable audit event for a Run (ADR-002:
+// created once, edited in place). Absent/failed comment reads degrade to
+// label-only state.
+const fetchRunMarker = async (
+  repo: string,
+  issueNum: number
+): Promise<{
+  marker: GhComment | null;
+  parsed: ReturnType<typeof parseMarkerBody> | null;
+}> => {
+  try {
+    const comments = (await ghFetch(
+      `/repos/${repo}/issues/${issueNum}/comments?per_page=100`
+    )) as GhComment[];
+    const marker =
+      (comments ?? []).findLast((cm) =>
+        cm.body.includes("<!-- factory:run:")
+      ) ?? null;
+    return { marker, parsed: marker ? parseMarkerBody(marker.body) : null };
+  } catch {
+    return { marker: null, parsed: null };
+  }
+};
+
+// Worker Jobs (in-flight or recent) labeled for an issue.
+const fetchRunJobs = async (
+  issueNum: number
+): Promise<{ name: string; status: string }[]> => {
+  try {
+    const all = await k8s.listJobs();
+    return (all.items ?? [])
+      .filter(
+        (j: K8sObject) =>
+          j.metadata?.labels?.["factory.gwkline.io/issue"] === String(issueNum)
+      )
+      .map((j: K8sObject) => ({
+        name: j.metadata?.name ?? "",
+        status: viewJob(j).status,
+      }));
+  } catch {
+    // jobs unavailable — comment ledger still answers
+    return [];
+  }
+};
+
+// Tool: get run — ledger state (labels), the live marker comment (status,
+// profile, log tail, report, PR link), and any in-flight Job.
+app.get("/api/factory/run", async (c) => {
+  const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) {
+    return c.json(
+      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
+      400
+    );
+  }
+  const issueNum = parseNum(c.req.query("issue"));
+  if (issueNum === null) {
+    return c.json({ error: "issue must be a positive integer" }, 400);
+  }
+  const fetched = await fetchIssue(repo, issueNum);
+  if ("error" in fetched) {
+    return c.json({ error: fetched.error }, fetched.status);
+  }
+  const { issue } = fetched;
+  if (issue.pull_request) {
+    return c.json({ error: `issue #${issueNum} is a pull request` }, 404);
+  }
+  const state = runStateFor(issue);
+  if (state === null) {
+    return c.json({ error: `no factory run on issue #${issueNum}` }, 404);
+  }
+  const { marker, parsed } = await fetchRunMarker(repo, issueNum);
+  const jobs = await fetchRunJobs(issueNum);
+  return c.json({
+    artifacts: {
+      logTail: parsed?.logTail ?? null,
+      pr: parsed?.prUrl ?? null,
+      report: parsed?.report ?? null,
+      runComment: marker?.html_url ?? null,
+    },
+    issue: issueNum,
+    jobs,
+    profile: parsed?.profile ?? null,
+    repo,
+    requestedBy: parsed?.requestedBy ?? null,
+    state,
+    title: issue.title,
+    url: issue.html_url,
+  });
+});
+
+// Tool: list runs — every open issue carrying a factory/* ledger label.
+app.get("/api/factory/runs", async (c) => {
+  const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) {
+    return c.json(
+      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
+      400
+    );
+  }
+  const state = c.req.query("state")?.trim();
+  if (
+    state !== undefined &&
+    state !== "" &&
+    !FACTORY_RUN_STATE_NAMES.has(state)
+  ) {
+    return c.json(
+      {
+        error: `unknown state (use ${[...FACTORY_RUN_STATE_NAMES].join(", ")})`,
+      },
+      400
+    );
+  }
+  try {
+    const issues = (await ghFetch(
+      `/repos/${repo}/issues?state=open&per_page=100`
+    )) as GhIssue[];
+    const runs = (issues ?? [])
+      .filter((i) => !i.pull_request && runStateFor(i) !== null)
+      .map((i) => ({
+        issue: i.number,
+        state: runStateFor(i),
+        title: i.title,
+        updatedAt: i.updated_at ?? null,
+        url: i.html_url,
+      }))
+      .filter((r) => state === undefined || state === "" || r.state === state);
+    return c.json({ repo, runs });
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, 502);
+  }
+});
+
+// The active-label swap shared by cancel/retry: remove the labels named in
+// `from` (404 = label absent, fine) and add `to`. Returns the first failure.
+const swapRunLabels = async (
+  repo: string,
+  issueNum: number,
+  from: string[],
+  to: string[]
+): Promise<string | null> => {
+  const removals = await Promise.all(
+    from.map(async (label): Promise<string | null> => {
+      try {
+        await ghFetch(
+          `/repos/${repo}/issues/${issueNum}/labels/${encodeURIComponent(label)}`,
+          { method: "DELETE" }
+        );
+        return null;
+      } catch (error: unknown) {
+        if (errStatus(error) === 404) {
+          // label absent — nothing to strip
+          return null;
+        }
+        return `failed to remove label ${label}: ${errMessage(error)}`;
+      }
+    })
+  );
+  const removalError = removals.find((r) => r !== null);
+  if (removalError !== undefined && removalError !== null) {
+    return removalError;
+  }
+  try {
+    await ghFetch(`/repos/${repo}/issues/${issueNum}/labels`, {
+      body: JSON.stringify({ labels: to }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+  } catch (error: unknown) {
+    return `failed to label issue: ${errMessage(error)}`;
+  }
+  return null;
+};
+
+// Best-effort audit comment on the ledger issue — identity-preserving record
+// of who drove the lifecycle transition through Executor (#84).
+const auditComment = async (
+  repo: string,
+  issueNum: number,
+  body: string
+): Promise<void> => {
+  try {
+    await ghFetch(`/repos/${repo}/issues/${issueNum}/comments`, {
+      body: JSON.stringify({ body }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+  } catch {
+    // audit comment is best-effort; the label transition is the real ledger
+  }
+};
+
+// In-flight factory Jobs for an issue, by ledger label.
+const inFlightJobs = async (issueNum: number): Promise<K8sObject[]> => {
+  const all = await k8s.listJobs();
+  return (all.items ?? []).filter((j: K8sObject) => {
+    if (j.metadata?.labels?.["factory.gwkline.io/issue"] !== String(issueNum)) {
+      return false;
+    }
+    const conditions = j.status?.conditions ?? [];
+    const terminal = conditions.some(
+      (cond) =>
+        (cond.type === "Complete" || cond.type === "Failed") &&
+        cond.status === "True"
+    );
+    return !terminal && (j.status?.active ?? 1) > 0;
+  });
+};
+
+// Tool: cancel run — converge the ledger to factory/cancelled and stop any
+// in-flight worker Job. Allowed from queued/running/awaiting-approval only.
+app.post("/api/factory/run/cancel", async (c) => {
+  let body: { issue?: number | string; repo?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const unknown = rejectUnknownFields(body, ["issue", "repo"]);
+  if (unknown !== null) {
+    return c.json({ error: unknown }, 400);
+  }
+  const target = parseRunTarget(body);
+  if ("error" in target) {
+    return c.json({ error: target.error }, target.status);
+  }
+  const requestedBy = requestedByFrom(c.req.header("x-factory-requested-by"));
+  const fetched = await fetchIssue(target.repo, target.issue);
+  if ("error" in fetched) {
+    return c.json({ error: fetched.error }, fetched.status);
+  }
+  const { issue } = fetched;
+  if (issue.pull_request || issue.state !== "open") {
+    return c.json({ error: `issue #${target.issue} has no open run` }, 404);
+  }
+  const state = runStateFor(issue);
+  if (state === null) {
+    return c.json({ error: `no factory run on issue #${target.issue}` }, 404);
+  }
+  if (FACTORY_TERMINAL_DONE.has(state)) {
+    return c.json(
+      {
+        error: `run on issue #${target.issue} is ${state} — close the draft PR instead of cancelling`,
+      },
+      409
+    );
+  }
+  if (!FACTORY_CANCELABLE.has(state)) {
+    return c.json(
+      { error: `run on issue #${target.issue} is already ${state}` },
+      409
+    );
+  }
+  // Stop any in-flight worker Jobs; a failed delete leaves the ledger label
+  // swapped anyway (the next tick converges), but surface the failure.
+  let stopping: string[] = [];
+  try {
+    const inFlight = await inFlightJobs(target.issue);
+    stopping = inFlight.map((j) => j.metadata?.name ?? "");
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, 502);
+  }
+  const deletes = await Promise.all(
+    stopping.map(async (name): Promise<string | null> => {
+      try {
+        await k8s.deleteJob(name);
+        return null;
+      } catch (error: unknown) {
+        if (errStatus(error) === 404) {
+          // already gone — job finished mid-cancel
+          return null;
+        }
+        return `failed to stop job ${name}: ${errMessage(error)}`;
+      }
+    })
+  );
+  const deleteError = deletes.find((d) => d !== null);
+  if (deleteError !== undefined && deleteError !== null) {
+    return c.json(
+      {
+        cancelled: false,
+        error: deleteError,
+        issue: target.issue,
+        repo: target.repo,
+      },
+      502
+    );
+  }
+  const swapError = await swapRunLabels(
+    target.repo,
+    target.issue,
+    FACTORY_ACTIVE_LABELS,
+    ["factory/cancelled"]
+  );
+  if (swapError !== null) {
+    return c.json({ error: swapError }, 502);
+  }
+  await auditComment(
+    target.repo,
+    target.issue,
+    `🛑 Factory Run cancelled (requested by \`${requestedBy}\` via Executor MCP).`
+  );
+  return c.json({
+    cancelled: true,
+    issue: target.issue,
+    jobsStopped: stopping,
+    repo: target.repo,
+    requestedBy,
+  });
+});
+
+// Tool: retry run — re-queue a failed/cancelled Run and trigger the
+// orchestrator immediately. Optional profile re-selection within the closed
+// profile set; anything else is rejected before a label is touched.
+app.post("/api/factory/run/retry", async (c) => {
+  let body: { issue?: number | string; profile?: string; repo?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const unknown = rejectUnknownFields(body, ["issue", "profile", "repo"]);
+  if (unknown !== null) {
+    return c.json({ error: unknown }, 400);
+  }
+  const target = parseRunTarget(body);
+  if ("error" in target) {
+    return c.json({ error: target.error }, target.status);
+  }
+  const profile = (body.profile ?? DEFAULT_FACTORY_PROFILE).trim();
+  if (!FACTORY_PROFILES.has(profile)) {
+    return c.json(
+      {
+        error: `profile not allowed (use ${[...FACTORY_PROFILES].join(", ")})`,
+      },
+      400
+    );
+  }
+  const requestedBy = requestedByFrom(c.req.header("x-factory-requested-by"));
+  const fetched = await fetchIssue(target.repo, target.issue);
+  if ("error" in fetched) {
+    return c.json({ error: fetched.error }, fetched.status);
+  }
+  const { issue } = fetched;
+  if (issue.pull_request || issue.state !== "open") {
+    return c.json({ error: `issue #${target.issue} has no open run` }, 404);
+  }
+  const state = runStateFor(issue);
+  if (state === null) {
+    return c.json({ error: `no factory run on issue #${target.issue}` }, 404);
+  }
+  if (!FACTORY_RETRYABLE.has(state)) {
+    return c.json(
+      {
+        error: `run on issue #${target.issue} is ${state} — only failed or cancelled runs can be retried`,
+      },
+      409
+    );
+  }
+  const swapError = await swapRunLabels(
+    target.repo,
+    target.issue,
+    FACTORY_FAILED_LABELS,
+    ["factory/queued"]
+  );
+  if (swapError !== null) {
+    return c.json({ error: swapError }, 502);
+  }
+  const trigger = await triggerFactoryJob(
+    target.repo,
+    profile,
+    target.issue,
+    requestedBy
+  );
+  if (typeof trigger !== "string") {
+    // Label already applied — the next tick picks the issue up anyway.
+    return c.json(
+      {
+        error: trigger,
+        issue: target.issue,
+        jobName: null,
+        queued: true,
+        repo: target.repo,
+      },
+      502
+    );
+  }
+  await auditComment(
+    target.repo,
+    target.issue,
+    `🔁 Factory Run re-queued (requested by \`${requestedBy}\` via Executor MCP).`
+  );
+  return c.json(
+    {
+      issue: target.issue,
+      jobName: trigger,
+      profile,
+      queued: true,
+      repo: target.repo,
+      requestedBy,
+    },
     201
   );
 });

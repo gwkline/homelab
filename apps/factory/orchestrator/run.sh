@@ -67,6 +67,9 @@ redact() {
 # Durable approval gates (#83): policy table, record I/O, publish gate, resume.
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 . "${SCRIPT_DIR}/approval.sh"
+# Run marker comment template (one comment per Run, edited in place; carries
+# the caller identity injected by the panel/Executor path — #84).
+. "${SCRIPT_DIR}/marker.sh"
 
 NUM=""
 # shellcheck disable=SC2329  # invoked via `trap cleanup EXIT` below
@@ -205,41 +208,14 @@ esac
 # ---- 3. swap labels + post marker comment --------------------------------
 gh issue edit "${NUM}" -R "${REPO}" \
     --remove-label "${LABEL_QUEUED}" --add-label "${LABEL_WIP}" >/dev/null
-COMMENT_URL=$(gh issue comment "${NUM}" -R "${REPO}" --body "$(cat <<EOF
-<!-- factory:run:${NUM}:${RUN_TS} -->
-## 🏭 Factory Run
-
-| | |
-|---|---|
-| Status | running |
-| Started | ${RUN_TS} |
-| Profile | ${PROFILE} |
-| Workflow | ${PROFILE}@${WORKFLOW_VERSION} (${WORKER_IMAGE}) |
-
-_Worker dispatched — this comment updates live._
-EOF
-)")
+COMMENT_URL=$(gh issue comment "${NUM}" -R "${REPO}" --body "$(factory_marker_body running "_Worker dispatched — this comment updates live._")")
 echo "[orch] marker comment: ${COMMENT_URL}"
 
 MARKER_ID=${COMMENT_URL##*issuecomment-}
 
 update_status() {  # $1=status, $2=extra detail markdown
   gh api -X PATCH "repos/${REPO}/issues/comments/${MARKER_ID}" \
-    -F body="$(cat <<EOF
-<!-- factory:run:${NUM}:${RUN_TS} -->
-## 🏭 Factory Run
-
-| | |
-|---|---|
-| Status | ${1} |
-| Started | ${RUN_TS} |
-| Updated | $(timestamp) |
-| Profile | ${PROFILE} |
-| Workflow | ${PROFILE}@${WORKFLOW_VERSION} (${WORKER_IMAGE}) |
-
-${2:-_Worker dispatched._}
-EOF
-)" >/dev/null
+    -F body="$(factory_marker_body "${1}" "${2:-}" "$(timestamp)")" >/dev/null
 }
 
 # ---- 3. spawn the worker Job ---------------------------------------------

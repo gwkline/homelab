@@ -64,12 +64,24 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
-    # factory-stats-snapshot CronJob (issue #186): weekly rollup trigger, the
-    # only other in-cluster path to :3000 — pod-scoped like Homepage above.
+    # factory-stats-snapshot CronJob (issue #186): weekly rollup trigger —
+    # pod-scoped like Homepage above.
     - from:
         - podSelector:
             matchLabels:
               app: factory-stats-snapshot
+      ports:
+        - protocol: TCP
+          port: 3000
+    # Executor MCP gateway (issue #84): the ONLY host-side caller of the
+    # factory API (deploy/executor/factory-openapi.json). Pod-scoped like the
+    # rules above, so MCP agents (hermes, t3code) can reach the factory
+    # surface solely through Executor's policy/approval layer — their pods
+    # stay denied to :3000 by default-deny-ingress.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: executor
       ports:
         - protocol: TCP
           port: 3000

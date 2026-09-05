@@ -41,6 +41,17 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
+    - to: # Factory API host-side calls (issue #84): the panel's in-cluster
+        # plaintext Service is the factory contract (deploy/executor/
+        # factory-openapi.json). Pod-scoped, port 3000 — the factory API is
+        # reachable ONLY from this pod, so agents cannot bypass Executor
+        # policies to hit it directly (same trust model as the panel's other
+        # in-cluster callers).
+        - podSelector:
+            matchLabels:
+              app: panel
+      ports:
+        - { protocol: TCP, port: 3000 }
     - to: # Integration calls: public internet over TLS, private ranges carved out
         - ipBlock:
             cidr: 0.0.0.0/0

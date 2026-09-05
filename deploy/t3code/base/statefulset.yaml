@@ -44,6 +44,29 @@ spec:
                 configMapKeyRef:
                   name: t3code-workspaces
                   key: repos
+            # Executor MCP gateway (#84): factory operations (create/inspect/
+            # cancel/retry Run) are requested through these governed tools —
+            # never through direct Kubernetes access (this pod has none; see
+            # netpol.yaml). The token is optional so the server boots before
+            # Executor is deployed; one-time registration with these values:
+            #   kubectl -n agents exec t3code-0 -- npx add-mcp "$EXECUTOR_MCP_URL" \
+            #     --transport http --name executor
+            - name: EXECUTOR_MCP_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: t3code-executor
+                  key: mcp-url
+            - name: EXECUTOR_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: t3code-executor
+                  key: client-id
+            - name: EXECUTOR_CLIENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: executor-client
+                  key: token
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: /data
