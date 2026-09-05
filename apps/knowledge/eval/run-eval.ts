@@ -91,7 +91,7 @@ const printHuman = (run: EvalRun): void => {
     `git ${m.gitSha}${m.gitDirty ? " (dirty)" : ""} | schema ${m.schemaVersion} | embedding ${m.embeddingModel} | chunker ${m.chunkerVersion} | dataset ${m.datasetVersion} | subset ${m.subset}`
   );
   console.log(
-    `config: k=${m.retrievalConfig.k} rrfK=${m.retrievalConfig.rrfK} window=${m.retrievalConfig.windowSize} abstainBelow(bm25=${m.retrievalConfig.abstainBelow.bm25}, vector=${m.retrievalConfig.abstainBelow.vector})`
+    `config: k=${m.retrievalConfig.k} rrfK=${m.retrievalConfig.rrfK} window=${m.retrievalConfig.windowSize} abstainBelow(bm25=${m.retrievalConfig.abstainBelow.bm25}, vector=${m.retrievalConfig.abstainBelow.vector}) vector(efSearch=${m.retrievalConfig.vectorEfSearch}, candidates=${m.retrievalConfig.vectorCandidateCount})`
   );
   console.log("");
   console.log(
