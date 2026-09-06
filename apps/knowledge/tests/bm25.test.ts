@@ -11,7 +11,7 @@ import {
   withBm25ClientFromEnv,
 } from "../src/bm25.ts";
 import type { Bm25DbClient, Bm25SearchQuery } from "../src/bm25.ts";
-import { ensurePgvectorSchema } from "../src/pgvector.ts";
+import { ensureKnowledgeSchema } from "../src/schema.ts";
 
 const stubClient = (
   rows: Record<string, unknown>[],
@@ -318,24 +318,72 @@ const TEST_NAMESPACES = [WIDE_NAMESPACE, SPARSE_NAMESPACE, OTHER_NAMESPACE];
 const FILLER_ROWS = 10_000;
 
 const seedFixture = async (client: Bm25DbClient): Promise<void> => {
+  // Parents first: deleting documents cascades their versions and chunks.
+  await client.query("DELETE FROM documents WHERE namespace = ANY($1)", [
+    TEST_NAMESPACES,
+  ]);
   await client.query("DELETE FROM chunks WHERE namespace = ANY($1)", [
     TEST_NAMESPACES,
   ]);
+  // Every chunk needs a document + document version parent (#56 FKs).
   await client.query(
-    `INSERT INTO chunks (chunk_id, document_id, version_id, namespace, text)
+    `INSERT INTO documents (document_id, namespace, source, external_id, content_hash)
+SELECT DISTINCT 'bm25-filler-doc-' || (g / 4), $1, 'file', 'bm25/filler/' || (g / 4), 'hash-filler-' || (g / 4)
+FROM generate_series(1, $2) AS g`,
+    [WIDE_NAMESPACE, FILLER_ROWS]
+  );
+  await client.query(
+    `INSERT INTO document_versions (version_id, document_id, version, content_hash)
+SELECT DISTINCT 'bm25-filler-doc-' || (g / 4) || '#v1', 'bm25-filler-doc-' || (g / 4), 1, 'hash-filler-' || (g / 4)
+FROM generate_series(1, $2) AS g`,
+    [WIDE_NAMESPACE, FILLER_ROWS]
+  );
+  // Every chunk needs a document + document version parent (#56 FKs): seed
+  // the probe/dead/other/sparse parents too, before any chunk insert.
+  await client.query(
+    `INSERT INTO documents (document_id, namespace, source, external_id, content_hash)
+SELECT document_id, namespace, 'file', 'bm25/' || document_id, 'hash-' || document_id
+FROM (VALUES ('bm25-ident-doc', 'bm25-wide'),
+             ('bm25-rare-doc', 'bm25-wide'),
+             ('bm25-stem-doc', 'bm25-wide'),
+             ('bm25-punct-doc', 'bm25-wide'),
+             ('bm25-dead-doc', 'bm25-wide'),
+             ('bm25-other-doc', 'bm25-other'),
+             ('bm25-sparse-doc-1', 'bm25-sparse'),
+             ('bm25-sparse-doc-2', 'bm25-sparse'),
+             ('bm25-sparse-doc-3', 'bm25-sparse'),
+             ('bm25-sparse-doc-4', 'bm25-sparse'),
+             ('bm25-sparse-doc-5', 'bm25-sparse')) AS docs(document_id, namespace)`,
+    []
+  );
+  await client.query(
+    `INSERT INTO document_versions (version_id, document_id, version, content_hash)
+SELECT document_id || '#v1', document_id, 1, 'hash-' || document_id
+FROM (VALUES ('bm25-ident-doc'), ('bm25-rare-doc'), ('bm25-stem-doc'),
+             ('bm25-punct-doc'), ('bm25-dead-doc'), ('bm25-other-doc'),
+             ('bm25-sparse-doc-1'), ('bm25-sparse-doc-2'), ('bm25-sparse-doc-3'),
+             ('bm25-sparse-doc-4'), ('bm25-sparse-doc-5')) AS docs(document_id)`,
+    []
+  );
+  await client.query(
+    `INSERT INTO chunks (chunk_id, document_id, version_id, namespace, idx, text, content_hash, chunker_version)
 SELECT 'bm25-filler-' || g,
        'bm25-filler-doc-' || (g / 4),
-       'v1',
+       'bm25-filler-doc-' || (g / 4) || '#v1',
        $1,
-       'filler ' || (ARRAY['database', 'network', 'storage', 'backup', 'cluster', 'router', 'volume', 'policy', 'image', 'gateway'])[1 + (g % 10)]
-         || ' ' || (ARRAY['database', 'network', 'storage', 'backup', 'cluster', 'router'])[1 + (g % 7)] || ' report'
-FROM generate_series(1, $2) AS g`,
+       g % 4,
+       filler.text,
+       md5(filler.text),
+       'bm25-fixture-v1'
+FROM generate_series(1, $2) AS g,
+     LATERAL (SELECT 'filler ' || (ARRAY['database', 'network', 'storage', 'backup', 'cluster', 'router', 'volume', 'policy', 'image', 'gateway'])[1 + (g % 10)]
+         || ' ' || (ARRAY['database', 'network', 'storage', 'backup', 'cluster', 'router'])[1 + (g % 7)] || ' report' AS text) AS filler`,
     [WIDE_NAMESPACE, FILLER_ROWS]
   );
 
   const probeInsert = `INSERT INTO chunks
-  (chunk_id, document_id, version_id, namespace, text)
-VALUES ($1, $2, 'v1', $3, $4)`;
+  (chunk_id, document_id, version_id, namespace, idx, text, content_hash, chunker_version)
+VALUES ($1, $2, $2 || '#v1', $3, 0, $4, md5($4), 'bm25-fixture-v1')`;
   const probes: [string, string, string][] = [
     [
       "bm25-ident",
@@ -366,8 +414,8 @@ VALUES ($1, $2, 'v1', $3, $4)`;
   // Superseded chunk: must stay invisible to the default (live-only) search.
   await client.query(
     `INSERT INTO chunks
-  (chunk_id, document_id, version_id, namespace, text, valid_to)
-VALUES ('bm25-dead', 'bm25-dead-doc', 'v1', $1, 'dead chunk marker KWXDEAD-1', now())`,
+  (chunk_id, document_id, version_id, namespace, idx, text, content_hash, chunker_version, valid_to)
+VALUES ('bm25-dead', 'bm25-dead-doc', 'bm25-dead-doc#v1', $1, 0, 'dead chunk marker KWXDEAD-1', md5('dead chunk marker KWXDEAD-1'), 'bm25-fixture-v1', now())`,
     [WIDE_NAMESPACE]
   );
   await client.query(probeInsert, [
@@ -377,12 +425,15 @@ VALUES ('bm25-dead', 'bm25-dead-doc', 'v1', $1, 'dead chunk marker KWXDEAD-1', n
     "wireless headphones live in another collection",
   ]);
   await client.query(
-    `INSERT INTO chunks (chunk_id, document_id, version_id, namespace, text)
+    `INSERT INTO chunks (chunk_id, document_id, version_id, namespace, idx, text, content_hash, chunker_version)
 SELECT 'bm25-sparse-' || g,
        'bm25-sparse-doc-' || g,
-       'v1',
+       'bm25-sparse-doc-' || g || '#v1',
        $1,
-       'sparse collection row ' || g || ' about network policy'
+       0,
+       'sparse collection row ' || g || ' about network policy',
+       md5('sparse collection row ' || g || ' about network policy'),
+       'bm25-fixture-v1'
 FROM generate_series(1, 5) AS g`,
     [SPARSE_NAMESPACE]
   );
@@ -407,9 +458,10 @@ test(
   { skip: !hasLiveDb },
   async () => {
     await withBm25ClientFromEnv(async (client) => {
-      // The shared chunks schema (vector type + base indexes), then the BM25
-      // channel's extension + indexes.
-      await ensurePgvectorSchema(client);
+      // The full versioned knowledge schema (#56) — documents, versions,
+      // chunks and every index — then the BM25 channel's own idempotent
+      // migration (a no-op once #56's pg-textsearch migration has run).
+      await ensureKnowledgeSchema(client);
       await ensureBm25Schema(client);
       await seedFixture(client);
 
@@ -547,6 +599,9 @@ test(
         );
       }
 
+      await client.query("DELETE FROM documents WHERE namespace = ANY($1)", [
+        TEST_NAMESPACES,
+      ]);
       await client.query("DELETE FROM chunks WHERE namespace = ANY($1)", [
         TEST_NAMESPACES,
       ]);

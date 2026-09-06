@@ -2,6 +2,19 @@
 
 Hybrid retrieval for the homelab knowledge base: fuse keyword (BM25, #60) and semantic (pgvector, #62) candidate lists into one deterministic ranking of cited chunks. No LLM answer generation, no graph expansion — this package ends at ranked chunks with citation-ready metadata.
 
+## Schema: documents, versions, chunks, ingest jobs (#56)
+
+`src/schema.ts` owns the durable schema from ADR-002 (D3/D5/D9/D10) as numbered raw-SQL migrations applied by `ensureKnowledgeSchema`: each pending migration runs in one transaction and is recorded (id + sha256 checksum) in `knowledge_schema_migrations`; re-running verifies checksums and applies nothing. Schema generation: `2-knowledge-schema`.
+
+- **`documents`** — one row per external/source identity forever: `UNIQUE (namespace, source, external_id)` is the stable key; content changes bump `version` (current `content_hash` lives here for the unchanged re-ingest short-circuit); `deleted_at` is the tombstone.
+- **`document_versions`** — one provenance row per content version (`UNIQUE (document_id, version)`); `chunks.version_id` references it, so any citation resolves to the exact version (and its content hash) that produced the result, past versions included.
+- **`chunks`** — content-addressed per document, `UNIQUE (document_id, content_hash)`: re-ingesting unchanged content touches nothing, and a changed document's identical chunk text is carried forward in place (same row, new `version_id`) instead of re-embedding. Chunks store `idx`, `anchors` (the citation-anchor JSONB consumed by both channels), `chunker_version`, and a `valid_from`/`valid_to` window; superseded chunks leave retrieval immediately and wait for GC. Hard delete cascades: chunk → version → document.
+- **`ingest_jobs`** — the durable queue (D5) with a CHECK-constrained lifecycle (`pending`/`running`/`done`/`failed`), claimed `FOR UPDATE SKIP LOCKED` against the partial `ingest_jobs_claimable` index (priority DESC, FIFO within priority).
+
+Advanced index DDL is explicit in the migrations: partial `chunks_namespace_active` B-tree over live chunks (the namespace predicate both channels bind), partial `chunks_embedding_hnsw` (`vector(384)` + `embedding_model` — pgvector gated), and partial `chunks_text_bm25` (`text_config='english'` over live chunks — pg_textsearch gated). Extension-gated migrations apply only when `pg_available_extensions` has the extension, so a vanilla PostgreSQL 18 gets the core schema and the knowledge CNPG cluster gets the full set.
+
+Tests: offline coverage pins the DDL contracts and the runner semantics (ordering, idempotence, drift refusal, rollback, extension skipping). The live integration test (`tests/schema.test.ts`) runs only with `KNOWLEDGE_SCHEMA_TEST_URL` pointing at a **disposable** PostgreSQL 18 — it drops all knowledge tables, migrates from empty, and exercises the insert/update/delete invariants (idempotent re-ingest, version-bump provenance, tombstone hiding, cascade delete, job lifecycle). Adopting this schema on a database that still holds the pre-#56 ad-hoc `chunks` table requires dropping those legacy tables once — everything under them is re-ingestible by design.
+
 ## Fusion: Reciprocal Rank Fusion (RRF)
 
 BM25 scores and embedding distances are not comparable, so `src/fusion.ts` ignores raw scores and fuses **ranks** only:
@@ -66,7 +79,7 @@ Two datasets drive it:
 
 Metrics (`eval/metrics.ts`, cutoff `k = 5`): Recall@k, MRR@k, precision@k, citation/source accuracy (fraction of top-k results citing a relevant document), no-answer correctness (unanswerable queries must abstain, not fabricate hits), and per-query latency (informational, never gated).
 
-Every run records provenance (`eval/run-meta.ts`): Git SHA + dirty flag, schema/migration version (`KNOWLEDGE_SCHEMA_VERSION`, `0-pre-migrations` until #60/#62 introduce a real schema), embedding model, chunker version, retrieval configuration (k, RRF k, window size, abstention floors), and dataset version. The JSON output shape is versioned (`retrieval-eval-v1`).
+Every run records provenance (`eval/run-meta.ts`): Git SHA + dirty flag, schema/migration version (`KNOWLEDGE_SCHEMA_VERSION`, the `2-knowledge-schema` generation from #56), embedding model, chunker version, retrieval configuration (k, RRF k, window size, abstention floors), and dataset version. The JSON output shape is versioned (`retrieval-eval-v1`).
 
 ### Regression gate
 

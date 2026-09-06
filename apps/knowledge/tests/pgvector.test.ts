@@ -25,6 +25,7 @@ import {
   withPgvectorClientFromEnv,
 } from "../src/pgvector.ts";
 import type { PgvectorDbClient } from "../src/pgvector.ts";
+import { ensureKnowledgeSchema } from "../src/schema.ts";
 
 interface RecordedClient {
   client: PgvectorDbClient;
@@ -600,15 +601,34 @@ test(
   { skip: !hasLiveDb },
   async () => {
     await withPgvectorClientFromEnv(async (client) => {
-      await ensurePgvectorSchema(client);
+      // The full versioned knowledge schema (#56): documents, document
+      // versions, chunks, and every index — including this module's HNSW and
+      // the BM25 channel's index when their extensions are available.
+      await ensureKnowledgeSchema(client);
       const namespace = "pgvector-test";
+      // Parents first: deleting documents cascades versions and chunks.
+      await client.query("DELETE FROM documents WHERE namespace = $1", [
+        namespace,
+      ]);
       await client.query("DELETE FROM chunks WHERE namespace = $1", [
         namespace,
       ]);
+      await client.query(
+        `INSERT INTO documents (document_id, namespace, source, external_id, content_hash)
+SELECT 'doc-' || id, $1, 'file', 'pgvector-test/' || id, 'hash-' || id
+FROM unnest(ARRAY['fix-1', 'fix-2', 'fix-3', 'fix-4', 'fix-5', 'fix-6', 'other', 'null']) AS id`,
+        [namespace]
+      );
+      await client.query(
+        `INSERT INTO document_versions (version_id, document_id, version, content_hash)
+SELECT 'doc-' || id || '#v1', 'doc-' || id, 1, 'hash-' || id
+FROM unnest(ARRAY['fix-1', 'fix-2', 'fix-3', 'fix-4', 'fix-5', 'fix-6', 'other', 'null']) AS id`,
+        [namespace]
+      );
 
       const insert = `INSERT INTO chunks
-  (chunk_id, document_id, version_id, namespace, text, anchors, embedding, embedding_model)
-VALUES ($1, $2, 'v1', $3, $4, $5::jsonb, $6::vector, $7)`;
+  (chunk_id, document_id, version_id, namespace, idx, text, content_hash, anchors, chunker_version, embedding, embedding_model)
+VALUES ($1, $2, $2 || '#v1', $3, 0, $4, md5($4), $5::jsonb, 'pgvector-fixture-v1', $6::vector, $7)`;
       const fixtureValues = FIXTURE.map(({ embedding, id }) => [
         id,
         `doc-${id}`,
@@ -634,8 +654,8 @@ VALUES ($1, $2, 'v1', $3, $4, $5::jsonb, $6::vector, $7)`;
       );
       await client.query(
         `INSERT INTO chunks
-  (chunk_id, document_id, version_id, namespace, text, anchors, embedding, embedding_model)
-VALUES ('fix-null', 'doc-null', 'v1', $1, 'null text', '[]'::jsonb, NULL, $2)`,
+  (chunk_id, document_id, version_id, namespace, idx, text, content_hash, anchors, chunker_version, embedding, embedding_model)
+VALUES ('fix-null', 'doc-null', 'doc-null#v1', $1, 0, 'null text', md5('null text'), '[]'::jsonb, 'pgvector-fixture-v1', NULL, $2)`,
         [namespace, EMBEDDING_MODEL]
       );
 
@@ -680,6 +700,9 @@ VALUES ('fix-null', 'doc-null', 'v1', $1, 'null text', '[]'::jsonb, NULL, $2)`,
         [8, 6, 1, 1]
       );
 
+      await client.query("DELETE FROM documents WHERE namespace = $1", [
+        namespace,
+      ]);
       await client.query("DELETE FROM chunks WHERE namespace = $1", [
         namespace,
       ]);

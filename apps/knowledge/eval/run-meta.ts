@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 
+import { KNOWLEDGE_SCHEMA_VERSION } from "../src/schema.ts";
 import type { RetrievalConfig } from "./compare.ts";
 import { DATASET_VERSION } from "./corpus.ts";
 import { EMBEDDING_MODEL } from "./rank.ts";
@@ -55,9 +56,10 @@ export const collectRunMetadata = (
     gitDirty: status !== null && status.length > 0,
     gitSha: sha ?? "unknown",
     retrievalConfig,
-    // No migrations exist yet; the field is present from day one so run
-    // records stay comparable once #62/#60 introduce a real schema version.
-    schemaVersion: process.env.KNOWLEDGE_SCHEMA_VERSION ?? "0-pre-migrations",
+    // The durable schema generation (#56, src/schema.ts); the env override
+    // stays for runs against an older/newer database generation.
+    schemaVersion:
+      process.env.KNOWLEDGE_SCHEMA_VERSION ?? KNOWLEDGE_SCHEMA_VERSION,
     subset,
   };
 };

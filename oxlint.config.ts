@@ -41,5 +41,13 @@ export default {
       files: ["apps/knowledge/eval/rank.ts"],
       rules: { "no-bitwise": "off" },
     },
+    {
+      // The knowledge migration runner (#56) applies numbered migrations
+      // strictly in order, each in its own transaction — the sequential
+      // awaits ARE the contract (parallel application would race the
+      // recorded schema state), not a missed fan-out.
+      files: ["apps/knowledge/src/schema.ts"],
+      rules: { "no-await-in-loop": "off" },
+    },
   ],
 };

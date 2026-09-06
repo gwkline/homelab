@@ -63,6 +63,10 @@ export const PGVECTOR_SCHEMA_VERSION = "1-pgvector-chunks";
  * module queries. The `vector(384)` typmod pins the model dimension — a model
  * whose dimension differs needs a new column/migration alongside the re-embed
  * backfill (ADR-002 D6/D10).
+ *
+ * The authoritative, versioned knowledge schema (documents, document
+ * versions, chunks, ingest jobs) lives in `src/schema.ts` (#56); this script
+ * remains only for standalone/channel-only bootstrap of a pre-#56 layout.
  */
 export const PGVECTOR_MIGRATION_SQL = `CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS chunks (
