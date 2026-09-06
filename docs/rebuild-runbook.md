@@ -34,6 +34,7 @@ No hidden state is copied from the existing cluster. The only crossers are the d
 | k3s | `v1.36.4+k3s1` | `bootstrap/bootstrap.sh` default (`K3S_VERSION` overrides for deliberate upgrades; formal pin/verify/upgrade policy: issue #29) |
 | Tailscale operator chart | `1.102.3` | `scripts/recovery-drill.sh` (`TS_CHART_VERSION`); the PROXY_TAGS workaround in [deploy/tailscale/README.md](../deploy/tailscale/README.md) is tested against this chart |
 | Sigstore policy-controller chart | `0.10.7` | `scripts/recovery-drill.sh` (`POLICY_CHART_VERSION`); the ClusterImagePolicy it verifies against lives in [deploy/image-policy/base](../deploy/image-policy/base/README.md) (issue #91, ADR-004) |
+| CloudNativePG operator | `1.30.0` (tag + multi-arch `@sha256` digest) | `deploy/cnpg/base/kustomization.yaml` (issue #49); upgrade + CRD ordering procedure in [deploy/cnpg/README.md](../deploy/cnpg/README.md) |
 | tailscaled (host package) | latest stable via install.sh | **unpinned — known gap**, owned by issue #29 |
 
 `bootstrap/bootstrap.sh` is the root node entry point; `scripts/recovery-drill.sh` is the root cluster entry point (it runs the documented apply order — until issue #20 replaces it with a root Kustomization, the script is that order's source of truth).
@@ -89,6 +90,14 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
   -f deploy/tailscale/values.yaml
 kubectl -n tailscale set env deploy/operator PROXY_TAGS=tag:k8s-operator  # chart bug workaround (documented)
 kubectl rollout restart deploy/operator -n tailscale
+
+# 3b. CloudNativePG operator (issue #49) — explicit prerequisite for
+#     deploy/postgres (#52): the CRDs and the admission webhooks
+#     (failurePolicy: Fail) must be Established before any Cluster resource
+#     is applied. Idempotent re-runnable kustomize apply, no Flux required.
+kubectl apply --server-side -k deploy/cnpg/base
+kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io --timeout=120s
+kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
 
 # 4. workloads
 kubectl apply -k deploy/t3code/base

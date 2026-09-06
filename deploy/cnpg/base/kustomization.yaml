@@ -7,12 +7,14 @@
 # Do NOT hand-edit it — refresh it from the next release instead (see
 # ../README.md "Upgrading").
 #
-# The only local mutation is the digest pin below (repo convention, issue
-# #91): the operator Deployment image resolves to
+# The digest pin below is repo convention (issue #91): the operator
+# Deployment image resolves to
 # ghcr.io/cloudnative-pg/cloudnative-pg:1.30.0 pinned to the multi-arch
 # manifest digest, and OPERATOR_IMAGE_NAME is set to the same reference so
 # anything the operator spawns from that env var pulls immutable bytes too.
 # The tag portion is kept so any tag-parsing logic keeps working.
+# Everything else in this kustomization (PSA labels, netpol, metrics
+# Service) is additive to the verbatim bundle and never touches it.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -24,13 +26,34 @@ labels:
 
 resources:
   - upstream.yaml
+  - metrics-service.yaml
+  - netpol.yaml
 
 images:
   - name: ghcr.io/cloudnative-pg/cloudnative-pg
     newTag: 1.30.0
     digest: sha256:a2701eb97cdd2a34b1fdb2cb51987f544b706e40bec72ae7146cd8580efefebb
 
+# Platform PSA convention (deploy/namespaces.yaml): every namespace declares
+# pod-security labels. The upstream manager pod is restricted-compatible
+# (runAsNonRoot 10001, ALL caps dropped, no privilege escalation, read-only
+# rootfs, RuntimeDefault seccomp), so cnpg-system can enforce what
+# deploy/postgres's `database` namespace already does.
 patches:
+  - target:
+      version: v1
+      kind: Namespace
+      name: cnpg-system
+    patch: |
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: cnpg-system
+        labels:
+          pod-security.kubernetes.io/enforce: restricted
+          pod-security.kubernetes.io/enforce-version: latest
+          pod-security.kubernetes.io/warn: restricted
+          pod-security.kubernetes.io/warn-version: latest
   - target:
       group: apps
       version: v1

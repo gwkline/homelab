@@ -141,6 +141,20 @@ fi
 end_stage
 
 # ---------------------------------------------------------------------------
+# CNPG operator (issue #49): explicit prerequisite for deploy/postgres
+# (issue #52). CRDs, admission webhooks (failurePolicy: Fail) and the
+# controller must be Established/Ready before any postgresql.cnpg.io
+# resource is applied, so this stage sits before the workload stage.
+stage cnpg-operator
+kubectl apply --server-side -k deploy/cnpg/base
+kubectl wait --for=condition=Established \
+  crd/clusters.postgresql.cnpg.io --timeout=120s ||
+  fail "clusters.postgresql.cnpg.io CRD never Established"
+kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager \
+  --timeout="$POD_TIMEOUT"
+end_stage
+
+# ---------------------------------------------------------------------------
 stage workloads
 kubectl apply -k deploy/tailscale
 kubectl apply -k deploy/t3code/base

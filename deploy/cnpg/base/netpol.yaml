@@ -1,0 +1,80 @@
+# Default-deny posture for the operator namespace, following the platform
+# convention (deploy/policies/base default-deny + per-workload exposure rules
+# beside the manifests). cnpg-system is not covered by deploy/policies (those
+# scope agents/sandbox), so the operator declares its own here: deny both
+# directions, then the one exposure policy below opens exactly the three
+# paths the operator needs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cnpg-operator-default-deny
+  namespace: cnpg-system
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cnpg-operator-exposure
+  namespace: cnpg-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cloudnative-pg
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Admission webhooks (all failurePolicy: Fail in the upstream bundle):
+    # the API server calls cnpg-webhook-service on 9443 for every
+    # postgresql.cnpg.io CREATE/UPDATE. k3s runs the apiserver host-network,
+    # so the source is the server node IP — inside the LAN/node range
+    # documented in deploy/policies/base (192.168.0.0/16). The kube-system
+    # selector covers apiserver-as-pod distributions. If Cluster creation
+    # times out while the operator pod is Ready, this source range is the
+    # first suspect (kubectl delete netpol cnpg-operator-default-deny
+    # -n cnpg-system is the break-glass).
+    - from:
+        - ipBlock:
+            cidr: 192.168.0.0/16
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 9443
+    # Operator metrics (port 8080, Service cnpg-metrics) scraped by the
+    # metrics stack — ADR-003 puts VictoriaMetrics in `agents`.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agents
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to: # DNS: kube-dns pods only (k3s coredns carries this label)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to: # Kubernetes API — the only thing the operator talks to (it
+        # reconciles and execs through the API, never by dialing pods).
+        # Same allowance as headlamp/dispatcher: in-cluster ClusterIP AND
+        # the server node IP, because post-DNAT egress on the FORWARD path
+        # sees the node IP — allowing only 10.43.0.1 gets the connection to
+        # 192.168.1.2:443 refused. Both ports: 443 the ClusterIP service
+        # port, 6443 the node's API port.
+        - ipBlock:
+            cidr: 10.43.0.1/32
+        - ipBlock:
+            cidr: 192.168.1.2/32
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443

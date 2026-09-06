@@ -1,0 +1,27 @@
+# Operator metrics endpoint (issue #49). The manager exposes Prometheus
+# metrics on container port 8080 (upstream bundle containerPort "metrics",
+# curl http://<pod>:8080/metrics). This Service is the stable scrape target
+# for the metrics stack: ADR-003 (VictoriaMetrics in `agents`) scrapes via
+# its built-in kubernetes_sd discovery honoring the prometheus.io/*
+# annotations below — wire the VM scrape config when the metrics-stack issue
+# lands. Instance-side exporter metrics (port 9187) belong to deploy/postgres.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cnpg-metrics
+  namespace: cnpg-system
+  labels:
+    app.kubernetes.io/name: cloudnative-pg
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/scheme: http
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: cloudnative-pg
