@@ -7,6 +7,7 @@ on:
       - "apps/**"
       - "deploy/**"
       - "examples/**"
+      - "images/**"
       - "scripts/**"
       - ".github/workflows/ci.yaml"
   pull_request:
@@ -262,6 +263,16 @@ jobs:
         run: |
           docker buildx build --load -t factory-worker-smoke -f apps/factory/worker/Dockerfile .
           docker run --rm --entrypoint /usr/local/bin/smoke-test factory-worker-smoke
+
+      # #48: the pg-textsearch image must be proven before it is trusted —
+      # build it (same builder, so from cache), mount it exactly the way a
+      # CNPG ImageVolume does (/extensions/<name> + extension_control_path,
+      # dynamic_library_path, shared_preload_libraries) against the same
+      # digest-pinned operand, and run the end-to-end fixture: library load,
+      # CREATE EXTENSION, BM25 index, ranked query.
+      - name: End-to-end fixture test pg-textsearch image
+        if: matrix.app == 'pg-textsearch'
+        run: sh images/pg-textsearch/test.sh
 
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       - name: Sign image (keyless)
