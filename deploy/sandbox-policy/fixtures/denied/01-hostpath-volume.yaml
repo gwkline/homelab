@@ -1,0 +1,34 @@
+# Fixture (denied): hostPath volume — the classic node escape this policy
+# exists to block (issue #28).
+# expect-deny: host namespaces
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-deny-hostpath
+  namespace: sandbox
+  labels:
+    app: policy-fixture
+    policy.gwkline.io/fixture: "true"
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: policy-fixture
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: evil
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
+          volumeMounts:
+            - name: node-root
+              mountPath: /host
+          resources:
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: node-root
+          hostPath:
+            path: /
+            type: Directory

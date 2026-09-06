@@ -49,6 +49,14 @@ spec:
               volumeMounts:
                 - name: sock
                   mountPath: /var/run
+              # Bounded like everything else (sandbox Jobs admission policy
+              # #28): the wait loop needs no resources to speak of.
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 32Mi
+                limits:
+                  memory: 256Mi
           containers:
             - name: loop
               image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70

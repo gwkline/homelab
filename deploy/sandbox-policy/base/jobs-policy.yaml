@@ -1,0 +1,367 @@
+# Native admission policy constraining every Job created in the `sandbox`
+# namespace, and every CronJob whose jobTemplate would spawn one (issue #28).
+#
+# Why ValidatingAdmissionPolicy and not another controller: the cluster runs
+# k3s v1.36 (CEL admission GA since 1.30) and deliberately avoids extra
+# controllers/CRDs (ADR-003 D3/D7). The policies are compiled by the API
+# server itself — no webhook pod, no CRD, nothing new to rebuild or recover.
+#
+# Why TWO policies: a VAP's `object` is typed per request kind, so an
+# expression like `object.spec.template` is a field-undefined error (not
+# false) when evaluated against a CronJob. One single-kind policy for Jobs
+# and one for CronJobs keeps every expression type-correct; the two must
+# stay rule-for-rule identical — the only permitted difference is the
+# podSpec variable below.
+#
+# Pod Security Admission alone cannot express any of this: `sandbox` must
+# keep the `privileged` PSA level for the dind sidecar, which makes the
+# namespace a node-administrator sandbox for anyone holding Job-create RBAC
+# (dispatcher, panel, factory-orchestrator). These policies narrow that
+# blast radius to the exact workload shapes the repo actually ships:
+#
+#   - no hostPath, hostPID, hostIPC, hostNetwork, hostPort
+#   - serviceAccountName from a fixed allowlist; SA tokens auto-mount only
+#     for the three control pods that need the API (dispatcher, factory
+#     orchestrator, factory reconciler)
+#   - privileged: true only for the exact approved dind shape (name `dind`,
+#     pinned docker:27-dind digest, plain `dockerd --host=...` command)
+#   - no allowPrivilegeEscalation / added capabilities anywhere
+#   - images restricted to ghcr.io/gwkline/homelab/* plus the two pinned
+#     docker:27-cli/dind digests
+#   - volumes restricted to emptyDir/secret/configMap/projected/downwardAPI,
+#     secret-ish mounts forced readOnly, emptyDir sizeLimit ceiling
+#   - resource ceilings: memory limit required and <= 12Gi, cpu limit <= 2
+#
+# The full rationale, the ServiceAccount allowlist and the operator-only
+# break-glass escape hatch are documented in deploy/sandbox-policy/README.md.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sandbox-jobs-hardening
+spec:
+  failurePolicy: Fail # fail closed: an internal error never admits a Job
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs"]
+  variables:
+    # Jobs only: the pod template is the required spec.template.
+    - name: podSpec
+      expression: object.spec.template.spec
+    - name: allContainers
+      expression: >-
+        variables.podSpec.containers +
+          (has(variables.podSpec.initContainers) ? variables.podSpec.initContainers : [])
+    # Break-glass Jobs skip every constraint below — but the last validation
+    # only lets cluster operators (system:masters) set the label, so agent
+    # identities holding loop-manager can never reach the skip.
+    - name: breakGlass
+      expression: >-
+        'sandbox.gwkline.io/break-glass' in object.metadata.labels
+  validations:
+    - expression: >-
+        variables.breakGlass ||
+          (!(variables.podSpec.hostNetwork == true) &&
+           !(variables.podSpec.hostPID == true) &&
+           !(variables.podSpec.hostIPC == true) &&
+           !variables.allContainers.exists(c, c.ports.exists(p, p.hostPort > 0)))
+      message: >-
+        sandbox Jobs must not use host namespaces (hostNetwork, hostPID,
+        hostIPC) or hostPort
+    - expression: >-
+        variables.breakGlass ||
+          (variables.podSpec.serviceAccountName == ''
+            ? 'default'
+            : variables.podSpec.serviceAccountName) in [
+              'default',
+              'dispatcher',
+              'factory-collector',
+              'factory-orchestrator',
+              'factory-reclaimer',
+              'factory-reconciler',
+              'factory-reviewer',
+              'factory-security',
+              'factory-worker'
+            ]
+      message: >-
+        serviceAccountName must come from the sandbox allowlist (default,
+        dispatcher, factory-collector, factory-orchestrator,
+        factory-reclaimer, factory-reconciler, factory-reviewer,
+        factory-security, factory-worker) — see deploy/sandbox-policy/README.md
+    - expression: >-
+        variables.breakGlass ||
+          (!(variables.podSpec.automountServiceAccountToken == true) ||
+           variables.podSpec.serviceAccountName in
+             ['dispatcher', 'factory-orchestrator', 'factory-reconciler'])
+      message: >-
+        ServiceAccount tokens may only be auto-mounted by the control pods
+        that need the Kubernetes API (dispatcher, factory-orchestrator,
+        factory-reconciler); every other Job must set
+        automountServiceAccountToken: false
+    - expression: >-
+        variables.breakGlass ||
+          !variables.allContainers.exists(c,
+            has(c.securityContext) &&
+            has(c.securityContext.privileged) &&
+            c.securityContext.privileged &&
+            !(c.name == 'dind' &&
+              c.image == 'docker:27-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce' &&
+              c.command == ['dockerd', '--host=unix:///var/run/docker.sock'] &&
+              c.args.size() == 0))
+      message: >-
+        privileged: true is only allowed for the exact approved dind shape
+        (container name dind, pinned docker:27-dind digest, command dockerd
+        --host=unix:///var/run/docker.sock, no args)
+    - expression: >-
+        variables.breakGlass ||
+          !variables.allContainers.exists(c,
+            (has(c.securityContext) &&
+             has(c.securityContext.allowPrivilegeEscalation) &&
+             c.securityContext.allowPrivilegeEscalation) ||
+            (has(c.securityContext) &&
+             has(c.securityContext.capabilities) &&
+             c.securityContext.capabilities.add.size() > 0))
+      message: >-
+        allowPrivilegeEscalation must not be true and capabilities.add must
+        be empty in sandbox Jobs
+    - expression: >-
+        variables.breakGlass ||
+          variables.podSpec.volumes.all(v,
+            has(v.emptyDir) || has(v.secret) || has(v.configMap) ||
+            has(v.projected) || has(v.downwardAPI))
+      message: >-
+        volume types are restricted to emptyDir, secret, configMap,
+        projected and downwardAPI in sandbox Jobs (no hostPath, PVC, CSI,
+        network storage)
+    - expression: >-
+        variables.breakGlass ||
+          !variables.allContainers.exists(c,
+            c.volumeMounts.exists(m,
+              variables.podSpec.volumes.exists(v,
+                v.name == m.name &&
+                (has(v.secret) || has(v.configMap) ||
+                 has(v.projected) || has(v.downwardAPI)) &&
+                !(has(m.readOnly) && m.readOnly))))
+      message: >-
+        secret/configMap/projected volumes must be mounted readOnly in
+        sandbox Jobs — writable credential mounts are an escalation path
+    - expression: >-
+        variables.breakGlass ||
+          variables.allContainers.all(c,
+            c.image.startsWith('ghcr.io/gwkline/homelab/') ||
+            c.image == 'docker:27-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c' ||
+            c.image == 'docker:27-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce')
+      message: >-
+        images must come from ghcr.io/gwkline/homelab or be one of the two
+        pinned docker:27-cli / docker:27-dind digests approved for dind
+    - expression: >-
+        variables.breakGlass ||
+          variables.allContainers.all(c,
+            has(c.resources) &&
+            'memory' in c.resources.limits &&
+            c.resources.limits['memory'] <= quantity('12Gi') &&
+            (!('cpu' in c.resources.limits) ||
+             c.resources.limits['cpu'] <= quantity('2')))
+      message: >-
+        resource ceilings exceeded: every container must set a memory limit
+        <= 12Gi, and a cpu limit (when set) <= 2 — see
+        deploy/sandbox-policy/README.md
+    - expression: >-
+        variables.breakGlass ||
+          variables.podSpec.volumes.all(v,
+            !has(v.emptyDir) || !has(v.emptyDir.sizeLimit) ||
+            v.emptyDir.sizeLimit <= quantity('20Gi'))
+      message: emptyDir sizeLimit ceiling is 20Gi in sandbox Jobs
+    - expression: >-
+        !variables.breakGlass ||
+          request.userInfo.groups.exists(g, g == 'system:masters')
+      message: >-
+        the sandbox.gwkline.io/break-glass label may only be used by cluster
+        operators (system:masters) — agents holding loop-manager cannot
+        invoke it; see deploy/sandbox-policy/README.md
+---
+# CronJob twin of sandbox-jobs-hardening: identical rules, CronJob-shaped
+# podSpec. Covers the hole where an identity with CronJob-create RBAC (the
+# dispatcher and panel hold it via loop-manager, the reconciler manages
+# CronJobs) hides a forbidden PodSpec in spec.jobTemplate.spec.template.spec.
+# KEEP RULE-FOR-RULE IDENTICAL to the policy above.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sandbox-jobs-hardening-cronjobs
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["cronjobs"]
+  variables:
+    - name: podSpec
+      expression: object.spec.jobTemplate.spec.template.spec
+    - name: allContainers
+      expression: >-
+        variables.podSpec.containers +
+          (has(variables.podSpec.initContainers) ? variables.podSpec.initContainers : [])
+    - name: breakGlass
+      expression: >-
+        'sandbox.gwkline.io/break-glass' in object.metadata.labels
+  validations:
+    - expression: >-
+        variables.breakGlass ||
+          (!(variables.podSpec.hostNetwork == true) &&
+           !(variables.podSpec.hostPID == true) &&
+           !(variables.podSpec.hostIPC == true) &&
+           !variables.allContainers.exists(c, c.ports.exists(p, p.hostPort > 0)))
+      message: >-
+        sandbox CronJobs must not use host namespaces (hostNetwork, hostPID,
+        hostIPC) or hostPort
+    - expression: >-
+        variables.breakGlass ||
+          (variables.podSpec.serviceAccountName == ''
+            ? 'default'
+            : variables.podSpec.serviceAccountName) in [
+              'default',
+              'dispatcher',
+              'factory-collector',
+              'factory-orchestrator',
+              'factory-reclaimer',
+              'factory-reconciler',
+              'factory-reviewer',
+              'factory-security',
+              'factory-worker'
+            ]
+      message: >-
+        serviceAccountName must come from the sandbox allowlist (default,
+        dispatcher, factory-collector, factory-orchestrator,
+        factory-reclaimer, factory-reconciler, factory-reviewer,
+        factory-security, factory-worker) — see deploy/sandbox-policy/README.md
+    - expression: >-
+        variables.breakGlass ||
+          (!(variables.podSpec.automountServiceAccountToken == true) ||
+           variables.podSpec.serviceAccountName in
+             ['dispatcher', 'factory-orchestrator', 'factory-reconciler'])
+      message: >-
+        ServiceAccount tokens may only be auto-mounted by the control pods
+        that need the Kubernetes API (dispatcher, factory-orchestrator,
+        factory-reconciler); every other CronJob template must set
+        automountServiceAccountToken: false
+    - expression: >-
+        variables.breakGlass ||
+          !variables.allContainers.exists(c,
+            has(c.securityContext) &&
+            has(c.securityContext.privileged) &&
+            c.securityContext.privileged &&
+            !(c.name == 'dind' &&
+              c.image == 'docker:27-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce' &&
+              c.command == ['dockerd', '--host=unix:///var/run/docker.sock'] &&
+              c.args.size() == 0))
+      message: >-
+        privileged: true is only allowed for the exact approved dind shape
+        (container name dind, pinned docker:27-dind digest, command dockerd
+        --host=unix:///var/run/docker.sock, no args)
+    - expression: >-
+        variables.breakGlass ||
+          !variables.allContainers.exists(c,
+            (has(c.securityContext) &&
+             has(c.securityContext.allowPrivilegeEscalation) &&
+             c.securityContext.allowPrivilegeEscalation) ||
+            (has(c.securityContext) &&
+             has(c.securityContext.capabilities) &&
+             c.securityContext.capabilities.add.size() > 0))
+      message: >-
+        allowPrivilegeEscalation must not be true and capabilities.add must
+        be empty in sandbox CronJob templates
+    - expression: >-
+        variables.breakGlass ||
+          variables.podSpec.volumes.all(v,
+            has(v.emptyDir) || has(v.secret) || has(v.configMap) ||
+            has(v.projected) || has(v.downwardAPI))
+      message: >-
+        volume types are restricted to emptyDir, secret, configMap,
+        projected and downwardAPI in sandbox CronJob templates (no hostPath,
+        PVC, CSI, network storage)
+    - expression: >-
+        variables.breakGlass ||
+          !variables.allContainers.exists(c,
+            c.volumeMounts.exists(m,
+              variables.podSpec.volumes.exists(v,
+                v.name == m.name &&
+                (has(v.secret) || has(v.configMap) ||
+                 has(v.projected) || has(v.downwardAPI)) &&
+                !(has(m.readOnly) && m.readOnly))))
+      message: >-
+        secret/configMap/projected volumes must be mounted readOnly in
+        sandbox CronJob templates — writable credential mounts are an
+        escalation path
+    - expression: >-
+        variables.breakGlass ||
+          variables.allContainers.all(c,
+            c.image.startsWith('ghcr.io/gwkline/homelab/') ||
+            c.image == 'docker:27-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c' ||
+            c.image == 'docker:27-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce')
+      message: >-
+        images must come from ghcr.io/gwkline/homelab or be one of the two
+        pinned docker:27-cli / docker:27-dind digests approved for dind
+    - expression: >-
+        variables.breakGlass ||
+          variables.allContainers.all(c,
+            has(c.resources) &&
+            'memory' in c.resources.limits &&
+            c.resources.limits['memory'] <= quantity('12Gi') &&
+            (!('cpu' in c.resources.limits) ||
+             c.resources.limits['cpu'] <= quantity('2')))
+      message: >-
+        resource ceilings exceeded: every container must set a memory limit
+        <= 12Gi, and a cpu limit (when set) <= 2 — see
+        deploy/sandbox-policy/README.md
+    - expression: >-
+        variables.breakGlass ||
+          variables.podSpec.volumes.all(v,
+            !has(v.emptyDir) || !has(v.emptyDir.sizeLimit) ||
+            v.emptyDir.sizeLimit <= quantity('20Gi'))
+      message: emptyDir sizeLimit ceiling is 20Gi in sandbox CronJob templates
+    - expression: >-
+        !variables.breakGlass ||
+          request.userInfo.groups.exists(g, g == 'system:masters')
+      message: >-
+        the sandbox.gwkline.io/break-glass label may only be used by cluster
+        operators (system:masters) — agents holding loop-manager cannot
+        invoke it; see deploy/sandbox-policy/README.md
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionBinding
+metadata:
+  name: sandbox-jobs-hardening
+spec:
+  policyName: sandbox-jobs-hardening
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: sandbox
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs"]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionBinding
+metadata:
+  name: sandbox-jobs-hardening-cronjobs
+spec:
+  policyName: sandbox-jobs-hardening-cronjobs
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: sandbox
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["cronjobs"]

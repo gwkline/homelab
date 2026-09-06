@@ -1,0 +1,42 @@
+# Fixture (allowed): mirrors the worker Jobs the factory orchestrator spawns
+# (apps/factory/orchestrator/run.sh) — profile ServiceAccount with token
+# automount off, profile image, 12Gi memory / 2 cpu ceilings, no volumes.
+# expect-allow (as agent identity)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-allow-factory-worker
+  namespace: sandbox
+  labels:
+    factory.gwkline.io/profile: code-pr
+    policy.gwkline.io/fixture: "true"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        factory.gwkline.io/profile: code-pr
+    spec:
+      restartPolicy: Never
+      serviceAccountName: factory-worker
+      automountServiceAccountToken: false
+      containers:
+        - name: worker
+          image: ghcr.io/gwkline/homelab/factory/worker@sha256:1d895dc53f98a45852f9fddae23df5783c47ed6af5d4c65feeaaa13f4e266910
+          imagePullPolicy: Always
+          env:
+            - name: FACTORY_REPO
+              value: gwkline/homelab
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 12Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

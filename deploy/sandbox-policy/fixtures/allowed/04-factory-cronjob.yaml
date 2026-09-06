@@ -1,0 +1,50 @@
+# Fixture (allowed): a CronJob shape — proves the policy also inspects
+# spec.jobTemplate.spec.template.spec, not just bare Jobs. Mirrors
+# deploy/factory/base/orchestrator-cronjob.yaml (token-mounting control pod).
+# expect-allow (as agent identity)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: policy-allow-orchestrator
+  namespace: sandbox
+  labels:
+    policy.gwkline.io/fixture: "true"
+spec:
+  schedule: "0 9 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata:
+          labels:
+            app: policy-fixture
+        spec:
+          serviceAccountName: factory-orchestrator
+          automountServiceAccountToken: true # needs k8s API to spawn worker Jobs
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+          containers:
+            - name: orchestrator
+              image: ghcr.io/gwkline/homelab/factory/orchestrator@sha256:841ed051cab47c4c6b2a3a6c6ac2988f8dfb09de9f18da73b88fb5360f214854
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            - name: home
+              emptyDir: {}

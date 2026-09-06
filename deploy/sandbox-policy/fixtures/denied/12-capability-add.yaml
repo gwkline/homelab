@@ -1,0 +1,30 @@
+# Fixture (denied): added capabilities — CAP_SYS_ADMIN inside a sandbox
+# container is one step from mounting the host filesystem.
+# expect-deny: allowPrivilegeEscalation
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-deny-cap-add
+  namespace: sandbox
+  labels:
+    app: policy-fixture
+    policy.gwkline.io/fixture: "true"
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: policy-fixture
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: evil
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
+          securityContext:
+            allowPrivilegeEscalation: true
+            capabilities:
+              add: ["SYS_ADMIN"]
+          resources:
+            limits:
+              memory: 256Mi

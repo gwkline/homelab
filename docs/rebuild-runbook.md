@@ -67,6 +67,7 @@ kubectl apply -k deploy/github-tokens/base       # syncs github-token(+writer) f
 #    reaches into agents)
 kubectl apply -f deploy/namespaces.yaml
 kubectl apply -k deploy/policies/base
+kubectl apply -k deploy/sandbox-policy/base # sandbox Jobs admission policy (issue #28)
 
 # 2b. image admission policy (issue #91 / ADR-004): the sigstore
 #     policy-controller webhook must be in force BEFORE workloads are

@@ -200,9 +200,34 @@ jobs:
       - name: Backup-secret input regression test
         run: sh scripts/tests/create-backup-secret.test.sh
 
+  # Sandbox Jobs admission policy (#28): ValidatingAdmissionPolicy/CEL must
+  # admit every approved workload shape and reject every malicious fixture
+  # with a clear message. Needs a real API server — the policy exercises
+  # admission, not unit-testable logic — so this boots a throwaway k3s
+  # pinned to the cluster's exact version (bootstrap.sh K3S_VERSION) and
+  # server-side applies the fixtures via scripts/tests/sandbox-policy.test.sh.
+  sandbox-policy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install k3s (v1.36.4+k3s1, same pin as bootstrap/bootstrap.sh)
+        run: |
+          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="v1.36.4+k3s1" sh -s - server \
+            --disable=traefik --disable=servicelb --disable=metrics-server \
+            --disable=local-storage --write-kubeconfig-mode 644
+          echo "KUBECONFIG=/etc/rancher/k3s/k3s.yaml" >> "$GITHUB_ENV"
+      - name: Wait for node Ready
+        run: |
+          kubectl wait --for=condition=Ready node --all --timeout=300s
+          kubectl get nodes
+      - name: Admission fixture tests (allowed admitted, denied rejected)
+        run: sh scripts/tests/sandbox-policy.test.sh
+
   build:
     needs:
-      [validate, lint, panel-smoke, panel-test, knowledge-eval, github-app-test]
+      [validate, lint, panel-smoke, panel-test, knowledge-eval, github-app-test, sandbox-policy]
     strategy:
       matrix:
         include:

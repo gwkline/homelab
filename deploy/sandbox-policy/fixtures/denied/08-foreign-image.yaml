@@ -1,0 +1,26 @@
+# Fixture (denied): an image from outside the approved GHCR namespace —
+# arbitrary public images are how tooling gets smuggled in.
+# expect-deny: ghcr.io/gwkline/homelab
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-deny-foreign-image
+  namespace: sandbox
+  labels:
+    app: policy-fixture
+    policy.gwkline.io/fixture: "true"
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: policy-fixture
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: evil
+          image: docker.io/library/busybox:1.36
+          resources:
+            limits:
+              memory: 256Mi

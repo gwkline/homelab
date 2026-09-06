@@ -1,0 +1,38 @@
+# Fixture: break-glass path (issue #28). The label skips every sandbox Jobs
+# constraint, but the policy's last validation only admits it when the
+# requester is a cluster operator (system:masters). The fixture script
+# asserts BOTH sides:
+#   - applied impersonating an agent identity  -> DENIED ("break-glass")
+#   - applied as the plain cluster-admin user  -> ADMITTED
+# The payload deliberately violates a rule (token automount on the default
+# ServiceAccount) to prove the label actually bypasses constraints, while
+# staying harmless if a pod ever runs (it exits immediately).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-break-glass
+  namespace: sandbox
+  labels:
+    sandbox.gwkline.io/break-glass: "true"
+    policy.gwkline.io/fixture: "true"
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: policy-fixture
+    spec:
+      serviceAccountName: default
+      automountServiceAccountToken: true
+      restartPolicy: Never
+      containers:
+        - name: noop
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
+          command: ["true"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi

@@ -1,0 +1,33 @@
+# Fixture (denied): PVC volume — persistent storage lets a rogue Job read
+# other workloads' data and survive past its TTL.
+# expect-deny: volume types
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-deny-pvc
+  namespace: sandbox
+  labels:
+    app: policy-fixture
+    policy.gwkline.io/fixture: "true"
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: policy-fixture
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: evil
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
+          volumeMounts:
+            - name: loot
+              mountPath: /loot
+          resources:
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: loot
+          persistentVolumeClaim:
+            claimName: some-other-pods-data

@@ -1,0 +1,30 @@
+# Fixture (denied): dind shape drift — right container name and image, but
+# the command is swapped, so "privileged" would run attacker code instead of
+# dockerd. The shape must match exactly, command included.
+# expect-deny: privileged
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-deny-dind-drift
+  namespace: sandbox
+  labels:
+    app: policy-fixture
+    policy.gwkline.io/fixture: "true"
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: policy-fixture
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: dind
+          image: docker:27-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce
+          command: ["sleep", "9999"]
+          securityContext:
+            privileged: true
+          resources:
+            limits:
+              memory: 256Mi

@@ -1,0 +1,100 @@
+# Fixture (allowed): mirrors deploy/loop-agent/base/cronjob.yaml — the one
+# privileged dind shape the policy approves. Default ServiceAccount with
+# token automount off, pinned loop/docker images, readOnly secret mounts,
+# emptyDir-only volumes, memory limits inside the ceilings.
+# expect-allow (as agent identity)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-allow-loop-dind
+  namespace: sandbox
+  labels:
+    app: loop-agent
+    policy.gwkline.io/fixture: "true"
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: loop-agent
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: docker-ready
+          image: docker:27-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c
+          command: ["sh", "-c", "docker info && chmod 666 /var/run/docker.sock"]
+          volumeMounts:
+            - name: sock
+              mountPath: /var/run
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 256Mi
+      containers:
+        - name: loop
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: HOME
+              value: /tmp
+            - name: DOCKER_HOST
+              value: unix:///var/run/docker.sock
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: github-token
+              mountPath: /secrets
+              readOnly: true
+            - name: sock
+              mountPath: /var/run
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+            limits:
+              memory: 4Gi
+        - name: dind
+          image: docker:27-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce
+          command: ["dockerd", "--host=unix:///var/run/docker.sock"]
+          securityContext:
+            privileged: true
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+          volumeMounts:
+            - name: sock
+              mountPath: /var/run
+            - name: dind-storage
+              mountPath: /var/lib/docker
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+            limits:
+              memory: 8Gi
+      volumes:
+        - name: sock
+          emptyDir: {}
+        - name: dind-storage
+          emptyDir:
+            sizeLimit: 20Gi
+        - name: data
+          emptyDir:
+            sizeLimit: 5Gi
+        - name: github-token
+          secret:
+            secretName: github-token
+            optional: true

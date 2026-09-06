@@ -61,7 +61,9 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: docker-ready
-          image: docker:27-cli
+          # Digest-pinned: the sandbox Jobs admission policy (#28) only admits
+          # the pinned docker:27-cli digest outside ghcr.io/gwkline/homelab.
+          image: docker:27-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c
           command:
             - sh
             - -c
@@ -76,6 +78,10 @@ spec:
           volumeMounts:
             - name: sock
               mountPath: /var/run
+          # Bounded like everything else (sandbox Jobs admission policy #28).
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits:   { memory: 256Mi }
       containers:
         - name: loop
           image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
@@ -127,7 +133,7 @@ spec:
             requests: { cpu: 100m, memory: 256Mi }
             limits:   { cpu: "1",  memory: 1Gi }
         - name: dind
-          image: docker:27-dind
+          image: docker:27-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce
           command: ["dockerd", "--host=unix:///var/run/docker.sock"]
           securityContext:
             privileged: true # same grant as every sandbox loop pod

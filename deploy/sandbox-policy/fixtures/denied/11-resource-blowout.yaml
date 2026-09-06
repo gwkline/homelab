@@ -1,0 +1,30 @@
+# Fixture (denied): resource blowout — no memory ceiling means one runaway
+# Job starves the shared node (the whole reason requests/limits exist here).
+# expect-deny: resource ceilings
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-deny-resource-blowout
+  namespace: sandbox
+  labels:
+    app: policy-fixture
+    policy.gwkline.io/fixture: "true"
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: policy-fixture
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: hog
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
+          resources:
+            requests:
+              cpu: "8"
+              memory: 8Gi
+            limits:
+              cpu: "8"
+              memory: 64Gi

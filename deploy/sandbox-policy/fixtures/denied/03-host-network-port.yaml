@@ -1,0 +1,30 @@
+# Fixture (denied): hostNetwork + hostPort — binds straight onto the node's
+# network namespace / ports.
+# expect-deny: host namespaces
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-deny-hostport
+  namespace: sandbox
+  labels:
+    app: policy-fixture
+    policy.gwkline.io/fixture: "true"
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: policy-fixture
+    spec:
+      automountServiceAccountToken: false
+      hostNetwork: true
+      restartPolicy: Never
+      containers:
+        - name: evil
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
+          ports:
+            - containerPort: 8080
+              hostPort: 8080
+          resources:
+            limits:
+              memory: 256Mi

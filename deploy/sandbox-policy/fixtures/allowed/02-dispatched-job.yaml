@@ -1,0 +1,70 @@
+# Fixture (allowed): mirrors the Job the dispatcher watcher (and the panel)
+# dispatch per labeled issue — examples/dispatch-watcher.mjs jobManifest and
+# apps/panel/server/jobs.ts jobManifest. No serviceAccountName (default), no
+# token, no dind, readOnly secrets.
+# expect-allow (as agent identity)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-allow-dispatched
+  namespace: sandbox
+  labels:
+    app: loop-agent
+    app.kubernetes.io/part-of: homelab
+    policy.gwkline.io/fixture: "true"
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: loop-agent
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: loop
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
+          env:
+            - name: GITHUB_TOKEN_FILE
+              value: /secrets/token
+            - name: HOME
+              value: /tmp
+            - name: LOOP_COMMAND
+              value: "node /data/repos/homelab/examples/loop-hello.mjs"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: github-token
+              mountPath: /secrets
+              readOnly: true
+            - name: github-token-writer
+              mountPath: /secrets-writer
+              readOnly: true
+          resources:
+            limits:
+              memory: 4Gi
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 1000
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 5Gi
+        - name: github-token
+          secret:
+            optional: true
+            secretName: github-token
+        - name: github-token-writer
+          secret:
+            optional: true
+            secretName: github-token-writer
