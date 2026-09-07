@@ -31,7 +31,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: reclaimer
-              image: ghcr.io/gwkline/homelab/factory/orchestrator@sha256:841ed051cab47c4c6b2a3a6c6ac2988f8dfb09de9f18da73b88fb5360f214854
+              image: ghcr.io/gwkline/homelab/factory/orchestrator@sha256:26aa397d1bae0483b2d00d3f7b3563cd4482277aa66acc2b7cced94cd205d9f5
               imagePullPolicy: Always
               command: ["sh", "/orch/run-reclaimer.sh"]
               env:
