@@ -449,6 +449,12 @@ fi
 git add -A
 if git diff --cached --quiet; then
   echo "[worker] no changes produced"
+  # Self-diagnosing: the agent's output otherwise vanishes with the pod here
+  # (it is only echoed on the success path below), leaving "no changes" with
+  # no explanation of what the agent actually did or concluded.
+  echo "[worker] --- agent output (tail, no-changes path) ---"
+  tail -40 /tmp/task-prompt-output.log 2>/dev/null || echo "[worker] (no agent output file)"
+  echo "[worker] --- end agent output ---"
   write_report "not-run" "worker made no changes"
   emit_artifacts
   exit 1
