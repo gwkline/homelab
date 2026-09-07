@@ -194,14 +194,35 @@ fi
 # worker build this commit's manifests pin, never a moving tag.
 case "${PROFILE}" in
   security)
-    WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/security@sha256:de0859cf9eaff1f9c6bc2d46bc15e8217c1e3dca7d13a0f37bac0397bbc657a6"
+    PROFILE_CM="factory-profile-security"
     WORKER_SA="factory-security"
     WORKER_CPU="500m"; WORKER_MEM="4Gi"
     ;;
   code-pr|*)
-    WORKER_IMAGE="ghcr.io/gwkline/homelab/factory/worker@sha256:1d895dc53f98a45852f9fddae23df5783c47ed6af5d4c65feeaaa13f4e266910"
+    PROFILE_CM="factory-profile-code-pr"
     WORKER_SA="factory-worker"
     WORKER_CPU="500m"; WORKER_MEM="12Gi"
+    ;;
+esac
+
+# Worker image: single source of truth is the profile ConfigMap
+# (deploy/factory/base/profile-*.yaml). The digest lives in exactly one place
+# and is resolved here at runtime, so a profile re-pin can never disagree with
+# a second hardcoded copy. WORKER_IMAGE_OVERRIDE wins when set (unit tests,
+# manual dispatches). Fails closed: an unresolvable image parks the issue
+# instead of spawning a broken Job.
+if [ -n "${WORKER_IMAGE_OVERRIDE:-}" ]; then
+  WORKER_IMAGE="${WORKER_IMAGE_OVERRIDE}"
+else
+  WORKER_IMAGE=$(kubectl get configmap "${PROFILE_CM}" -n sandbox -o jsonpath='{.data.profile\.json}' 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['image'])") || WORKER_IMAGE=""
+fi
+case "${WORKER_IMAGE:-}" in
+  ghcr.io/*@sha256:*) ;;
+  *)
+    echo "[orch] FATAL: cannot resolve worker image from configmap ${PROFILE_CM} (RBAC? profile not applied?)" >&2
+    update_status "failed" "Orchestrator could not resolve the worker image from configmap \`${PROFILE_CM}\` — check RBAC and that the profile is applied."
+    gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
+    exit 1
     ;;
 esac
 

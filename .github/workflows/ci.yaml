@@ -191,6 +191,11 @@ jobs:
         run: sh apps/shared/tests/skills-sync.test.sh
       - name: Reclaimer fixture test
         run: sh apps/factory/orchestrator/tests/reclaimer.test.sh
+      # Factory image single source of truth: run.sh resolves the worker
+      # image from the profile ConfigMap (never a second hardcoded digest),
+      # the pin helper stamps every copy, and pins agree repo-wide.
+      - name: Factory image pin test
+        run: sh apps/factory/orchestrator/tests/profile-image.test.sh
       # Backup-secret input regression (#10): a stub kubectl proves the
       # emergency fallback captures interactive credentials byte-exactly
       # (no leading/trailing newline), keeps prompts and visual newlines on

@@ -43,3 +43,23 @@ fi
 
 pinned=$(_refs | grep -c '@sha256:' || true)
 echo "all homelab image refs are digest-pinned ($pinned refs)"
+
+# One digest per factory component: the same factory image must never resolve
+# to two different digests in different files. A re-pin that misses a second
+# hardcoded copy silently runs stale code (the worker/profile split that
+# motivated this check). Same _refs shape as above, so test/example vars
+# (WORKER_IMAGE=, docs) stay out of scope by design.
+factory_pairs=$(_refs | grep -oE 'ghcr\.io/[A-Za-z0-9_.-]+/homelab/factory/[A-Za-z0-9_.-]+@sha256:[0-9a-f]{64}' | sort -u || true)
+if [ -n "$factory_pairs" ]; then
+  divergent=$(printf '%s\n' "$factory_pairs" | awk -F'@sha256:' '{print $1}' | sort | uniq -d || true)
+  if [ -n "$divergent" ]; then
+    printf '%s\n' "$divergent" | while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      echo "divergent pin for ${path}:" >&2
+      _refs | grep -F "$path" >&2 || true
+    done
+    fail 'same factory image pinned to different digests — re-pin with scripts/pin-factory-image.sh so every copy agrees'
+  fi
+  agree=$(printf '%s\n' "$factory_pairs" | awk -F'@sha256:' '{print $1}' | sort -u | wc -l | tr -d ' ')
+  echo "factory image pins agree ($agree components)"
+fi
