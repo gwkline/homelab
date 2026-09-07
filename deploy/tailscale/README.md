@@ -111,6 +111,7 @@ Each fixer has its **own** ServiceAccount and Role so the two mechanisms are ind
 
 ### Retesting whether the workaround is still necessary
 
+- `scripts/serve-recovery-test.sh` — the issue-#24 acceptance proof that the workaround **works**: replaces the t3code-0 pod and requires HTTPS 200 to recover with no manual repair (the fixer loop is the only repairer) within the recovery objective — 120 s from the new pod IP, ~60 s typical — then checks the proxy's https 443 handler points at the new IP; failures print serve-fixer and proxy logs. Exact command + objective: docs/rebuild-runbook.md §4b.
 - `scripts/serve-retest.sh` — disables the fixer, replaces the t3code-0 pod, and watches the proxy's serve config: exit 0 = operator self-heals (workaround obsolete — delete this directory), exit 3 = workaround still necessary, exit 1 = environment failure. It restores the fixer and re-verifies HTTPS 200 either way.
 - `scripts/serve-fixer-check.sh` — static manifest checks (digest pins, no `pods/log`, non-root settings, name-pinned reads) plus, against a live cluster with an impersonating kubeconfig, the RBAC matrix (may touch only its own target; denied elsewhere).
 

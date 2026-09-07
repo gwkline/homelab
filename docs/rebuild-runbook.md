@@ -104,7 +104,9 @@ kubectl apply -k deploy/factory/base       # unattended issue -> draft PR factor
 # Automatic self-healing: the t3code serve-fixer (deploy/tailscale/) runs a
 # loop in the tailscale namespace that execs that same script every ~30s, so
 # a pod replacement re-points the HTTPS handler at the new pod IP within
-# ~60s; every check logs one line, failures included
+# ~60s (recovery objective 120s — proven by
+# ./scripts/serve-recovery-test.sh, section 4b); every check logs one line,
+# failures included
 # (`kubectl logs -n tailscale deploy/t3code-serve-fixer`). panel — or any
 # exposed app: serve-refresh.sh <app> <namespace>.
 # Also the one-command fix whenever a replaced app pod leaves its serve
@@ -148,6 +150,18 @@ Either way the drill result states which workloads' state was restored, recreate
 ### Step 4 — record
 
 Fill one row in the drill log (section 5), convert every manual surprise (section 6), and update the target RTO (section 7).
+
+## 4b. HTTPS recovery acceptance test (issue #24)
+
+Step 0's `serve-https.sh` is the one-time converge. The steady-state claim — after a t3code pod replacement, HTTPS comes back **with no manual repair** (the serve-fixer loop in deploy/tailscale is the only repairer) — is a repeatable acceptance test, not an anecdotal manual check. Run it from a machine with tailnet access and an admin kubeconfig (this drill's environment); it needs a configured tailnet, so it runs manually rather than in GitHub-hosted CI:
+
+```sh
+./scripts/serve-recovery-test.sh
+```
+
+The test records the current t3code-0 pod IP and verifies HTTPS answers 200, deletes the pod, waits for statefulset/t3code to replace it with a **different** IP, then — invoking no repair script — requires HTTPS 200 again and finally checks the proxy's serve config points the https 443 handler at the new IP.
+
+**Expected recovery time: within 120 s of the replacement pod's IP** (`RECOVERY_SECONDS`, default 120; the fixer loop converges every ~30 s, so typical recovery is ~60 s). The test prints the measured recovery time — record it in the drill log when one is run. Any failure exits 1 after printing serve-fixer logs plus the proxy's serve status and pod logs, and blocks the next drill until fixed: a regression here 502s t3code after every rollout.
 
 ## 5. Drill log (actual RTO / RPO)
 
