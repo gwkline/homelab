@@ -204,6 +204,15 @@ jobs:
       # the same reason as the skills-sync tests above.
       - name: Backup-secret input regression test
         run: sh scripts/tests/create-backup-secret.test.sh
+      # roleRef API-group regression (#7): RoleBinding/ClusterRoleBinding
+      # roleRef.apiGroup must be the bare API group (rbac.authorization.k8s.io)
+      # — a group/version value like rbac.authorization.k8s.io/v1 makes the
+      # API server reject the whole binding, so the bound ServiceAccount
+      # silently loses every permission. Kustomize renders either form, so
+      # the guard runs beside verify.sh, not inside it (verify.sh is bash
+      # and must stay untouched by dash-gated worker edits).
+      - name: RBAC roleRef API group check
+        run: sh scripts/check-rbac-refs.sh
 
   build:
     needs:
