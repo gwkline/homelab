@@ -112,7 +112,12 @@ skills_auth_token() {
     skills_fail "no credentials for $SKILLS_REPO_URL (set GITHUB_TOKEN_FILE, GITHUB_TOKEN, or GH_TOKEN)"
     return 1
   fi
+  # Exported: the throwaway GIT_ASKPASS helper runs as a child process of git
+  # and only inherits exported variables. Without this, the helper answers the
+  # password prompt with an empty string and every fetch fails with
+  # "Invalid username or token" even when the token itself is valid (#81).
   SKILLS_TOKEN_SESSION="$_tok"
+  export SKILLS_TOKEN_SESSION
   return 0
 }
 
