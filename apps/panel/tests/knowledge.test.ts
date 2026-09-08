@@ -16,7 +16,7 @@ const TOKEN = "knowledge-test-token";
 const minute = 60_000;
 const hour = 60 * minute;
 const day = 24 * hour;
-const PORT = 3961;
+const PORT = 3963;
 
 // Source list per the panel-facing knowledge API contract (#58/#64 + #65).
 const SOURCES = [
