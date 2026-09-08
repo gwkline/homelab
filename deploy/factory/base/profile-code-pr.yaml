@@ -15,7 +15,7 @@ data:
     {
       "name": "code-pr",
       "version": 1,
-      "image": "ghcr.io/gwkline/homelab/factory/worker@sha256:378dd744eef71ccf4029b0048995b5cf5c6cd23db7d62f2b37e0845db8e01e9e",
+      "image": "ghcr.io/gwkline/homelab/factory/worker@sha256:00967767d31057a386c38f3583170e97cf32e8dc3e4f13374b10f19ee8e54608",
       "serviceAccount": "factory-worker",
       "activeDeadlineSeconds": 3600,
       "backoffLimit": 0,
