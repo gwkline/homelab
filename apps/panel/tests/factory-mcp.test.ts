@@ -364,7 +364,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     path.join(root, "web", "dist", "index.html"),
     path.join(stage, "web", "dist", "index.html")
   );
-  const port = 3951;
+  const port = 3954;
   const child = spawn(process.execPath, [path.join(stage, "index.js")], {
     env: {
       ...process.env,
