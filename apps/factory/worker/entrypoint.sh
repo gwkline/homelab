@@ -311,6 +311,17 @@ GITGUARD="-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30"
 CLONE_URL="${CLONE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git}"
 mkdir -p "${WORK_DIR}"
 cd "${WORK_DIR}"
+# Writable scratch for the agent: the image rootfs is read-only and the coding
+# CLI's sandbox denies writes outside the repo, so agents probing versions or
+# staging downloads into /tmp or $HOME die on permissions. Point temp files at
+# the work dir (writable, ephemeral with the pod) instead.
+mkdir -p "${WORK_DIR}/scratch" || {
+  echo "[worker] FATAL: cannot create scratch dir" >&2
+  write_report "not-run" "cannot create scratch dir"
+  emit_artifacts
+  exit 1
+}
+export TMPDIR="${WORK_DIR}/scratch" TEMP="${WORK_DIR}/scratch" TMP="${WORK_DIR}/scratch"
 # shellcheck disable=SC2086  # word-splitting is intended: GITGUARD is two -c flags
 git ${GITGUARD} clone --depth 20 "${CLONE_URL}" repo || {
   echo "[worker] FATAL: clone failed (or stalled >30s)" >&2
