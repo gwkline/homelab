@@ -532,7 +532,19 @@ Refs #${NUM}"
   # sensitive transition. A pending gate parks the issue on
   # factory/pending-approval and a later tick/pod resumes from the record.
   echo "[orch] publish: pushing branch ${BRANCH}..."
-  gitt push -q "${AUTH_CLONE}" "${BRANCH}"
+  # Stale-branch convergence: a prior tick may have pushed this branch and died
+  # before opening the PR. The branch is factory-owned transient state for the
+  # patch built above (fresh from current main), so overwrite it. A plain push
+  # dies here with "non-fast-forward" and — under set -eu — takes the whole
+  # tick down through the crash trap instead of the labeled failure path.
+  if ! PUSH_ERR=$(gitt push -q --force-with-lease "${AUTH_CLONE}" "${BRANCH}" 2>&1); then
+    update_status "failed" "Branch push failed:
+
+\`\`\`
+$(printf '%s' "$PUSH_ERR" | head -5)
+\`\`\`"
+    gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
+  else
   echo "[orch] publish: branch pushed"
   HEAD_SHA=$(git rev-parse HEAD)
   echo "[orch] publish: approval gate..."
@@ -566,6 +578,7 @@ _Comment edited by factory; CI will run on the draft branch._"
       echo "[orch] issue #${NUM}: publish ${GATE} — parked in ${LABEL_FAILED}"
       ;;
   esac
+  fi
 else
   ERR=$(cat /tmp/apply-err | head -10)
   update_status "failed" "Patch failed to apply to current base:
