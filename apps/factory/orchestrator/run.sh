@@ -518,9 +518,11 @@ PUBLISH_DIR="/tmp/publish-${NUM}"
 rm -rf "${PUBLISH_DIR}"; mkdir -p "${PUBLISH_DIR}"; cd "${PUBLISH_DIR}"
 AUTH_CLONE="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
 gitt clone -q "${AUTH_CLONE}" .
+echo "[orch] publish: cloned ${REPO} @ $(git rev-parse --short HEAD)"
 git config user.name "factory-bot"; git config user.email "factory@homelab.local"
 git checkout -qb "${BRANCH}"
 if gitt apply --whitespace=nowarn "/tmp/patch-${NUM}.diff" 2>/tmp/apply-err; then
+  echo "[orch] publish: patch applied ($(git diff --cached --stat | tail -1))"
   git add -A && git commit -qm "factory: resolve #${NUM}
 
 Produced by homelab software factory (${PROFILE} profile).
@@ -529,11 +531,16 @@ Refs #${NUM}"
   # the approval binds to (digest = branch head); opening the PR is the gated
   # sensitive transition. A pending gate parks the issue on
   # factory/pending-approval and a later tick/pod resumes from the record.
+  echo "[orch] publish: pushing branch ${BRANCH}..."
   gitt push -q "${AUTH_CLONE}" "${BRANCH}"
+  echo "[orch] publish: branch pushed"
   HEAD_SHA=$(git rev-parse HEAD)
+  echo "[orch] publish: approval gate..."
   GATE=$(approval_gate_publish "${REPO}" "${NUM}" "${PROFILE}" "${BRANCH}" "main" "/tmp/patch-${NUM}.diff" "${HEAD_SHA}") || true
+  echo "[orch] publish: gate verdict: ${GATE}"
   case "${GATE}" in
     proceed)
+      echo "[orch] publish: opening draft PR..."
       PR_URL=$(approval_open_pr "${REPO}" "${NUM}" "${PROFILE}" "${BRANCH}" "main")
       approval_mark_executed "${REPO}" "${NUM}" publish "${PR_URL}" || true
       update_status "published" "Draft PR: ${PR_URL}
