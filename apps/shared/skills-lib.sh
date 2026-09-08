@@ -30,7 +30,7 @@
 #     are ever created, refreshed, or removed — real user files are skipped.
 # Source mode: `. skills-lib.sh` then call skills_sync / skills_link_generated.
 
-SKILLS_SECRET_PATTERN='(github_pat_|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|tskey-auth-)'
+SKILLS_SECRET_PATTERN='(github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|tskey-auth-[A-Za-z0-9_-]{10,})'
 
 # Strip characters that would break a single-line JSON string.
 skills_clean() {

@@ -165,10 +165,27 @@ grep -q 'secret-looking' "$STATUS" || die "secret-scan reason not recorded"
 grep -q 'private-poteto' "$STORE/software-development/poteto-mode/SKILL.md" \
   || die "secret-scan failure clobbered the previous good store"
 
+echo '==> 8b. docs that merely name token shapes still install'
+# Shape mentions assembled at runtime so this file carries no literal the
+# repo-wide secret scan could flag; the fixture (temp dir only) mirrors real
+# skill docs that tripped the old bare-prefix pattern (homelab#81 follow-up).
+_M1="github""_pat_"
+_M2="tskey-auth""-"
+mk_skill "homelab/doc-skill" "docs mention ${_M1}11ASQ3L rotation, ${_M2}rotation, and ghp_ notes"
+git -C "$REPO" add -A
+git -C "$REPO" commit -qm "fixture docs"
+SHA_DOCS="$(git -C "$REPO" rev-parse HEAD)"
+if ! SKILLS_REF="$SHA_DOCS" SKILLS_ALLOWLIST="homelab/doc-skill" sh "$LIB" 2>/dev/null; then
+  die "doc-style shape mentions were refused (secret-scan false positive)"
+fi
+grep -q '"ok":true' "$STATUS" || die "status not ok after docs sync"
+[ -f "$STORE/homelab/doc-skill/SKILL.md" ] || die "doc skill not installed"
+
 echo '==> 9. named-ref (branch) sync resolves and records the commit'
 SKILLS_REF="main" sh "$LIB"
+SHA_MAIN="$(git -C "$REPO" rev-parse main)"
 grep -q '"ok":true' "$STATUS" || die "status not ok after branch sync"
-grep -q "\"commit\":\"$SHA2\"" "$STATUS" || die "branch sync did not record resolved commit"
+grep -q "\"commit\":\"$SHA_MAIN\"" "$STATUS" || die "branch sync did not record resolved commit"
 
 echo '==> 10. askpass helper is executable (mktemp is 600; non-root git child must exec it)'
 SHIM2="$FIX/bin2"
