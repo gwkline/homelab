@@ -537,12 +537,20 @@ Refs #${NUM}"
   # patch built above (fresh from current main), so overwrite it. A plain push
   # dies here with "non-fast-forward" and — under set -eu — takes the whole
   # tick down through the crash trap instead of the labeled failure path.
-  # The fetch first is load-bearing: in a fresh clone there is no
-  # remote-tracking ref, so --force-with-lease rejects an existing remote
-  # branch with "stale info". Fetching sets the lease baseline (absent on
-  # first runs, which is fine — creating is allowed).
-  gitt fetch -q "${AUTH_CLONE}" "${BRANCH}:refs/remotes/origin/${BRANCH}" 2>/dev/null || true
-  if ! PUSH_ERR=$(gitt push -q --force-with-lease "${AUTH_CLONE}" "${BRANCH}" 2>&1); then
+  # Lease form matters: in a fresh clone the implicit --force-with-lease never
+  # matches (rejected "stale info" even with a correct tracking ref — verified
+  # live), so read the remote SHA and pass an explicit lease. Absent remotely
+  # means first push: plain create. A TOCTOU move between ls-remote and push
+  # fails the lease and lands in the labeled path below; the next tick then
+  # converges, so staleness can delay but never wedge publishing.
+  REMOTE_SHA=$(gitt ls-remote "${AUTH_CLONE}" "refs/heads/${BRANCH}" 2>/dev/null | cut -f1)
+  if [ -n "$REMOTE_SHA" ]; then
+    PUSH_LEASE="--force-with-lease=${BRANCH}:${REMOTE_SHA}"
+  else
+    PUSH_LEASE=""
+  fi
+  # shellcheck disable=SC2086  # word-splitting is intended: PUSH_LEASE is zero or one flag
+  if ! PUSH_ERR=$(gitt push -q ${PUSH_LEASE} "${AUTH_CLONE}" "${BRANCH}" 2>&1); then
     update_status "failed" "Branch push failed:
 
 \`\`\`
