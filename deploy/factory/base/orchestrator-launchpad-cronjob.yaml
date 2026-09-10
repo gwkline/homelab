@@ -33,7 +33,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: orchestrator
-              image: ghcr.io/gwkline/homelab/factory/orchestrator@sha256:8abde36cf2184f47913a46f72eed48f3fb33480fd4a5ca7c153ee1cad23fb8c1
+              image: ghcr.io/gwkline/homelab/factory/orchestrator@sha256:62603e3424bd72f57e19e39a4b05cefb2cab706a94d49c61c04aaa4c275480a4
               imagePullPolicy: Always
               env:
                 - name: FACTORY_REPO
