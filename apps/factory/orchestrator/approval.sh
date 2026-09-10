@@ -304,14 +304,18 @@ approval_gate_publish() {  # <repo> <issue> <profile> <branch> <base> <patch_fil
     _g_status=$(approval_get "${_g_rec}" "status")
     case "${_g_status}" in
       pending)
-        if [ "$(approval_epoch "$(approval_get "${_g_rec}" "expires_at")")" -lt "$(approval_epoch "$(approval_now)")" ]; then
+        if [ "$(approval_get "${_g_rec}" "digest")" != "${_g_head}" ]; then
+          # Fresh artifact: the expired-or-pending decision was about an older
+          # patch. Rebuild the request (new digest, new TTL) so a human
+          # decides on what would actually merge — never fail closed here just
+          # because a previous patch's window lapsed.
+          approval_build_request "${_g_repo}" "${_g_issue}" "${_g_profile}" "publish" "${_g_branch}" "$5" "${_g_head}" "${_g_patch}" "${_g_rec}"
+          approval_put "${_g_repo}" "${_g_issue}" "publish" "${_g_rec}"
+        elif [ "$(approval_epoch "$(approval_get "${_g_rec}" "expires_at")")" -lt "$(approval_epoch "$(approval_now)")" ]; then
           approval_merge "${_g_rec}" '{"status":"expired","decision":{"actor":"factory","rationale":"approval request expired (ttl '"${APPROVAL_TTL_HOURS}"'h) without a decision"}}' "${_g_rec}.m"
           mv "${_g_rec}.m" "${_g_rec}"
           approval_put "${_g_repo}" "${_g_issue}" "publish" "${_g_rec}"
           _g_reason="expired"
-        elif [ "$(approval_get "${_g_rec}" "digest")" != "${_g_head}" ]; then
-          approval_build_request "${_g_repo}" "${_g_issue}" "${_g_profile}" "publish" "${_g_branch}" "$5" "${_g_head}" "${_g_patch}" "${_g_rec}"
-          approval_put "${_g_repo}" "${_g_issue}" "publish" "${_g_rec}"
         fi
         ;;
       approved)
@@ -335,7 +339,14 @@ approval_gate_publish() {  # <repo> <issue> <profile> <branch> <base> <patch_fil
         _g_reason="denied"
         ;;
       expired)
-        _g_reason="expired"
+        if [ "$(approval_get "${_g_rec}" "digest")" != "${_g_head}" ]; then
+          # Same fresh-artifact rule as pending above: the lapsed window
+          # belonged to an older patch — re-ask on the current one.
+          approval_build_request "${_g_repo}" "${_g_issue}" "${_g_profile}" "publish" "${_g_branch}" "$5" "${_g_head}" "${_g_patch}" "${_g_rec}"
+          approval_put "${_g_repo}" "${_g_issue}" "publish" "${_g_rec}"
+        else
+          _g_reason="expired"
+        fi
         ;;
       invalidated)
         _g_reason="invalidated"
