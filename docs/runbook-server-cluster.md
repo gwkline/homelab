@@ -117,6 +117,17 @@ Rotation procedure (keeps existing proxy devices): deploy/tailscale/README.md.
 
 GitHub tokens are synced from 1Password by External Secrets Operator — nothing is created by hand except the least-privilege 1Password service-account token (restricted to the `homelab` vault, issue #41). `scripts/create-github-secret.sh` is deprecated.
 
+ESO itself is a pinned, vendored chart render in `deploy/eso/base` (issue #38) — plain kubectl, no helm. It must be Established and Ready before any `ExternalSecret` applies; the two-pass recipe below is the documented idempotent install/recovery path ([deploy/eso/base/README.md](../deploy/eso/base/README.md) — pins, upgrade, uninstall):
+
+```sh
+kubectl apply --server-side -k deploy/eso/base   # pass 1: CRDs, RBAC, controller
+kubectl wait --for=condition=Established crd/externalsecrets.external-secrets.io
+kubectl -n external-secrets rollout status deploy/external-secrets
+kubectl apply --server-side -k deploy/eso/base   # pass 2: SecretStore + smoke ExternalSecret
+kubectl -n external-secrets get secret eso-smoke-output \
+  -o jsonpath='{.data.password}' | base64 -d     # expect: eso-smoke-ok (reconciliation proof)
+```
+
 Fine-grained PAT: https://github.com/settings/personal-access-tokens/new → Repository access: pick your repos → Permissions: Contents **Read-only**. Store it as the `token` field of the `github-readonly` item in the `homelab` vault (optionally `github-writer` for write-scoped jobs), then:
 
 ```sh
@@ -135,6 +146,11 @@ If the StatefulSet pods sit in `ImagePullBackoff`, this is why.
 ## 8. Deploy everything
 
 ```sh
+# secrets infra first — ESO (section 6) must be Established and Ready before
+# anything below applies ExternalSecret/SecretStore resources
+kubectl apply --server-side -k deploy/eso/base
+kubectl wait --for=condition=Established crd/externalsecrets.external-secrets.io
+
 kubectl apply -f deploy/namespaces.yaml
 kubectl apply -k deploy/policies/base
 kubectl apply -k deploy/t3code/base

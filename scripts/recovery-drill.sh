@@ -126,18 +126,39 @@ kubectl apply -k deploy/image-policy/base
 end_stage
 
 # ---------------------------------------------------------------------------
+# External Secrets Operator (issue #38): pinned chart, vendored as a rendered
+# kustomize base in deploy/eso/base. It must be Established and Ready before
+# ANY ExternalSecret applies — the secrets stage below applies the first ones.
+# Two passes are the documented idempotent path (deploy/eso/base/README.md):
+# pass 1 creates CRDs, RBAC and the Deployments (the SecretStore/ExternalSecret
+# in it may be rejected while the admission webhook warms up — failurePolicy is
+# Fail with no namespace exclusion); pass 2 after readiness admits them. The
+# smoke ExternalSecret syncs from the fake provider, so this stage needs no
+# external credentials.
+stage eso
+kubectl apply --server-side -k deploy/eso/base ||
+  echo "INFO: pass 1 partially rejected while the ESO webhook warms up; pass 2 after readiness converges" >&2
+kubectl wait --for=condition=Established \
+  crd/externalsecrets.external-secrets.io crd/secretstores.external-secrets.io \
+  --timeout=120s
+kubectl -n external-secrets rollout status deploy/external-secrets --timeout="$POD_TIMEOUT"
+kubectl -n external-secrets rollout status deploy/external-secrets-webhook --timeout="$POD_TIMEOUT"
+kubectl -n external-secrets rollout status deploy/external-secrets-cert-controller --timeout="$POD_TIMEOUT"
+kubectl apply --server-side -k deploy/eso/base
+kubectl -n external-secrets wait --for=condition=Ready externalsecret/eso-smoke --timeout=120s
+[ "$(kubectl -n external-secrets get secret eso-smoke-output -o jsonpath='{.data.password}' | base64 -d)" = "eso-smoke-ok" ] ||
+  fail "eso-smoke-output mismatch — provider-independent ESO reconciliation failed"
+end_stage
+
+# ---------------------------------------------------------------------------
 stage secrets
 kubectl -n agents create secret generic onepassword-service-account \
   --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"
 kubectl -n sandbox create secret generic onepassword-service-account \
   --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"
 kubectl apply -k deploy/github-tokens/base
-if kubectl get crd externalsecrets.external-secrets.io >/dev/null 2>&1; then
-  kubectl -n agents wait --for=condition=Ready externalsecret/github-token --timeout=120s ||
-    echo "WARN: github-token not synced yet (1Password item github-readonly present?)" >&2
-else
-  echo "WARN: External Secrets Operator not installed (issue #38) — github-token stays Pending and private-repo clones fail until it lands" >&2
-fi
+kubectl -n agents wait --for=condition=Ready externalsecret/github-token --timeout=120s ||
+  echo "WARN: github-token not synced yet (1Password item github-readonly present?)" >&2
 end_stage
 
 # ---------------------------------------------------------------------------

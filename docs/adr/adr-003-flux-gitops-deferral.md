@@ -4,7 +4,7 @@
 
 ## Context
 
-The cluster is applied by hand from root Kustomize: 14 kustomize bases, no overlays, ~10 `kubectl apply -k` lines during a rebuild (docs/rebuild-runbook.md, runbook-server-cluster.md §8). Declared workloads: 5 Deployments, 2 StatefulSets, 9 CronJobs (several opt-in: chaos, gvisor variant, dispatcher, backups). Two out-of-band Helm installs exist (tailscale-operator, External Secrets Operator). Hardware is old servers with 8 GB+ RAM per node; every MiB is shared with dind, Chromium, and agent workspaces.
+The cluster is applied by hand from root Kustomize: 14 kustomize bases, no overlays, ~10 `kubectl apply -k` lines during a rebuild (docs/rebuild-runbook.md, runbook-server-cluster.md §8). Declared workloads: 5 Deployments, 2 StatefulSets, 9 CronJobs (several opt-in: chaos, gvisor variant, dispatcher, backups). Two out-of-band Helm installs exist (tailscale-operator, External Secrets Operator). _(2026-09-11 update: ESO now installs from git as a pinned, vendored chart render in `deploy/eso/base` — issue #38 — so only tailscale-operator remains out-of-band helm; the recovery path still needs no Flux.)_ Hardware is old servers with 8 GB+ RAM per node; every MiB is shared with dind, Chromium, and agent workspaces.
 
 Drift already bit once (2026-08-25 audit → docs/rebuild-runbook.md), and two partial automations now exist:
 
@@ -82,7 +82,7 @@ Roughly a third of the 2026-08-25 audit's gaps are invisible to Flux; the runboo
 
 ### D5. Helm operators
 
-One helm-managed workload today (tailscale-operator) plus ESO installed out-of-band. Flux would pull both into git as HelmReleases — real, but manageable by extending the rebuild runbook instead. helm-controller is also the largest chunk of the adoption cost (D3); deferring it while only two charts exist is cheap.
+One helm-managed workload today (tailscale-operator) plus ESO, which since issue #38 installs from git as a vendored render (`deploy/eso/base`) rather than out-of-band helm. Flux would pull the remaining chart into git as a HelmRelease — real, but manageable by extending the rebuild runbook instead. helm-controller is also the largest chunk of the adoption cost (D3); deferring it while only one chart exists is cheap.
 
 ### D6. Agent PR merge ⇒ automatic deployment?
 

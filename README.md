@@ -73,6 +73,7 @@ deploy/
   dispatcher/base/  label-driven issue -> Job automation
   factory/base/      issue collector -> coding worker -> draft PR
   github-tokens/base/ ExternalSecrets syncing GitHub tokens from 1Password
+  eso/base/         pinned External Secrets Operator (vendored chart render)
   tailscale/        Tailscale operator install notes
    t3code/base/      StatefulSet + per-replica Services
    hermes/base/      StatefulSet + scoped RBAC + cluster guide

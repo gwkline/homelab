@@ -9,10 +9,10 @@ cd "$(dirname "$0")/.." || exit 1
 fail=0
 
 echo "== 1. manifest conformance (kubectl diff) =="
-for d in deploy/namespaces.yaml deploy/policies/base deploy/t3code/base \
-         deploy/hermes/base deploy/loop-agent/base deploy/panel/base \
-         deploy/homepage/base deploy/headlamp/base deploy/tailscale \
-         deploy/factory/base; do
+for d in deploy/namespaces.yaml deploy/policies/base deploy/eso/base \
+         deploy/t3code/base deploy/hermes/base deploy/loop-agent/base \
+         deploy/panel/base deploy/homepage/base deploy/headlamp/base \
+         deploy/tailscale deploy/factory/base; do
   if [ -f "$d" ] || [ -d "$d" ]; then
     if ! kubectl diff -f "$d" >/dev/null 2>&1 && ! kubectl diff -k "$d" >/dev/null 2>&1; then
       echo "  DRIFT: $d"
@@ -107,6 +107,35 @@ if [ "$ptags" = "tag:k8s-operator" ]; then
   echo "  ok: operator PROXY_TAGS=tag:k8s-operator"
 else
   echo "  WARN: operator PROXY_TAGS='$ptags' (expected tag:k8s-operator — apply documented workaround)"
+fi
+
+echo "== 8. external secrets operator (issue #38) =="
+# Pinned ESO install (deploy/eso/base): CRDs Established, controllers
+# available, and the provider-independent smoke ExternalSecret reconciled to
+# the expected value — the reconciliation proof that needs no real provider.
+crd_established=$(kubectl get crd externalsecrets.external-secrets.io \
+  -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null)
+if [ "$crd_established" = "True" ]; then
+  echo "  ok: CRD externalsecrets.external-secrets.io Established"
+else
+  echo "  FAIL: CRD externalsecrets.external-secrets.io not Established (apply deploy/eso/base)"
+  fail=1
+fi
+for dep in external-secrets external-secrets-webhook external-secrets-cert-controller; do
+  if kubectl -n external-secrets rollout status "deploy/$dep" --timeout=30s >/dev/null 2>&1; then
+    echo "  ok: external-secrets/$dep"
+  else
+    echo "  FAIL: external-secrets/$dep not available"
+    fail=1
+  fi
+done
+smoke=$(kubectl -n external-secrets get secret eso-smoke-output \
+  -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)
+if [ "$smoke" = "eso-smoke-ok" ]; then
+  echo "  ok: smoke ExternalSecret reconciled (eso-smoke-output = eso-smoke-ok)"
+else
+  echo "  FAIL: smoke ExternalSecret not reconciled (got: '${smoke:-<missing>}')"
+  fail=1
 fi
 
 echo
