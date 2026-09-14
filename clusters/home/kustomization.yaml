@@ -1,0 +1,14 @@
+# Root cluster entry point (issue #20). Plain kubectl only, no Flux:
+#
+#   kubectl kustomize clusters/home          # render the full inventory
+#   kubectl apply -k clusters/home           # apply it (see ordering below)
+#
+# The normal set itself is composed in base/ (see its kustomization.yaml for
+# the resource list and the dependency/apply-order contract). The overlays/
+# here are opt-in variants of that same set — they include base/ and must
+# never be included by it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - base

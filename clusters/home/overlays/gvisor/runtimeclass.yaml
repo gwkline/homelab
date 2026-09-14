@@ -1,0 +1,20 @@
+# Cluster-scoped RuntimeClass selecting the runsc handler.
+#
+# Local copy of deploy/gvisor/base/runtimeclass.yaml (that directory is the
+# source of truth — it is not referenced directly because kustomize can only
+# load whole directories outside its root, and deploy/gvisor/base also
+# carries the loop-agent manifests the overlay must not duplicate). Keep in
+# sync when refreshing it there.
+#
+# REQUIRES node setup first: gVisor's runsc must be installed and registered
+# in each node's containerd config. See docs/runbook-server-cluster.md,
+# "Experimental: gVisor". Pods requesting this class fail to schedule if no
+# node provides the handler.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+scheduling:
+  nodeSelector:
+    kubernetes.io/os: linux
