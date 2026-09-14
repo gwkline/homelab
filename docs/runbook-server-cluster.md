@@ -166,6 +166,15 @@ kubectl apply -k deploy/headlamp/base
 kubectl apply -k deploy/cloudbeaver/base
 kubectl apply -k deploy/loki/base
 
+# CloudNativePG operator (issue #49) — explicit prerequisite for the database
+# below: CRDs + RBAC + controller in one idempotent server-side apply. Wait
+# for the CRD and the rollout before any Cluster resource applies (the
+# admission webhooks fail closed until serving). Install/upgrade/CRD-ordering
+# contract: deploy/cnpg/README.md.
+kubectl apply --server-side -k deploy/cnpg/base
+kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io
+kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
+
 # database (prereqs: CNPG operator from #49 in cnpg-system, pg-textsearch
 # digest from #48 pinned in deploy/postgres/base/cluster.yaml — see
 # deploy/postgres/README.md for secrets and bring-up)

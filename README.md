@@ -64,6 +64,7 @@ deploy/
   namespaces.yaml   agents + sandbox + database namespaces with PSA labels
   policies/base/    default-deny NetworkPolicies
   image-policy/base/ cosign image-signature admission policy (ClusterImagePolicy; ADR-004)
+  cnpg/base/        pinned CloudNativePG operator 1.30.0 (prerequisite for postgres)
   postgres/base/    CNPG PostgreSQL 18 cluster (factory + knowledge durable state)
   backup/base/      opt-in nightly restic backups of stateful PVCs
   gvisor/base/      opt-in loop-agent variant under gVisor
