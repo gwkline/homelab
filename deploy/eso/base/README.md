@@ -41,6 +41,8 @@ kubectl -n external-secrets get secret eso-smoke-output -o jsonpath='{.data.pass
 
 `--server-side` is required: CRD annotations exceed the client-side size limit (same reason as the CNPG operator install).
 
+The root deployment runs this sequence automatically: the server runbook (section 4b) documents it for bring-up, `scripts/recovery-drill.sh` runs it as its `eso` stage before any ExternalSecret-bearing base, and `scripts/rebuild-check.sh` asserts the smoke ExternalSecret stays Ready in its conformance sweep.
+
 Flux compatibility: the layout is a plain kustomize base, so a later Flux `Kustomization` (or `HelmRelease` pinned to chart 2.10.0 + the same values) can point at `deploy/eso/base` unchanged.
 
 ## Ordering vs ExternalSecret resources
