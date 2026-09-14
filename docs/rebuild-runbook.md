@@ -31,12 +31,24 @@ No hidden state is copied from the existing cluster. The only crossers are the d
 
 | Component | Version | Where it is pinned |
 | --- | --- | --- |
-| k3s | `v1.36.4+k3s1` | `bootstrap/bootstrap.sh` default (`K3S_VERSION` overrides for deliberate upgrades; formal pin/verify/upgrade policy: issue #29) |
+| k3s | `v1.36.4+k3s1` | `bootstrap/bootstrap.sh` default (`K3S_VERSION`; installer sha256-verified, upgrade procedure: §2a) |
 | Tailscale operator chart | `1.102.3` | `scripts/recovery-drill.sh` (`TS_CHART_VERSION`); the PROXY_TAGS workaround in [deploy/tailscale/README.md](../deploy/tailscale/README.md) is tested against this chart |
 | Sigstore policy-controller chart | `0.10.7` | `scripts/recovery-drill.sh` (`POLICY_CHART_VERSION`); the ClusterImagePolicy it verifies against lives in [deploy/image-policy/base](../deploy/image-policy/base/README.md) (issue #91, ADR-004) |
-| tailscaled (host package) | latest stable via install.sh | **unpinned — known gap**, owned by issue #29 |
+| tailscaled (host package) | `1.102.4` | `bootstrap/bootstrap.sh` default (`TAILSCALE_VERSION`; installer sha256-verified, upgrade procedure: §2a) |
 
 `bootstrap/bootstrap.sh` is the root node entry point; `scripts/recovery-drill.sh` is the root cluster entry point (it runs the documented apply order — until issue #20 replaces it with a root Kustomization, the script is that order's source of truth).
+
+Both bootstrap installers are content-verified (issue #29): the script downloads each installer from its immutable version tag on GitHub and refuses to execute it unless its sha256 matches the value pinned beside the version. Bootstrap validates the platform contract (Ubuntu 24.04, amd64 or arm64) and fails fast otherwise. **Changing a pin means changing the version and its recorded installer sha256 together** — never edit one without the other.
+
+### §2a. Upgrading a pinned bootstrap version (deliberate, tested — never automatic)
+
+1. Pick the new version and record its installer sha256 from the immutable tag:
+   `curl -fsSL https://raw.githubusercontent.com/k3s-io/k3s/<new-tag>/install.sh | sha256sum`
+   `curl -fsSL https://raw.githubusercontent.com/tailscale/tailscale/v<new>/scripts/installer.sh | sha256sum`
+2. Update both constants together in `bootstrap/bootstrap.sh` (`K3S_VERSION` + `K3S_INSTALLER_SHA256`, `TAILSCALE_VERSION` + `TAILSCALE_INSTALLER_SHA256`). The env overrides exist so an existing node can be upgraded deliberately without editing the repo first.
+3. Re-run the node bootstrap on one node (`./bootstrap/bootstrap.sh server` — the k3s installer is upgrade-aware) and record the installed versions (`k3s --version`, `tailscale version`) in the drill log.
+4. Run the cluster smoke tests before trusting the upgrade: `./scripts/rebuild-check.sh`, then one timed drill pass (`./scripts/recovery-drill.sh --from "$(date +%s)"`) per section 4.
+5. Reproducibility check: bootstrap a disposable VM twice from the same revision and confirm both runs report identical `k3s --version` and `tailscale version` output.
 
 ## 3. Node prerequisites (physical host only)
 
@@ -53,7 +65,7 @@ Record the drill-start timestamp as your **first command** on the clean machine:
 ```sh
 date +%s   # DRILL_START — this is the RTO start line
 git clone https://github.com/gwkline/homelab.git && cd homelab
-./bootstrap/bootstrap.sh server          # pins k3s per section 2
+./bootstrap/bootstrap.sh server          # pins k3s + tailscale per section 2
 
 # 0. node ready per above
 
@@ -173,7 +185,7 @@ Rule: every undocumented step you perform during a drill becomes either a runboo
 | Finding | Disposition |
 | --- | --- |
 | External Secrets Operator was not installed by any manifest | closed (issue #38): pinned install in `deploy/eso/base` (runbook-server-cluster §4b); the drill installs it in the `eso` stage before any ExternalSecret apply and smoke-checks the fake-provider ExternalSecret |
-| Host tailscaled not version-pinned | follow-up: issue #29 |
+| Host tailscaled not version-pinned | closed (issue #29): pinned `TAILSCALE_VERSION` + sha256-verified installer in `bootstrap/bootstrap.sh`; upgrade procedure: §2a |
 | Apply order lives in `scripts/recovery-drill.sh` instead of a root Kustomization | follow-up: issue #20 |
 | hermes `hermes setup --portal` re-run after PVC recreation | runbook step (section 4, step 3) |
 | t3code pairing from desktop/phone | runbook step (section 4, step 3); durable auth persistence tracked by issue #19 |
