@@ -1,3 +1,10 @@
+// LEGACY / DEMOTED (#78): this demo dispatcher is superseded by the factory's
+// durable GitHub issue collector (apps/factory/collector + deploy/factory/base),
+// which turns issues into idempotent factory Runs using declarative config, a
+// short-lived read-scoped App installation token (#70), and no shell commands
+// in CronJob configuration. Kept only as the #30 behavioral smoke baseline
+// (scripts/dispatch-flow-smoke.sh); do not build new automation on it.
+//
 // Polls a GitHub repo for labeled issues and dispatches one sandbox Job per
 // issue. Idempotent by construction: Job names derive deterministically from
 // issue numbers, so re-running never duplicates work.

@@ -64,12 +64,12 @@ Credential check while a worker pod runs: `kubectl exec` is not available on com
 ## Offline fixture tests (no cluster)
 
 ```sh
-bash apps/factory/collector/tests/collector.test.sh    # PASS: collector queues only eligible issues
+sh apps/factory/collector/tests/collector.test.sh   # PASS: collector eligibility, duplicate-run, pagination, rate limits
 bash apps/factory/reviewer/tests/review.test.sh        # PASS: reviewer label filtering behaves
 bash apps/factory/orchestrator/tests/runtime-path.test.sh  # PASS: orchestrator Git runtime path is covered
 ```
 
-These run `run-collector.sh` / `run-reviewer.sh` against `gh` PATH shims with `GH_FIXTURE_DIR` JSON fixtures — the same technique to extend coverage.
+The collector tests fake the GitHub API (in-memory fetch server + stub client) — no network, no cluster. The other two run `run-reviewer.sh` / `run.sh` against `gh` PATH shims with `GH_FIXTURE_DIR` JSON fixtures — the same technique to extend coverage.
 
 ## Cleanup
 

@@ -30,7 +30,7 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 | 1Password ref | item `github-readonly`, field `token` |
 | Delivery | ExternalSecret `deploy/github-tokens/base/github-token.yaml`, `refreshInterval: 1h`, `creationPolicy: Owner`; template trims whitespace |
 | Required permissions | Fine-grained PAT, **Contents: read-only** on every private repo listed in the workload ConfigMaps (homelab, launchpad, …) |
-| Consumers | hermes StatefulSet (`agents`, env + `/secrets/token` file), t3code StatefulSet (`agents`, optional file), panel Deployment (`agents`, file; `apps/panel/server/index.ts`), factory orchestrator/security/collector/reviewer/reconciler CronJobs (`sandbox`, env), worker Jobs spawned by the orchestrator (`apps/factory/orchestrator/run.sh` → `apps/factory/worker/entrypoint.sh`), loop-agent CronJob (`sandbox`, optional file → `apps/shared/workspace-lib.sh`), dispatch-watcher CronJob (`sandbox`), chaos-monkey CronJob (`sandbox`, optional file), panel-spawned Jobs (`apps/panel/server/jobs.ts`), helper scripts `scripts/new-job.sh`, `scripts/egress-smoke.sh` |
+| Consumers | hermes StatefulSet (`agents`, env + `/secrets/token` file), t3code StatefulSet (`agents`, optional file), panel Deployment (`agents`, file; `apps/panel/server/index.ts`), factory orchestrator/security/reviewer/reconciler CronJobs (`sandbox`, env), factory collector CronJob (`sandbox`, **transitional fallback only** — primary access is the `github-app` App installation token, see #70/#78), worker Jobs spawned by the orchestrator (`apps/factory/orchestrator/run.sh` → `apps/factory/worker/entrypoint.sh`), loop-agent CronJob (`sandbox`, optional file → `apps/shared/workspace-lib.sh`), dispatch-watcher CronJob (`sandbox`, legacy, demoted by #78), chaos-monkey CronJob (`sandbox`, optional file), panel-spawned Jobs (`apps/panel/server/jobs.ts`), helper scripts `scripts/new-job.sh`, `scripts/egress-smoke.sh` |
 | Rotation owner | Operator updates the `token` field in 1Password; ESO converges ≤1h. Env-reader workloads need a rollout restart (file readers pick it up automatically). See `deploy/github-tokens/base/README.md` |
 | Status | **Transitional** — long-lived fine-grained PAT; superseded by a GitHub App installation token (issue #70) |
 
@@ -72,6 +72,19 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 | Consumers | None (verification only). Designated drill target: deleting Secret `eso-smoke-output` must be restored by ESO — never drill on a real credential |
 | Rotation owner | None (static test literal; delete/recreate the item at will) |
 | Status | Optional — absent item ⇒ ExternalSecret `onepassword-smoke` stays `Ready=False` and retries, the expected state |
+
+### A5. `github-app` — factory App installation-token minting (#70, #78)
+
+| Attribute | Value |
+| --- | --- |
+| Namespace | `sandbox` |
+| Secret name / keys | `github-app` / `app-id`, `installation-id`, `private-key` |
+| 1Password ref | dedicated item `factory-github-app` (see docs/github-app.md); never committed |
+| Delivery | Imperative creation only — `scripts/create-github-app-secret.sh sandbox`; not an ExternalSecret (keys are long-lived App credentials, not rotated hourly) |
+| Required permissions | GitHub App restricted to the factory repo allowlist; mints short-lived (≤1 h) installation tokens at runtime. The collector requests `metadata:read, issues:write, contents:read` (docs/github-app.md consumer table) |
+| Consumers | factory collector CronJob (`sandbox`, `apps/factory/collector/run-collector.ts` — app-id/installation-id via `secretKeyRef`, private key via read-only volume). More consumers follow the docs/github-app.md migration TODO |
+| Rotation owner | Operator generates a new App key in GitHub, updates the 1Password item, re-runs `create-github-app-secret.sh` (see docs/github-app.md "Rotation, revocation") |
+| Status | **Active for the collector (#78)**; publisher/orchestrator cutover pending the operator gate (docs/github-app.md) |
 
 ## B. Per-workload credentials
 
@@ -191,9 +204,9 @@ Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret w
 
 Every runtime secret reference in the repo maps to an entry above:
 
-- `secretKeyRef` / `envFrom.secretRef`: hermes (A1), t3code (A1, optional), work-t3code (B4 repos env; B5 claude env; A1-equivalent token via optional file), panel (A1, optional file), factory orchestrator (A1 + B1), factory security/collector/reviewer/reconciler (A1), loop-agent (A1 + A2, optional), dispatch-watcher (A1 + A2 via examples/jobs.ts patterns), chaos-monkey (A1, optional), backup restic CronJob (B2), orchestrator-generated worker Jobs (A1, B1).
-- Secret volumes: hermes, t3code, panel, loop-agent, dispatcher, chaos-monkey, panel Jobs — all `github-token`/`github-token-writer` (A1/A2); work-t3code — `work-github-token` (B4).
-- `kubectl create secret`: `onepassword-service-account` (C1), `backup-target` emergency script (B2), `ghcr-pull` (A3/C4).
+- `secretKeyRef` / `envFrom.secretRef`: hermes (A1), t3code (A1, optional), work-t3code (B4 repos env; B5 claude env; A1-equivalent token via optional file), panel (A1, optional file), factory orchestrator (A1 + B1), factory security/reviewer/reconciler (A1), factory collector (A5 primary + A1 transitional fallback), loop-agent (A1 + A2, optional), dispatch-watcher (A1 + A2 via examples/jobs.ts patterns, legacy), chaos-monkey (A1, optional), backup restic CronJob (B2), orchestrator-generated worker Jobs (A1, B1).
+- Secret volumes: hermes, t3code, panel, loop-agent, dispatcher, chaos-monkey, panel Jobs — all `github-token`/`github-token-writer` (A1/A2); work-t3code — `work-github-token` (B4); factory collector — `github-app` (A5, read-only).
+- `kubectl create secret`: `onepassword-service-account` (C1), `backup-target` emergency script (B2), `ghcr-pull` (A3/C4), `github-app` (A5).
 - Non-Secret credential flows: Tailscale OAuth (C2), K3s token (C3), t3code `auth.json` (B3).
 
 To re-verify after changes:
