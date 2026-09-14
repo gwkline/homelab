@@ -8,7 +8,7 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 
 - One dedicated 1Password vault: **`homelab`**. No other vault is in scope for this cluster.
 - The ESO service account is limited to that vault only. Its token is the only hand-entered secret (see [bootstrap-only](#bootstrap-only-secrets)).
-- Namespace-scoped `SecretStore` `onepassword` (provider `onepasswordSDK`, vault `homelab`, auth from Secret `onepassword-service-account` key `token`) exists in `agents` and `sandbox` (`deploy/github-tokens/base/secretstore.yaml`). **Gap:** `backup` needs the same store but none is committed (`deploy/backup/base/externalsecret.yaml` documents it as a prerequisite).
+- Namespace-scoped `SecretStore` `onepassword` (provider `onepasswordSDK`, vault `homelab`, auth from Secret `onepassword-service-account` key `token`) exists in `agents` and `sandbox` (`deploy/github-tokens/base/secretstore.yaml`) and in `tailscale` (`deploy/tailscale/secretstore.yaml`). **Gap:** `backup` needs the same store but none is committed (`deploy/backup/base/externalsecret.yaml` documents it as a prerequisite).
 - Naming convention: 1Password item/field names equal the ExternalSecret `remoteRef.key` / `remoteRef.property` values verbatim, and field labels equal the `secretKey` (which equals the consuming env var where `envFrom` is used). One name per value everywhere.
 
 ## Sharing classes
@@ -60,6 +60,19 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 | Rotation owner | Operator (rotate the PAT in 1Password, re-create the Secret) |
 | Status | Optional; not transitional (easily replaced by the GitHub App's `read:packages` scope when #70 lands) |
 
+### A4. `eso-smoke` — ESO↔1Password connection smoke test (non-sensitive)
+
+| Attribute | Value |
+| --- | --- |
+| Namespace | `agents` |
+| Secret name / key | `eso-smoke-output` / `password` |
+| 1Password ref | item `eso-smoke`, field `password` — a harmless, non-sensitive literal created once by the operator |
+| Delivery | ExternalSecret `deploy/github-tokens/base/externalsecret-smoke.yaml` (issue #41), `refreshInterval: 1h`, `creationPolicy: Owner`, template trims whitespace |
+| Required permissions | None — the item carries no credential; it only proves store auth + vault reachability |
+| Consumers | None (verification only). Designated drill target: deleting Secret `eso-smoke-output` must be restored by ESO — never drill on a real credential |
+| Rotation owner | None (static test literal; delete/recreate the item at will) |
+| Status | Optional — absent item ⇒ ExternalSecret `onepassword-smoke` stays `Ready=False` and retries, the expected state |
+
 ## B. Per-workload credentials
 
 ### B1. `factory-opencode-auth` — model providers (factory)
@@ -105,7 +118,7 @@ Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret w
 
 | # | Credential | Location / Secret | Key(s) | 1Password ref | Notes |
 | --- | --- | --- | --- | --- | --- |
-| C1 | 1Password service-account token | Secret `onepassword-service-account` in `agents` **and** `sandbox` (created by hand per `docs/rebuild-runbook.md`) | `token` | The token itself lives only in 1Password's non-homelab storage / operator device; it authorizes the dedicated `homelab` vault **only** — least privilege by construction | The only hand-entered secret in the stack. Consumers: the `SecretStore` `onepassword` in each namespace. Rotation owner: operator (create a new SA, update both Secrets, ESO re-authenticates on next refresh) |
+| C1 | 1Password service-account token | Secret `onepassword-service-account` in `agents`, `sandbox`, `tailscale` (idempotent bootstrap: `scripts/create-onepassword-service-account.sh` — token via env/stdin/hidden prompt, never logged) | `token` | The token itself lives only in 1Password's non-homelab storage / operator device; it authorizes the dedicated `homelab` vault **only** — least privilege by construction | The only hand-entered secret in the stack. Consumers: the `SecretStore` `onepassword` in each namespace. Rotation owner: operator (create a new least-privilege SA restricted to the `homelab` vault, re-run the script to update every namespace's Secret, revoke the old SA; ESO re-authenticates on the next refresh — see `deploy/eso/base/README.md`) |
 | C2 | Tailscale OAuth client | Helm values at install: `helm upgrade --install tailscale-operator … --set oauth.clientId/--set oauth.clientSecret` (`docs/runbook-server-cluster.md` §5, `docs/rebuild-runbook.md`) — lands in the operator's Secret in ns `tailscale`, never in git | `client-id`, `client-secret` | 1Password item `homelab-tailscale` (operator device Keychain): fields `client-id`, `client-secret` | OAuth client must carry `tag:k8s-operator`. Rotation owner: operator (re-run helm with new values, restart operator). See `deploy/tailscale/README.md` |
 | C3 | K3s node join token | Read from `/var/lib/rancher/k3s/server/node-token` on the server node (`bootstrap/bootstrap.sh`); never stored in git or the cluster API | n/a | None proposed — node-local, single-node cluster | Rotation owner: operator (regenerate on the node). Not a Kubernetes Secret |
 | C4 | `ghcr-pull` (when used) | `kubectl create secret docker-registry` per namespace — manual, documented in `README.md` | `.dockerconfigjson` | Proposed item `ghcr-pull` (A3) | Bootstrap-time because no ESO path exists yet |

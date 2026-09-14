@@ -9,7 +9,7 @@ kubectl apply -k deploy/github-tokens/base
 ## Prerequisites
 
 1. External Secrets Operator installed with the `onepasswordSDK` provider, pinned version (issue #41).
-2. The 1Password **service-account token** — the only manually bootstrapped secret for this provider — in Secret `onepassword-service-account` (key `token`), restricted to the dedicated `homelab` vault. Create it at bootstrap via env/stdin; never log or commit it.
+2. The 1Password **service-account token** — the only manually bootstrapped secret for this provider — in Secret `onepassword-service-account` (key `token`), restricted to the dedicated `homelab` vault. Bootstrap it with `scripts/create-onepassword-service-account.sh` (idempotent; env/stdin; never logged or committed). Full setup, rotation, and DR: `deploy/eso/base/README.md`.
 
 ## 1Password item contract
 
@@ -17,6 +17,7 @@ kubectl apply -k deploy/github-tokens/base
 | --- | --- | --- | --- | --- |
 | `github-readonly` | `token` | `github-token` | agents, sandbox | fine-grained PAT, Contents: read-only on every private repo agents read |
 | `github-writer` | `token` | `github-token-writer` | sandbox | fine-grained PAT, Contents + Pull requests: write on target repos **only** |
+| `eso-smoke` | `password` | `eso-smoke-output` | agents | none — harmless non-sensitive literal; connection smoke test (issue #41) |
 
 Read and writer credentials are separate 1Password items with separate permissions; the read token never gets write scopes and the writer never grants access to the read token's repos. The writer item is **optional**: if it is absent, the `github-token-writer` ExternalSecret reports `Ready=False` and keeps retrying — the expected state. Every consumer mounts it with `optional: true`, so read-only jobs are unaffected.
 
@@ -57,6 +58,26 @@ kubectl -n agents exec hermes-0 -- gh api user -q .login
 # 3. Private repository clone from a sandbox workload
 kubectl -n sandbox exec -it deploy/... -- git clone https://github.com/gwkline/launchpad /tmp/launchpad
 ```
+
+## Connection smoke test (issue #41)
+
+`externalsecret-smoke.yaml` syncs the harmless vault item `eso-smoke` (field `password`) into Secret `eso-smoke-output` in `agents`. Create that item once (any non-sensitive value); until then `onepassword-smoke` reports `Ready=False` and retries. Store health plus the sync prove the 1Password SDK path end to end:
+
+```sh
+kubectl -n agents get secretstore onepassword           # READY True
+kubectl -n agents get externalsecret onepassword-smoke  # Ready True
+kubectl -n agents get secret eso-smoke-output -o jsonpath='{.data.password}' | base64 -d
+```
+
+Delete/recreate drill — ESO restores the Secret from the vault on the next reconcile:
+
+```sh
+kubectl -n agents delete secret eso-smoke-output
+kubectl -n agents wait --for=condition=Ready externalsecret/onepassword-smoke --timeout=120s
+kubectl -n agents get secret eso-smoke-output           # recreated by ESO
+```
+
+Drill against `eso-smoke` only — never delete a real credential Secret to test.
 
 ## Security notes
 
