@@ -42,6 +42,13 @@ export default {
       rules: { "no-bitwise": "off" },
     },
     {
+      // The ingest/embedding workers (#57) are sequential by design: retries
+      // back off between attempts, the bounded pool drains a cursor, and
+      // chunk upserts must preserve order inside one transaction.
+      files: ["apps/knowledge/src/embedder.ts", "apps/knowledge/src/ingest.ts"],
+      rules: { "no-await-in-loop": "off" },
+    },
+    {
       // Ingest queue tests (#58) drive the state machine step by step —
       // claim, lease, recover — where sequential awaits ARE the behavior
       // under test, and simulate hangs with deliberately unsettled Promise
