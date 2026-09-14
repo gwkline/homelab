@@ -1,23 +1,77 @@
 # Third deliberate exception to "pods cannot talk to Kubernetes": the panel
-# backend holds the same sandbox-Job verbs as dispatcher, under its own
-# identity, so the UI can list and launch runs. Read-only for everything
-# except Job creation. Also owns the GitHub token mount for the factory
-# manual-trigger (label queued + create Job from CronJob).
+# backend holds its own purpose-scoped RBAC (#26) covering exactly the
+# calls apps/panel/server/k8s.ts makes — nothing inherited from a shared
+# role. In `sandbox` (run cards + factory trigger): create Jobs (launch
+# ad-hoc runs), list Jobs (state/run views), delete Jobs (job cleanup and
+# run cancel); get CronJobs (clone the factory-orchestrator jobTemplate),
+# list + patch CronJobs (schedules card: edit schedule, pause/resume).
+# In `agents` (dev tools health + tailnet discovery): get Services.
+# Cluster-wide (/api/cluster): list nodes and pods. CronJob patch is the
+# documented schedules-card workflow; CronJob create/delete, pod/log
+# reads, and secrets are denied — that is the whole write surface.
+#
+# Also owns the GitHub token mount for the factory manual-trigger (label
+# queued + create Job from CronJob).
+#
+# One-time cleanup after applying (#26 renamed the objects):
+#   kubectl -n sandbox delete rolebinding panel-loop-manager
+#   kubectl delete clusterrole panel-nodes-viewer
+#   kubectl delete clusterrolebinding panel-nodes-viewer
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: panel
   namespace: agents
 ---
+# Run surface: everything the panel does to workloads in sandbox.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: panel-sandbox-runs
+  namespace: sandbox
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "list", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "patch"]
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: panel-loop-manager
+  name: panel-sandbox-runs
   namespace: sandbox
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: loop-manager
+  name: panel-sandbox-runs
+subjects:
+  - kind: ServiceAccount
+    name: panel
+    namespace: agents
+---
+# Dev tools health checks and tailnet discovery read Services here only —
+# every health entry in apps/panel/server/devtools.ts targets agents.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: panel-agents-viewer
+  namespace: agents
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: panel-agents-viewer
+  namespace: agents
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: panel-agents-viewer
 subjects:
   - kind: ServiceAccount
     name: panel

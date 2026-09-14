@@ -10,7 +10,7 @@ labels:
 
 resources:
   - rbac.yaml
-  - nodes-viewer.yaml
+  - cluster-reader.yaml
   - deployment.yaml
   - service.yaml
   - stats-pvc.yaml
