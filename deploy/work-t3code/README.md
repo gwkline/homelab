@@ -25,12 +25,10 @@ This repository is public, so it deliberately carries **no work identifiers**: n
 2. **Store it in 1Password**: vault `homelab`, item `work-github-writer`, with TWO fields:
    - `token` — the raw PAT (no trailing newline)
    - `repos` — the repo URLs to clone, one per line, matching the PAT's Repository access list (e.g. `https://github.com/<org>/<repo>.git`)
-3. **Bootstrap the ESO store** (once per cluster; copy the service-account token the same way as the bring-up, never echo it):
+3. **Bootstrap the ESO store** (once per cluster; the idempotent script takes the token from env/stdin/hidden prompt and never logs it):
 
    ```sh
-   # token in a temp file with umask 077, deleted after
-   kubectl -n work create secret generic onepassword-service-account \
-     --from-file=token=/tmp/ops --dry-run=client -o yaml | kubectl apply -f -
+   ./scripts/create-onepassword-service-account.sh work
    ```
 
 4. **Apply everything**:
