@@ -1,0 +1,30 @@
+# Cluster view reads (#26): the panel lists nodes and pods cluster-wide for
+# /api/cluster and /api/cluster/pods. List-only — the old get/watch verbs,
+# nodes/status, namespaces, services, and metrics.k8s.io rules covered calls
+# the panel never makes. Service reads moved to the namespaced
+# panel-agents-viewer Role (rbac.yaml), the only namespace the dev tools
+# health checks ever query.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: panel-cluster-reader
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: panel-cluster-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: panel-cluster-reader
+subjects:
+  - kind: ServiceAccount
+    name: panel
+    namespace: agents

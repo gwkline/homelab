@@ -4,6 +4,15 @@
 # Executor tools (see executor.yaml + cluster-guide.yaml). What remains is
 # read-only and separately justified below. It cannot touch secrets, CRDs,
 # or other namespaces' workloads.
+#
+# Issue #26 — hermes' permissions are documented here, separately from the
+# other principals. CronJob mutation is NOT required: the last write path
+# was removed in #82, and hermes has no Role granting create/patch/delete
+# on Jobs or CronJobs in any namespace. The shared `loop-manager` Role that
+# used to live here is gone — dispatcher and panel define purpose-scoped
+# Roles in their own bases (deploy/dispatcher/base, deploy/panel/base).
+# One-time cleanup after applying this change:
+#   kubectl -n sandbox delete role loop-manager
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -44,10 +53,10 @@ subjects:
     name: hermes
     namespace: agents
 ---
-# Cluster health (retained, justified): read-only nodes + metrics so hermes
-# can answer "is the cluster healthy?" without writing anything. Nodes expose
-# no secret material via get/list/watch; every write path stays with the
-# operator and the panel.
+# Cluster health: read-only nodes + metrics so hermes can answer "is the
+# cluster healthy?" without writing anything. Nodes expose no secret
+# material via get/list/watch; every write path stays with the operator,
+# the panel, and the Executor gateway.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -72,20 +81,3 @@ subjects:
   - kind: ServiceAccount
     name: hermes
     namespace: agents
----
-# Shared sandbox workload verbs for automation that still writes Jobs
-# directly (dispatcher, panel). Hermes is deliberately NOT bound to this
-# role anymore (#82): its factory orchestration goes through Executor,
-# which holds the Kubernetes credentials host-side.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: loop-manager
-  namespace: sandbox
-rules:
-  - apiGroups: ["batch"]
-    resources: ["jobs", "cronjobs"]
-    verbs: ["create", "get", "list", "watch", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["pods", "pods/log"]
-    verbs: ["get", "list", "watch"]

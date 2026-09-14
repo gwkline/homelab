@@ -3,11 +3,18 @@
 # runs without a human in the loop. One principal, one auditable purpose.
 # (Hermes lost this write path in #82 — it now goes through Executor.)
 #
-# The identity lives in `sandbox`, the same namespace as the dispatch-watcher
-# CronJob pods: pods can only use a ServiceAccount from their own namespace.
+# Issue #26: the dispatcher's Role lives here, scoped to exactly the two
+# Kubernetes calls examples/dispatch-watcher.mjs makes — `get` a Job to
+# skip already-dispatched issues, and `create` (kubectl apply) a new one.
+# No CronJob access, no pod/log reads, no list/delete: re-runs dedupe by
+# deterministic Job names, and finished Jobs are garbage-collected by TTL.
 # It has zero permissions in `agents`.
 #
-# Depends on hermes/base being applied first (reuses its loop-manager Role).
+# The identity lives in `sandbox`, the same namespace as the dispatch-watcher
+# CronJob pods: pods can only use a ServiceAccount from their own namespace.
+#
+# One-time cleanup after applying (the binding no longer reuses hermes'
+# loop-manager Role): kubectl -n sandbox delete rolebinding dispatcher-loop-manager
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -15,14 +22,24 @@ metadata:
   namespace: sandbox
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dispatcher-jobs
+  namespace: sandbox
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: dispatcher-loop-manager
+  name: dispatcher-jobs
   namespace: sandbox
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: loop-manager
+  name: dispatcher-jobs
 subjects:
   - kind: ServiceAccount
     name: dispatcher
