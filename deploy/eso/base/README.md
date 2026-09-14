@@ -1,6 +1,6 @@
 # External Secrets Operator (ESO)
 
-Pinned ESO install for issue #38. Provider credentials (1Password Connect) are intentionally absent — see "Credentials" below (issue #41).
+Pinned ESO install for issue #38. No provider credentials live in this base — the 1Password connection (SDK provider, issue #41) is wired in `deploy/github-tokens/base` and `deploy/tailscale`; see the 1Password section below.
 
 ## Pinned versions
 
@@ -17,7 +17,7 @@ To upgrade: pull the new chart, re-render with the same `--set resources.*` flag
 
 - `namespace.yaml` — `external-secrets` namespace (PSA baseline).
 - `eso.yaml` — full chart render (CRDs, RBAC, 3 Deployments, webhook configs).
-- `secretstore-placeholder.yaml` — `SecretStore/eso-placeholder` on the ESO **fake** provider (static pairs, no credentials). Stand-in until #41.
+- `secretstore-placeholder.yaml` — `SecretStore/eso-placeholder` on the ESO **fake** provider (static pairs, no credentials). Proves controller reconciliation with zero credentials; the real 1Password stores live in `deploy/github-tokens/base` and `deploy/tailscale`. Never edit it to carry real credentials.
 - `externalsecret-smoke.yaml` — `ExternalSecret/eso-smoke` syncing `smoke-password` into Secret `eso-smoke-output`. Proves reconciliation.
 - `README.md` — this file.
 
@@ -49,13 +49,59 @@ Flux compatibility: the layout is a plain kustomize base, so a later Flux `Kusto
 
 Other apps' `ExternalSecret` manifests must declare readiness on ESO: apply `deploy/eso/base` first and wait for the controller + CRDs (`kubectl wait --for=condition=Established crd/externalsecrets.external-secrets.io`) before applying any namespaced `ExternalSecret`/`SecretStore`.
 
-## Credentials (issue #41)
+## 1Password connection (issue #41, SDK provider)
 
-No real provider credentials exist on this machine (no 1Password CLI), so nothing here authenticates to 1Password. When they do:
+The pinned v2.10.0 CRDs ship `provider.onePasswordSDK` (1Password's official Go SDK — no in-cluster Connect server, so no operational overhead and no circular dependency). The namespace-scoped stores live next to their consumers, not here, and every one targets exactly the dedicated `homelab` vault:
 
-1. Create the credential Secret out-of-band (never commit values): `kubectl -n external-secrets create secret generic onepassword-creds --from-literal=token=<token> --from-literal=connect-host=<url>`.
-2. Add a `SecretStore` (or `ClusterSecretStore`) with `provider.onePasswordSDK` referencing that Secret — new file in this dir, added to `kustomization.yaml`.
-3. Repoint consumers at it. Keep the fake placeholder until the last consumer migrates, then delete the placeholder files.
+- `deploy/github-tokens/base/secretstore.yaml` — `SecretStore/onepassword` in `agents` + `sandbox`
+- `deploy/tailscale/secretstore.yaml` — `SecretStore/onepassword` in `tailscale`
+
+All authenticate with Secret `onepassword-service-account` (key `token`) — the only manually bootstrapped Kubernetes secret for this provider.
+
+### Bootstrap
+
+1. Create a least-privilege 1Password service account restricted to the `homelab` vault (human step; the token is shown once — never commit or paste it into an issue).
+2. Run the idempotent bootstrap — the token comes from the environment, a stdin pipe, or a hidden prompt, and is never logged:
+
+   ```sh
+   ./scripts/create-onepassword-service-account.sh
+   # or: OP_SERVICE_ACCOUNT_TOKEN=... ./scripts/create-onepassword-service-account.sh
+   # or: op read op://.../token | ./scripts/create-onepassword-service-account.sh
+   ```
+
+   It creates/updates Secret `onepassword-service-account` in `agents`, `sandbox`, and `tailscale`.
+3. Apply the consumers: `kubectl apply -k deploy/github-tokens/base` (also brings the `onepassword-smoke` ExternalSecret below) and `kubectl apply -k deploy/tailscale`.
+
+### Health / smoke verification
+
+`deploy/github-tokens/base/externalsecret-smoke.yaml` syncs the harmless vault item `eso-smoke` (field `password`, any non-sensitive literal) into Secret `eso-smoke-output` in `agents`:
+
+```sh
+kubectl -n agents get secretstore onepassword           # READY True
+kubectl -n agents get externalsecret onepassword-smoke  # Ready True (needs the eso-smoke vault item)
+kubectl -n agents get secret eso-smoke-output -o jsonpath='{.data.password}' | base64 -d
+```
+
+Deleting the generated Secret is safe and is the reconciliation drill — ESO restores it from the vault:
+
+```sh
+kubectl -n agents delete secret eso-smoke-output
+kubectl -n agents wait --for=condition=Ready externalsecret/onepassword-smoke --timeout=120s
+kubectl -n agents get secret eso-smoke-output   # recreated by ESO
+```
+
+Run drills against `eso-smoke` only — never against a real credential Secret.
+
+### Rotating the service-account token
+
+1. Create a new 1Password service account restricted to the `homelab` vault.
+2. Re-run `./scripts/create-onepassword-service-account.sh` — it updates the Secret in every namespace in place.
+3. ESO re-authenticates on the next reconcile (≤1h); `kubectl -n external-secrets rollout restart deploy/external-secrets` forces it immediately.
+4. Revoke the old service account in 1Password.
+
+### Disaster recovery
+
+The token's authoritative copy lives in 1Password (operator device / non-homelab storage) — never in git or cluster backups. A rebuilt cluster re-runs the bootstrap step above as part of `docs/rebuild-runbook.md` (step 1). Until the token lands, the stores stay unauthenticated and ExternalSecrets retry; already-synced Secrets keep workloads running in the meantime.
 
 ## Uninstall
 
