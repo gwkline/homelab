@@ -19,6 +19,10 @@ RUN ARCH=$(dpkg --print-architecture) \
   && rm -rf /tmp/* \
   && gh --version
 WORKDIR /collector
+# Both factory input adapters ship in this one image: the GitHub ledger
+# collector (default entrypoint) and the Linear input adapter (#87), which
+# the linear-collector CronJob selects via command override.
 COPY apps/factory/collector/run-collector.sh /collector/run-collector.sh
-RUN chmod +x /collector/run-collector.sh
+COPY apps/factory/collector/run-linear-collector.sh /collector/run-linear-collector.sh
+RUN chmod +x /collector/run-collector.sh /collector/run-linear-collector.sh
 ENTRYPOINT ["/collector/run-collector.sh"]
