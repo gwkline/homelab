@@ -41,6 +41,8 @@
  * touches `DATABASE_URL` / opens a connection.
  */
 
+import { KNOWLEDGE_SCHEMA_MIGRATION_SQL } from "./schema.ts";
+
 export const PGVECTOR_TABLE = "chunks";
 export const EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5";
 export const EMBEDDING_DIMENSIONS = 384;
@@ -57,28 +59,14 @@ export const DEFAULT_VECTOR_LIMIT = 10;
 export const PGVECTOR_SCHEMA_VERSION = "1-pgvector-chunks";
 
 /**
- * Idempotent migration: extension, `chunks` table (document version +
- * citation anchors denormalized for single-table retrieval), a plain
- * namespace index supporting pre-filtering, and the partial HNSW index this
- * module queries. The `vector(384)` typmod pins the model dimension — a model
- * whose dimension differs needs a new column/migration alongside the re-embed
- * backfill (ADR-002 D6/D10).
+ * Idempotent migration: the durable knowledge base schema (ADR-002 D3/#56,
+ * defined in `src/schema.ts`: namespaces, documents, document versions,
+ * content-addressed chunks with citation anchors, ingest jobs, and the core
+ * indexes) plus this channel's partial HNSW index. The `vector(384)` typmod
+ * pins the model dimension — a model whose dimension differs needs a new
+ * column/migration alongside the re-embed backfill (ADR-002 D6/D10).
  */
-export const PGVECTOR_MIGRATION_SQL = `CREATE EXTENSION IF NOT EXISTS vector;
-CREATE TABLE IF NOT EXISTS chunks (
-  chunk_id TEXT PRIMARY KEY,
-  document_id TEXT NOT NULL,
-  version_id TEXT NOT NULL,
-  namespace TEXT NOT NULL,
-  text TEXT NOT NULL,
-  anchors JSONB NOT NULL DEFAULT '[]'::jsonb,
-  embedding vector(384),
-  embedding_model TEXT,
-  valid_to TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS chunks_namespace_active
-  ON chunks (namespace) WHERE valid_to IS NULL;
+export const PGVECTOR_MIGRATION_SQL = `${KNOWLEDGE_SCHEMA_MIGRATION_SQL}
 CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw
   ON chunks USING hnsw (embedding vector_cosine_ops)
   WHERE valid_to IS NULL AND embedding IS NOT NULL;`;
