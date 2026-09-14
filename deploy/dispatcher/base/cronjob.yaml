@@ -1,3 +1,6 @@
+# LEGACY / DEMOTED (#78): superseded by the factory collector — see
+# deploy/dispatcher/base/kustomization.yaml. Kept only as the #30 smoke
+# baseline; do not use for new automation.
 # Watches a repo for issues labeled `run-agent` and dispatches one Job each.
 # Only collaborators can add labels, which makes the label the authz gate.
 apiVersion: batch/v1

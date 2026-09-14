@@ -41,5 +41,27 @@ export default {
       files: ["apps/knowledge/eval/rank.ts"],
       rules: { "no-bitwise": "off" },
     },
+    {
+      // Issue collector (#78): polling is deliberately sequential — one
+      // bounded stream of GitHub API calls per tick. Fan-out via Promise.all
+      // would spike concurrent request bursts against the rate limiter, and
+      // per-repo error isolation needs sequential try/catch so one repo's
+      // failure never masks another's progress.
+      files: ["apps/factory/collector/*.ts"],
+      rules: { "no-await-in-loop": "off" },
+    },
+    {
+      // Collector tests (#78): fakes intentionally return values without
+      // awaiting (require-await), carry hostile/untrusted fixture strings
+      // that look like template placeholders, and reuse the repo's object
+      // fixtures verbatim (sort-keys) — all by design.
+      files: ["apps/factory/collector/tests/**"],
+      rules: {
+        "no-template-curly-in-string": "off",
+        "promise/prefer-await-to-callbacks": "off",
+        "require-await": "off",
+        "sort-keys": "off",
+      },
+    },
   ],
 };

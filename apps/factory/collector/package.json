@@ -1,0 +1,19 @@
+{
+  "name": "factory-collector",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Durable GitHub issue collector for the software factory (#78): polls selected repositories for eligible issues and creates idempotent factory Runs through the GitHub API, using short-lived read-scoped App installation tokens (#70).",
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc -p . --noEmit",
+    "start": "node --experimental-strip-types run-collector.ts"
+  },
+  "devDependencies": {
+    "@types/node": "26.3.0",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=22.6"
+  }
+}

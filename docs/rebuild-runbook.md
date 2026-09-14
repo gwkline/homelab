@@ -149,7 +149,7 @@ Either way the drill result states which workloads' state was restored, recreate
 
 - t3code: pairing URL from `kubectl logs t3code-0 -n agents | head` → pair from desktop/phone (inherently interactive).
 - hermes: `kubectl exec -it hermes-0 -n agents -- hermes setup --portal` once on a fresh PVC, then `kubectl rollout restart statefulset hermes -n agents`; message it on its channels and get a sane reply.
-- dispatcher: `kubectl -n sandbox get cronjob dispatch-watcher` exists and is scheduled (end-to-end issue→Job proof is issue #30, not this drill).
+- dispatcher: `kubectl -n sandbox get cronjob dispatch-watcher` exists and is scheduled (legacy, demoted by #78 — superseded by the factory collector; end-to-end issue→Job proof is issue #30, not this drill).
 - panel/homepage: open both over HTTPS; links resolve.
 
 ### Step 4 — record
