@@ -38,6 +38,9 @@ jobs:
       - name: Install factory github-app deps (tsc typecheck needs @types/node)
         run: npm ci --no-audit --no-fund
         working-directory: apps/factory/github-app
+      - name: Install factory collector deps (tsc typecheck needs @types/node)
+        run: npm ci --no-audit --no-fund
+        working-directory: apps/factory/collector
       - name: oxlint (ultracite core preset, 0 errors 0 warnings)
         run: npx ultracite check
       - name: oxfmt --check (refuse unformatted files)
@@ -165,6 +168,27 @@ jobs:
         working-directory: apps/factory/github-app
         run: npm test
 
+  # Issue collector (#78): behavior tests against a fake GitHub server/client
+  # (no network): pagination, conditional requests, rate limits, duplicate-run
+  # guarantees.
+  collector-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/factory/collector/package-lock.json
+      - name: Install deps
+        working-directory: apps/factory/collector
+        run: npm ci --no-audit --no-fund
+      - name: Test (fake GitHub server/client)
+        working-directory: apps/factory/collector
+        run: npm test
+
   validate:
     runs-on: ubuntu-latest
     permissions:
@@ -207,7 +231,15 @@ jobs:
 
   build:
     needs:
-      [validate, lint, panel-smoke, panel-test, knowledge-eval, github-app-test]
+      [
+        validate,
+        lint,
+        panel-smoke,
+        panel-test,
+        knowledge-eval,
+        github-app-test,
+        collector-test,
+      ]
     strategy:
       matrix:
         include:
