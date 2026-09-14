@@ -1,0 +1,351 @@
+# Provisioned Grafana alert rules (issue #44). Evaluated by Grafana's
+# built-in unified alerting against the VictoriaMetrics datasource — no new
+# pods, no CRDs, matching the ADR shape (one Grafana, five small pods).
+#
+# Mounted as a provisioning file at
+# /etc/grafana/provisioning/alerting/homelab-alerts.yaml (see deployment.yaml).
+#
+# The four alert families the issue requires — disk pressure, failed
+# backups, unavailable core workloads, repeated Job failures — plus PVC
+# near-full as the early-warning form of disk pressure:
+#
+#   homelab-node-disk-pressure       kubelet reports DiskPressure=True
+#   homelab-pvc-nearly-full          >90% of a PVC's capacity consumed
+#   homelab-backup-failed            a restic-backup Job failed in 24h
+#   homelab-deployment-unavailable   an agents Deployment under-replicated
+#   homelab-statefulset-unavailable  an agents StatefulSet not fully ready
+#   homelab-jobs-repeatedly-failing  >=3 failed Job pods per namespace/24h
+#
+# States are visible in Grafana's Alerting UI and on the Homelab dashboards.
+# Notification routing is deliberately not configured: nothing in this
+# cluster pages at 2 a.m. (ADR D7) — wire a contact point when that changes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-alert-rules
+  namespace: agents
+data:
+  homelab-alerts.yaml: |
+    apiVersion: 1
+    groups:
+      - orgId: 1
+        name: homelab-health
+        folder: Homelab
+        interval: 1m
+        rules:
+          - uid: homelab-node-disk-pressure
+            title: Node disk pressure
+            condition: C
+            for: 10m
+            noDataState: OK
+            execErrState: Error
+            annotations:
+              summary: 'Node {{ $labels.node }} reports DiskPressure=True — the node disk is nearly full or under io pressure. Check `df -h` on the node and PVC usage on the Homelab Nodes dashboard.'
+            labels:
+              severity: warning
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 600
+                  to: 0
+                datasourceUid: victoriametrics
+                model:
+                  datasource:
+                    type: prometheus
+                    uid: victoriametrics
+                  editorMode: code
+                  expr: 'max by (node) (kube_node_status_condition{condition="DiskPressure",status="true"})'
+                  instant: true
+                  intervalMs: 1000
+                  legendFormat: __auto
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params:
+                          - 0
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - A
+                      reducer:
+                        params: []
+                        type: last
+                      type: threshold
+                  datasource:
+                    type: __expr__
+                    uid: __expr__
+                  expression: A
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  reducer: last
+                  type: threshold
+          - uid: homelab-pvc-nearly-full
+            title: PVC nearly full
+            condition: C
+            for: 30m
+            noDataState: OK
+            execErrState: Error
+            annotations:
+              summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is over 90% full. Grow the PVC or cut retention before DiskPressure lands on the node.'
+            labels:
+              severity: warning
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 600
+                  to: 0
+                datasourceUid: victoriametrics
+                model:
+                  datasource:
+                    type: prometheus
+                    uid: victoriametrics
+                  editorMode: code
+                  expr: 'kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes'
+                  instant: true
+                  intervalMs: 1000
+                  legendFormat: __auto
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params:
+                          - 0.1
+                        type: lt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - A
+                      reducer:
+                        params: []
+                        type: last
+                      type: threshold
+                  datasource:
+                    type: __expr__
+                    uid: __expr__
+                  expression: A
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  reducer: last
+                  type: threshold
+          - uid: homelab-backup-failed
+            title: Nightly backup failed
+            condition: C
+            noDataState: OK
+            execErrState: Error
+            annotations:
+              summary: 'restic-backup Job {{ $labels.job_name }} failed within the last 24h — the durable copies of t3code/hermes state are aging. Check the Job logs in Grafana Explore.'
+            labels:
+              severity: critical
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 86400
+                  to: 0
+                datasourceUid: victoriametrics
+                model:
+                  datasource:
+                    type: prometheus
+                    uid: victoriametrics
+                  editorMode: code
+                  expr: 'sum by (job_name) (increase(kube_job_status_failed{namespace="agents",job_name=~"restic-backup.*"}[24h]))'
+                  instant: true
+                  intervalMs: 1000
+                  legendFormat: __auto
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params:
+                          - 0
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - A
+                      reducer:
+                        params: []
+                        type: last
+                      type: threshold
+                  datasource:
+                    type: __expr__
+                    uid: __expr__
+                  expression: A
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  reducer: last
+                  type: threshold
+          - uid: homelab-deployment-unavailable
+            title: Core workload unavailable (Deployment)
+            condition: C
+            for: 5m
+            noDataState: OK
+            execErrState: Error
+            annotations:
+              summary: 'Deployment {{ $labels.deployment }} in agents has fewer available replicas than desired for 5m. Rollout status: kubectl rollout status deploy/{{ $labels.deployment }} -n agents'
+            labels:
+              severity: critical
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 600
+                  to: 0
+                datasourceUid: victoriametrics
+                model:
+                  datasource:
+                    type: prometheus
+                    uid: victoriametrics
+                  editorMode: code
+                  expr: 'count by (deployment) (kube_deployment_status_replicas_available{namespace="agents"} < kube_deployment_spec_replicas{namespace="agents"})'
+                  instant: true
+                  intervalMs: 1000
+                  legendFormat: __auto
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params:
+                          - 0
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - A
+                      reducer:
+                        params: []
+                        type: last
+                      type: threshold
+                  datasource:
+                    type: __expr__
+                    uid: __expr__
+                  expression: A
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  reducer: last
+                  type: threshold
+          - uid: homelab-statefulset-unavailable
+            title: Core workload unavailable (StatefulSet)
+            condition: C
+            for: 5m
+            noDataState: OK
+            execErrState: Error
+            annotations:
+              summary: 'StatefulSet {{ $labels.statefulset }} in agents is not fully ready for 5m (t3code, loki, hermes, …). Check pod events in Grafana Explore.'
+            labels:
+              severity: critical
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 600
+                  to: 0
+                datasourceUid: victoriametrics
+                model:
+                  datasource:
+                    type: prometheus
+                    uid: victoriametrics
+                  editorMode: code
+                  expr: 'count by (statefulset) (kube_statefulset_status_replicas_ready{namespace="agents"} < kube_statefulset_spec_replicas{namespace="agents"})'
+                  instant: true
+                  intervalMs: 1000
+                  legendFormat: __auto
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params:
+                          - 0
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - A
+                      reducer:
+                        params: []
+                        type: last
+                      type: threshold
+                  datasource:
+                    type: __expr__
+                    uid: __expr__
+                  expression: A
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  reducer: last
+                  type: threshold
+          - uid: homelab-jobs-repeatedly-failing
+            title: Repeated Job failures
+            condition: C
+            noDataState: OK
+            execErrState: Error
+            annotations:
+              summary: 'Namespace {{ $labels.namespace }} has >=3 failed Job pods in 24h — a loop/factory flow may be stuck. Group failed runs by job_name on the Homelab Workloads dashboard and open their logs from Explore.'
+            labels:
+              severity: warning
+            data:
+              - refId: A
+                relativeTimeRange:
+                  from: 86400
+                  to: 0
+                datasourceUid: victoriametrics
+                model:
+                  datasource:
+                    type: prometheus
+                    uid: victoriametrics
+                  editorMode: code
+                  expr: 'sum by (namespace) (increase(kube_job_status_failed[24h]))'
+                  instant: true
+                  intervalMs: 1000
+                  legendFormat: __auto
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator:
+                        params:
+                          - 2
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                          - A
+                      reducer:
+                        params: []
+                        type: last
+                      type: threshold
+                  datasource:
+                    type: __expr__
+                    uid: __expr__
+                  expression: A
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  reducer: last
+                  type: threshold
