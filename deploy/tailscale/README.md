@@ -109,6 +109,18 @@ Each fixer has its **own** ServiceAccount and Role so the two mechanisms are ind
 
 **Residual risk (documented, deliberate):** `create pods/exec` in the `tailscale` namespace cannot be scoped by RBAC to one pod — the operator names proxy StatefulSets via `GenerateName` (`ts-<parent>-<rand>`, see `reconcileHeadlessService` in the operator source), so RBAC `resourceNames` cannot pin the exec target. A compromised fixer image could therefore exec into unrelated operator/proxy pods in that namespace (it cannot create/delete/patch pods, touch secrets, read `pods/log`, or read any pod outside `tailscale` beyond the pinned app pod). Compensating controls: digest-pinned image, non-root + read-only rootfs, label+name-guarded selection, and the split SAs above. The image is the repo's loop-agent build rather than a minimal kubectl image; swapping in a minimal image later only requires bumping the digest.
 
+### Recovery acceptance test (issue #24)
+
+`scripts/serve-recovery-test.sh` turns the stale-backend recovery into a repeatable acceptance test. It records the t3code-0 pod IP, requires `https://t3code-0.<tailnet>/` to return 200, deletes the pod, waits for a different IP, then requires the proxy's serve config to point the **https 443** handler at the new IP and HTTPS to return 200 again — with the serve-fixer running normally. The test never invokes a repair script; if a manual repair were needed, it would fail.
+
+- **Expected recovery: ~30–60s** (the fixer's 30s loop plus one converge pass). **Objective: 120s** (override with `RECOVERY_OBJECTIVE=<seconds>`); exceeding it fails the test.
+- Any failure prints the serve-fixer logs and the proxy's serve status and logs before exiting 1.
+- Disruptive: replaces the t3code-0 pod once; run from the recovery drill's environment (admin kubeconfig + tailnet access).
+
+```sh
+./scripts/serve-recovery-test.sh
+```
+
 ### Retesting whether the workaround is still necessary
 
 - `scripts/serve-retest.sh` — disables the fixer, replaces the t3code-0 pod, and watches the proxy's serve config: exit 0 = operator self-heals (workaround obsolete — delete this directory), exit 3 = workaround still necessary, exit 1 = environment failure. It restores the fixer and re-verifies HTTPS 200 either way.
