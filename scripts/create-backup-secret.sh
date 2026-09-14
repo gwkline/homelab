@@ -48,7 +48,7 @@ fi
   || { echo "empty value" >&2; exit 1; }
 
 kubectl get namespace "$NS" >/dev/null 2>&1 \
-  || { echo "namespace '$NS' not found — run: kubectl apply -f deploy/namespaces.yaml" >&2; exit 1; }
+  || { echo "namespace '$NS' not found — run: kubectl apply -k deploy/namespaces" >&2; exit 1; }
 
 kubectl create secret generic backup-target \
   --namespace "$NS" \

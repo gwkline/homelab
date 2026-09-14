@@ -8,7 +8,7 @@ The CloudNativePG operator runs in `cnpg-system`. Version **1.30.0** (released 2
 - `base/kustomization.yaml` — the only local mutations: digest-pins the operator image (`:1.30.0@sha256:a2701…efebb`, the multi-arch manifest digest from GHCR) and sets `OPERATOR_IMAGE_NAME` to the same pinned reference; adds baseline PSA labels to `cnpg-system`; adds the metrics discovery annotations; re-asserts the reviewed resource bounds (see below).
 - `scripts/cnpg-smoke.sh` (repo root `scripts/`) — disposable-Cluster lifecycle proof, see [Verification](#verification).
 
-Security posture is upstream's own: the manager runs as UID 10001 with `ALL` capabilities dropped, read-only root filesystem, and `RuntimeDefault` seccomp — it passes `restricted` PSA. The namespace itself carries the **baseline** labels, the same convention as the other operator namespace (`external-secrets`, `deploy/eso/base/namespace.yaml`); the `database` namespace where CNPG-managed instances run enforces `restricted` (`deploy/namespaces.yaml`).
+Security posture is upstream's own: the manager runs as UID 10001 with `ALL` capabilities dropped, read-only root filesystem, and `RuntimeDefault` seccomp — it passes `restricted` PSA. The namespace itself carries the **baseline** labels, the same convention as the other operator namespace (`external-secrets`, `deploy/eso/base/namespace.yaml`); the `database` namespace where CNPG-managed instances run enforces `restricted` (`deploy/namespaces`).
 
 ## NetworkPolicies
 

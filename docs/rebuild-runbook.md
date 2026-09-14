@@ -21,7 +21,7 @@ Everything the drill starts from must be in this list. If you reach for anything
 | Credential | Source |
 | --- | --- |
 | 1Password service-account token (`OP_SERVICE_ACCOUNT_TOKEN`) | 1Password `homelab` vault — least-privilege SA token (issue #41); entered via env/stdin only |
-| GitHub tokens | 1Password items `github-readonly` / `github-writer`; synced by `kubectl apply -k deploy/github-tokens/base` (issue #45) |
+| GitHub tokens | 1Password items `github-readonly` / `github-writer`; synced by the root entry point `kubectl apply -k clusters/home` (issue #45; standalone: `deploy/github-tokens/base/README.md`) |
 | Tailscale OAuth (`TS_CLIENT_ID` / `TS_CLIENT_SECRET`) | macOS Keychain `homelab-tailscale`; tag `tag:k8s-operator` must exist on the OAuth client ([deploy/tailscale/README.md](../deploy/tailscale/README.md)) |
 | B2 restore credentials (`restic-backup` item) | 1Password `Homelab` vault: `RESTIC_REPOSITORY`, `B2_ACCOUNT_ID`, `B2_ACCOUNT_KEY`, `RESTIC_PASSWORD` ([runbook-server-cluster](runbook-server-cluster.md) §11) |
 
@@ -36,7 +36,7 @@ No hidden state is copied from the existing cluster. The only crossers are the d
 | Sigstore policy-controller chart | `0.10.7` | `scripts/recovery-drill.sh` (`POLICY_CHART_VERSION`); the ClusterImagePolicy it verifies against lives in [deploy/image-policy/base](../deploy/image-policy/base/README.md) (issue #91, ADR-004) |
 | tailscaled (host package) | `1.102.4` | `bootstrap/bootstrap.sh` default (`TAILSCALE_VERSION`; installer sha256-verified, upgrade procedure: §2a) |
 
-`bootstrap/bootstrap.sh` is the root node entry point; `scripts/recovery-drill.sh` is the root cluster entry point (it runs the documented apply order — until issue #20 replaces it with a root Kustomization, the script is that order's source of truth).
+`bootstrap/bootstrap.sh` is the root node entry point; `clusters/home` is the root cluster entry point (issue #20): one Kustomization composing namespaces, policies, platform prerequisites, and workloads with the dependency contract documented in [clusters/home/README.md](../clusters/home/README.md). `scripts/recovery-drill.sh` times that same order stage by stage.
 
 Both bootstrap installers are content-verified (issue #29): the script downloads each installer from its immutable version tag on GitHub and refuses to execute it unless its sha256 matches the value pinned beside the version. Bootstrap validates the platform contract (Ubuntu 24.04, amd64 or arm64) and fails fast otherwise. **Changing a pin means changing the version and its recorded installer sha256 together** — never edit one without the other.
 
@@ -85,42 +85,55 @@ kubectl -n external-secrets rollout status deploy/external-secrets
 kubectl apply --server-side -k deploy/eso/base   # 2: SecretStore + smoke ExternalSecret
 kubectl -n external-secrets wait --for=condition=Ready externalsecret/eso-smoke --timeout=120s
 ./scripts/create-onepassword-service-account.sh  # Secret onepassword-service-account -> agents, sandbox, work, tailscale
-kubectl apply -k deploy/github-tokens/base       # syncs github-token(+writer) from 1Password
+# (github-tokens needs no standalone apply: the root entry point below
+# composes deploy/github-tokens/base)
 
-# 2. namespaces + policies (before deploy/tailscale — its serve-fixer RBAC
-#    reaches into agents)
-kubectl apply -f deploy/namespaces.yaml
-kubectl apply -k deploy/policies/base
-
-# 2b. image admission policy (issue #91 / ADR-004): the sigstore
-#     policy-controller webhook must be in force BEFORE workloads are
-#     applied — it admits pods only when the exact digest of a
-#     ghcr.io/gwkline/homelab/** image carries a signature from this repo's
-#     CI workflow. Namespaces above carry the include labels; break-glass
-#     and failure behavior: deploy/image-policy/base/README.md
+# 2. image admission policy (issue #91 / ADR-004): the sigstore
+#     policy-controller webhook must be in force BEFORE the root apply
+#     below admits workload pods — it admits pods only when the exact
+#     digest of a ghcr.io/gwkline/homelab/** image carries a signature from
+#     this repo's CI workflow. Its CRD also defines the ClusterImagePolicy
+#     the root composes. Break-glass and failure behavior:
+#     deploy/image-policy/base/README.md
 helm repo add sigstore https://sigstore.github.io/helm-charts
 helm upgrade --install policy-controller sigstore/policy-controller \
   --version 0.10.7 -n cosign-system --create-namespace
 kubectl -n cosign-system rollout status deploy/policy-controller-webhook
-kubectl apply -k deploy/image-policy/base
 
-# 3. tailscale operator: credentials synced from 1Password, then helm with
-#    the pinned values file — never --set oauth.* (issue #43)
-kubectl apply -k deploy/tailscale                # ns + SecretStore + ExternalSecret -> Secret operator-oauth; serve-fixer
+# 2b. CloudNativePG operator (issue #49): the pinned bundle from git
+#     (deploy/cnpg/base) must be Ready before the root applies — the
+#     postgres Cluster/Database CRs it composes (deploy/postgres/base)
+#     are rejected until the CRDs are Established. One server-side apply
+#     carries CRDs, RBAC and the Deployment; plain client-side apply
+#     cannot carry the bundle (its Cluster CRD exceeds the annotation
+#     size limit). Idempotent — re-running is the recovery path
+#     (deploy/cnpg/README.md).
+kubectl apply --server-side -k deploy/cnpg/base
+kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io --timeout=180s
+kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
+
+# 3. the root entry point (issue #20): one render, one apply — namespaces +
+#     policies (kubectl apply orders Namespaces first, so they precede the
+#     tailscale serve-fixer RBAC that reaches into agents), the
+#     ClusterImagePolicy, the github-tokens sync, the tailscale stack
+#     (namespace, SecretStore, operator-oauth ExternalSecret,
+#     serve-fixers), postgres (pg-primary — its cnpg CRDs were
+#     Established in 2b), and every normal workload: t3code, hermes,
+#     loop-agent, homepage, panel, headlamp, dispatcher, factory,
+#     work-t3code, then the operational CronJobs (chaos, node-cleanup)
+#     last so their first run cannot race the bring-up. Full inventory +
+#     dependency contract: clusters/home/README.md
+kubectl apply -k clusters/home
+
+# 4. tailscale operator: after the root apply — it consumes the
+#    operator-oauth Secret the root synced from 1Password; helm with the
+#    pinned values file — never --set oauth.* (issue #43)
 helm repo add tailscale https://pkgs.tailscale.com/helmcharts
 helm upgrade --install tailscale-operator tailscale/tailscale-operator \
   --version 1.102.3 -n tailscale --create-namespace \
   -f deploy/tailscale/values.yaml
 kubectl -n tailscale set env deploy/operator PROXY_TAGS=tag:k8s-operator  # chart bug workaround (documented)
 kubectl rollout restart deploy/operator -n tailscale
-
-# 4. workloads
-kubectl apply -k deploy/t3code/base
-kubectl apply -k deploy/hermes/base
-kubectl apply -k deploy/loop-agent/base
-kubectl apply -k deploy/panel/base         # admin portal (https://panel.$TAILNET_NAME)
-kubectl apply -k deploy/headlamp/base      # k8s web UI (https://headlamp.$TAILNET_NAME)
-kubectl apply -k deploy/factory/base       # unattended issue -> draft PR factory
 
 # 4b. HTTPS for tailscale-proxied services (one-time tailnet approval already
 # granted; re-run after operator reinstall or proxy pod replacement)
@@ -146,6 +159,10 @@ kubectl get pods -A -w
 curl -s -o /dev/null -w "%{http_code}\n" "https://t3code-0.${TAILNET_NAME:-<tailnet>}/"
 ```
 
+Render the whole normal set without applying anything: `kubectl kustomize clusters/home` — the inventory (158 resources across 5 namespaces) is deterministic and contains no duplicate resource IDs (CI re-checks this in `scripts/verify.sh`).
+
+**Opt-in overlays** are intentionally excluded from the root and applied separately when wanted: `kubectl apply -k clusters/home/overlays/backup` (nightly B2 restic backup — only after the B2 credentials from section 1 exist in 1Password, since production backup execution before credentials exist is exactly what the root must not compose) and `kubectl apply -k clusters/home/overlays/gvisor` (loop-agent CronJob under gVisor instead of the stock runtime; requires runsc in the nodes' containerd config).
+
 Fetch the kubeconfig to the driver (server runbook §4), confirm `kubectl get nodes` is Ready, and export the four credentials from section 1.
 
 ### Step 1 — cluster bring-up (timed, one command)
@@ -154,7 +171,7 @@ Fetch the kubeconfig to the driver (server runbook §4), confirm `kubectl get no
 ./scripts/recovery-drill.sh --from "$DRILL_START"
 ```
 
-The script runs and times every stage — operator (pinned chart + PROXY_TAGS workaround), namespaces/policies, image policy (policy-controller + ClusterImagePolicy, before workloads), external secrets (pinned ESO from `deploy/eso/base` + fake-provider smoke, before any ExternalSecret applies), cnpg (pinned CloudNativePG operator from `deploy/cnpg/base`, the explicit prerequisite for the `database` workloads — issue #49), secrets (1Password SA token + github-tokens sync), workloads (t3code, hermes, loop-agent, homepage, panel, dispatcher, factory), pods-ready, HTTPS (serve-https + serve-refresh + curl checks for t3code-0 and panel), and the `scripts/rebuild-check.sh` smoke sweep — then prints per-stage times and the total RTO. A failed stage fails the drill; the fix must land as a runbook step or follow-up issue before the next attempt (known warnings it emits are listed in section 6).
+The script runs and times every stage — operator (pinned chart + PROXY_TAGS workaround), namespaces/policies, image policy (policy-controller + ClusterImagePolicy, before workloads), external secrets (pinned ESO from `deploy/eso/base` + fake-provider smoke, before any ExternalSecret applies), cnpg (pinned CloudNativePG operator from `deploy/cnpg/base`, the explicit prerequisite for the `database` workloads — issue #49), secrets (1Password SA token + github-tokens sync), workloads (postgres, tailscale, t3code, hermes, loop-agent, homepage, panel, headlamp, dispatcher, factory, work-t3code, then chaos + node-cleanup last — the same set and dependency order the root Kustomization composes), pods-ready, HTTPS (serve-https + serve-refresh + curl checks for t3code-0 and panel), and the `scripts/rebuild-check.sh` smoke sweep — then prints per-stage times and the total RTO. A failed stage fails the drill; the fix must land as a runbook step or follow-up issue before the next attempt (known warnings it emits are listed in section 6).
 
 ### Step 2 — PVC state: restore from B2 or intentionally recreate
 
@@ -194,7 +211,7 @@ Rule: every undocumented step you perform during a drill becomes either a runboo
 | --- | --- |
 | External Secrets Operator was not installed by any manifest | closed (issue #38): pinned install in `deploy/eso/base` (runbook-server-cluster §4b); the drill installs it in the `eso` stage before any ExternalSecret apply and smoke-checks the fake-provider ExternalSecret |
 | Host tailscaled not version-pinned | closed (issue #29): pinned `TAILSCALE_VERSION` + sha256-verified installer in `bootstrap/bootstrap.sh`; upgrade procedure: §2a |
-| Apply order lives in `scripts/recovery-drill.sh` instead of a root Kustomization | follow-up: issue #20 |
+| Apply order lives in `scripts/recovery-drill.sh` instead of a root Kustomization | closed (issue #20): `clusters/home` root Kustomization is the source of truth (clusters/home/README.md); the drill times the same order stage by stage |
 | hermes `hermes setup --portal` re-run after PVC recreation | runbook step (section 4, step 3) |
 | t3code pairing from desktop/phone | runbook step (section 4, step 3); durable auth persistence tracked by issue #19 |
 | API-level manifest validation before apply (invalid RoleBindings, missing SAs) | follow-up: issue #16 |

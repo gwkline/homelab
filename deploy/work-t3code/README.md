@@ -35,7 +35,7 @@ This repository is public, so it deliberately carries **no work identifiers**: n
 
    ```sh
    KUBECONFIG=~/kubeconfig-homelab
-   kubectl apply -f deploy/namespaces.yaml
+   kubectl apply -k deploy/namespaces
    kubectl apply -k deploy/policies/base
    kubectl apply -k deploy/github-tokens/base   # work SecretStore + ExternalSecret
    kubectl apply -k deploy/work-t3code/base

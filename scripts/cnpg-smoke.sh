@@ -135,7 +135,7 @@ kind: Namespace
 metadata:
   name: $NS
   labels:
-    # Same restricted posture as the database namespace (deploy/namespaces.yaml):
+    # Same restricted posture as the database namespace (deploy/namespaces):
     # CNPG's default pod security context passes it (deploy/postgres/README.md).
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest

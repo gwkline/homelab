@@ -37,10 +37,12 @@ Losing a Secret means rotating it: recreate the Secret with a new password and t
 ## Bring-up
 
 ```sh
-kubectl apply -f deploy/namespaces.yaml      # database namespace (restricted PSA)
+kubectl apply -k deploy/namespaces          # database namespace (restricted PSA)
 kubectl apply -k deploy/postgres/base
 kubectl get cluster pg-primary -n database -w # wait for "Cluster in healthy state"
 ```
+
+Standalone applies only: the root cluster entry point (issue #20) composes this base as part of the normal set — `kubectl apply -k clusters/home` after the cnpg operator pre-apply (see [clusters/home/README.md](../../clusters/home/README.md)).
 
 Then prove it (see below): `scripts/pg-smoke.sh seed`, `restart`, `verify`.
 
