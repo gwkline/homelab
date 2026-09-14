@@ -1,21 +1,37 @@
-# Loki datasource provisioning for this Grafana (issue #44).
+# Datasource provisioning for this Grafana (issue #44).
 #
-# Copy of the canonical definition in
-# deploy/loki/base/grafana-datasource.yaml, mounted as a provisioning file
-# at /etc/grafana/provisioning/datasources/loki.yaml (see deployment.yaml).
-# Kept as a file here instead of referencing the loki base's ConfigMap so
-# this kustomization stays self-contained. If the Loki URL or derived
-# fields change there, mirror them here.
+# Two provisioned datasources, both ClusterIP-only inside `agents`:
+#   - VictoriaMetrics (uid: victoriametrics) — the metrics backend of the
+#     observability ADR (deploy/victoriametrics/base), speaking the
+#     Prometheus query API, so Grafana's prometheus datasource type works
+#     against it. Default datasource: metrics are what the operator opens
+#     first.
+#   - Loki (uid: loki) — copy of the canonical definition in
+#     deploy/loki/base/grafana-datasource.yaml, kept as a file here so this
+#     kustomization stays self-contained. If the Loki URL or derived fields
+#     change there, mirror them here.
 #
-# The derived fields are the "jump from a failed Job to its logs" path: any
-# log line carrying job_name="..." or pod="..." renders a link that opens
-# Explore pre-filtered to that run — no typing LogQL by hand.
+# The Loki derived fields are the "jump from a failed Job to its logs" path:
+# any log line carrying job_name="..." or pod="..." renders a link that
+# opens Explore pre-filtered to that run — no typing LogQL by hand.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: grafana-datasources
   namespace: agents
 data:
+  victoriametrics.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: VictoriaMetrics
+        uid: victoriametrics
+        type: prometheus
+        access: proxy
+        url: http://victoriametrics.agents.svc:8428
+        isDefault: true
+        editable: false
+        jsonData:
+          timeInterval: 30s
   loki.yaml: |
     apiVersion: 1
     datasources:

@@ -1,7 +1,14 @@
-# Provisioned dashboards (issue #44 follow-up). Source of truth is
+# Provisioned dashboards (issue #44). Source of truth is
 # deploy/grafana/base/dashboards/*.json; this ConfigMap is generated from
 # those files (re-generate when they change). Mounted at
 # /etc/grafana/dashboards (see deployment.yaml).
+#
+# Dashboards:
+#   homelab-logs.json     — log volume, live tail, error counters (Loki)
+#   homelab-nodes.json    — node saturation: CPU/memory vs allocatable,
+#                           Ready/DiskPressure/MemoryPressure, pods per node
+#   homelab-workloads.json — pod restarts, pending/failed Jobs, PVC usage,
+#                           application availability (deployments/statefulsets)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,8 +16,6 @@ metadata:
   namespace: agents
 data:
   homelab-logs.json: |
-    {"annotations": {"list": []}, "editable": false, "fiscalYearStartMonth": 0, "graphTooltip": 0, "panels": [{"datasource": {"type": "loki", "uid": "loki"}, "description": "Log lines per second across homelab namespaces.", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0}, "id": 1, "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}}, "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "sum by (namespace) (rate({namespace=~\".+\"}[$__auto]))", "refId": "A"}], "title": "Log volume by namespace", "type": "timeseries"}, {"datasource": {"type": "loki", "uid": "loki"}, "description": "Live tail of the agents namespace (panel, headlamp, workers).", "gridPos": {"h": 12, "w": 24, "x": 0, "y": 8}, "id": 2, "options": {"showTime": true, "sortOrder": "Descending", "wrapLogMessage": true}, "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "{namespace=\"agents\"}", "refId": "A"}], "title": "Agents namespace logs", "type": "logs"}, {"datasource": {"type": "loki", "uid": "loki"}, "description": "Lines mentioning error/fail/exception in the last hour.", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 4, "w": 24, "x": 0, "y": 20}, "id": 3, "options": {}, "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "sum(count_over_time({namespace=~\".+\"} |~ \"(?i)error|fail|exception\" [1h]))", "refId": "A"}], "title": "Error lines (1h)", "type": "stat"}], "refresh": "30s", "schemaVersion": 39, "tags": ["homelab", "loki"], "templating": {"list": []}, "time": {"from": "now-1h", "to": "now"}, "timepicker": {}, "timezone": "", "title": "Homelab Logs", "uid": "homelab-logs", "version": 1}
-    {"annotations": {"list": []}, "editable": false, "fiscalYearStartMonth": 0, "graphTooltip": 0, "panels": [{"datasource": {"type": "loki", "uid": "loki"}, "description": "Log lines per second across homelab namespaces.", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0}, "id": 1, "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}}, "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "sum by (namespace) (rate({namespace=~\".+\"}[$__auto]))", "refId": "A"}], "title": "Log volume by namespace", "type": "timeseries"}, {"datasource": {"type": "loki", "uid": "loki"}, "description": "Live tail of the agents namespace (panel, headlamp, workers).", "gridPos": {"h": 12, "w": 24, "x": 0, "y": 8}, "id": 2, "options": {"showTime": true, "sortOrder": "Descending", "wrapLogMessage": true}, "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "{namespace=\"agents\"}", "refId": "A"}], "title": "Agents namespace logs", "type": "logs"}, {"datasource": {"type": "loki", "uid": "loki"}, "description": "Lines mentioning error/fail/exception in the last hour.", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 4, "w": 24, "x": 0, "y": 20}, "id": 3, "options": {}, "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "sum(count_over_time({namespace=~\".+\"} |~ \"(?i)error|fail|exception\" [1h]))", "refId": "A"}], "title": "Error lines (1h)", "type": "stat"}], "refresh": "30s", "schemaVersion": 39, "tags": ["homelab", "loki"], "templating": {"list": []}, "time": {"from": "now-1h", "to": "now"}, "timepicker": {}, "timezone": "", "title": "Homelab Logs", "uid": "homelab-logs", "version": 1}
     {
       "annotations": { "list": [] },
       "editable": false,
@@ -87,5 +92,381 @@ data:
       "timezone": "",
       "title": "Homelab Logs",
       "uid": "homelab-logs",
+      "version": 1
+    }
+  homelab-nodes.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": false,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "links": [],
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "kubelet-reported Ready condition across nodes.",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "green", "value": 1 }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+          "id": 1,
+          "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "sum(kube_node_status_condition{condition=\"Ready\",status=\"true\"})",
+              "refId": "A"
+            }
+          ],
+          "title": "Nodes ready",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Nodes currently reporting DiskPressure=True (fires homelab-node-disk-pressure).",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 1 }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+          "id": 2,
+          "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "sum(kube_node_status_condition{condition=\"DiskPressure\",status=\"true\"})",
+              "refId": "A"
+            }
+          ],
+          "title": "Nodes in DiskPressure",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Nodes currently reporting MemoryPressure=True.",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 1 }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+          "id": 3,
+          "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "sum(kube_node_status_condition{condition=\"MemoryPressure\",status=\"true\"})",
+              "refId": "A"
+            }
+          ],
+          "title": "Nodes in MemoryPressure",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Whole-node CPU from cAdvisor's root cgroup vs the node's allocatable capacity.",
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "gridPos": { "h": 10, "w": 12, "x": 0, "y": 4 },
+          "id": 4,
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "sum by (node) (rate(container_cpu_usage_seconds_total{id=\"/\"}[5m]))",
+              "legendFormat": "{{node}} used",
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "kube_node_status_allocatable{resource=\"cpu\"}",
+              "legendFormat": "{{node}} allocatable",
+              "refId": "B"
+            }
+          ],
+          "title": "Node CPU saturation (cores)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Whole-node working set from cAdvisor's root cgroup vs the node's allocatable capacity.",
+          "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+          "gridPos": { "h": 10, "w": 12, "x": 12, "y": 4 },
+          "id": 5,
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "sum by (node) (container_memory_working_set_bytes{id=\"/\"})",
+              "legendFormat": "{{node}} used",
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "kube_node_status_allocatable{resource=\"memory\"}",
+              "legendFormat": "{{node}} allocatable",
+              "refId": "B"
+            }
+          ],
+          "title": "Node memory saturation",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Pods running on each node, per kubelet.",
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+          "id": 6,
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "kubelet_running_pods",
+              "legendFormat": "{{instance}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Running pods per node",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["homelab", "metrics"],
+      "templating": { "list": [] },
+      "time": { "from": "now-6h", "to": "now" },
+      "timepicker": {},
+      "timezone": "",
+      "title": "Homelab Nodes",
+      "uid": "homelab-nodes",
+      "version": 1
+    }
+  homelab-workloads.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": false,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "links": [],
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Container restarts over the last 24h — CrashLoopBackOffs and OOMKill churn show up here first.",
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "id": 1,
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "sum by (namespace) (increase(kube_pod_container_status_restarts_total[24h]))",
+              "legendFormat": "{{namespace}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Pod restarts by namespace (24h)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Failed Job pods over the last 24h (fires homelab-jobs-repeatedly-failing at >=3 per namespace).",
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "id": 2,
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "sum by (namespace) (increase(kube_job_status_failed[24h]))",
+              "legendFormat": "{{namespace}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Failed Job pods by namespace (24h)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Total failed Job pods in the last 24h.",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 3 }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+          "id": 3,
+          "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "sum(increase(kube_job_status_failed[24h]))",
+              "refId": "A"
+            }
+          ],
+          "title": "Failed Job pods (24h)",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Job pods currently running (kube_job_status_active).",
+          "fieldConfig": { "defaults": {}, "overrides": [] },
+          "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
+          "id": 4,
+          "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "sum(kube_job_status_active)",
+              "refId": "A"
+            }
+          ],
+          "title": "Active Jobs",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Pods stuck Pending cluster-wide — the leading cause of Jobs that never start.",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "orange", "value": 1 }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 },
+          "id": 5,
+          "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "sum(kube_pod_status_phase{phase=\"Pending\"})",
+              "refId": "A"
+            }
+          ],
+          "title": "Pending pods",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Pods currently Running cluster-wide.",
+          "fieldConfig": { "defaults": {}, "overrides": [] },
+          "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
+          "id": 6,
+          "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "sum(kube_pod_status_phase{phase=\"Running\"})",
+              "refId": "A"
+            }
+          ],
+          "title": "Running pods",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Consumed capacity per PVC from kubelet volume stats (fires homelab-pvc-nearly-full at >90%).",
+          "fieldConfig": { "defaults": { "max": 100, "min": 0, "unit": "percent" }, "overrides": [] },
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 12 },
+          "id": 7,
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "desc" } },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "100 * (1 - kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes)",
+              "legendFormat": "{{namespace}}/{{persistentvolumeclaim}}",
+              "refId": "A"
+            }
+          ],
+          "title": "PVC usage (%)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Available vs desired replicas for every Deployment in agents (fires homelab-deployment-unavailable).",
+          "fieldConfig": { "defaults": { "max": 100, "min": 0, "unit": "percent" }, "overrides": [] },
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 12 },
+          "id": 8,
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "100 * kube_deployment_status_replicas_available{namespace=\"agents\"} / kube_deployment_spec_replicas{namespace=\"agents\"}",
+              "legendFormat": "{{deployment}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Application availability — Deployments (agents)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+          "description": "Ready vs expected replicas for every StatefulSet in agents (t3code, hermes, loki — fires homelab-statefulset-unavailable).",
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 21 },
+          "id": 9,
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "kube_statefulset_status_replicas_ready{namespace=\"agents\"}",
+              "legendFormat": "{{statefulset}} ready",
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+              "expr": "kube_statefulset_spec_replicas{namespace=\"agents\"}",
+              "legendFormat": "{{statefulset}} expected",
+              "refId": "B"
+            }
+          ],
+          "title": "StatefulSet readiness (agents)",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["homelab", "metrics"],
+      "templating": { "list": [] },
+      "time": { "from": "now-6h", "to": "now" },
+      "timepicker": {},
+      "timezone": "",
+      "title": "Homelab Workloads",
+      "uid": "homelab-workloads",
       "version": 1
     }

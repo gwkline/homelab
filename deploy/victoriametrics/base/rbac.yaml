@@ -1,0 +1,42 @@
+# The metrics scraper's identity. A deliberate, audited exception to
+# "pods cannot talk to Kubernetes" in the metrics half of the observability
+# stack (README security model; ADR D8.2): strictly read-only access to node
+# metrics through the API server proxy plus the discovery reads built-in
+# kubernetes_sd needs. No secrets, no writes, no CRDs.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: victoriametrics
+  namespace: agents
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: victoriametrics-scrape
+rules:
+  # kubernetes_sd role: node — discover the scrape targets.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  # kubelet /metrics + cAdvisor via the apiserver proxy
+  # (/api/v1/nodes/<name>/proxy/metrics[...]).
+  - apiGroups: [""]
+    resources: ["nodes/metrics", "nodes/proxy"]
+    verbs: ["get"]
+  # Discovery reserves (ADR D8.2): pods/services/endpoints list-watch.
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: victoriametrics-scrape
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: victoriametrics-scrape
+subjects:
+  - kind: ServiceAccount
+    name: victoriametrics
+    namespace: agents

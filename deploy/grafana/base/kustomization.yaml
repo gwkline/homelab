@@ -14,4 +14,5 @@ resources:
   - datasources.yaml
   - dashboards-provider.yaml
   - dashboard-files.yaml
+  - alerting.yaml
   - netpol.yaml
