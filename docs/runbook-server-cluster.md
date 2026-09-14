@@ -93,9 +93,28 @@ kubectl get nodes
 
 (Windows/Linux: use `sed -i "s|..."` without the `''`.)
 
+## 4b. External Secrets Operator (cluster prerequisite)
+
+Everything that syncs a Secret — the Tailscale OAuth client (section 5), GitHub tokens (section 6), nightly backups (section 11) — needs the External Secrets Operator ready first, so install it before any of those steps. `deploy/eso/base` is the pinned install (Helm chart `external-secrets` 2.10.0 rendered to plain YAML with a digest-pinned controller image; CRDs use the supported `external-secrets.io/v1` APIs; the controller runs non-root with bounded resources). The apply is idempotent — re-running it is the recovery path. Full pins, upgrade, and uninstall notes: deploy/eso/base/README.md.
+
+```sh
+kubectl apply --server-side -k deploy/eso/base   # 1: CRDs, RBAC, Deployments
+kubectl wait --for=condition=Established \
+  crd/externalsecrets.external-secrets.io crd/secretstores.external-secrets.io
+kubectl -n external-secrets rollout status deploy/external-secrets
+kubectl -n external-secrets rollout status deploy/external-secrets-webhook
+kubectl -n external-secrets rollout status deploy/external-secrets-cert-controller
+kubectl apply --server-side -k deploy/eso/base   # 2: SecretStore + smoke ExternalSecret
+kubectl -n external-secrets wait --for=condition=Ready externalsecret/eso-smoke --timeout=120s
+kubectl -n external-secrets get secret eso-smoke-output -o jsonpath='{.data.password}' | base64 -d
+# expect: eso-smoke-ok — fake-provider smoke, proves reconciliation without credentials
+```
+
+Do not apply any `SecretStore`/`ExternalSecret` (sections 5, 6, 11) before the controller rollout is Ready — those objects stay Pending until the CRDs and webhook are up.
+
 ## 5. Tailscale operator (tailnet HTTPS for services)
 
-Prerequisite: External Secrets Operator is running and the 1Password service-account token exists in the `tailscale` namespace (section 6 / issue #41).
+Prerequisite: External Secrets Operator is ready (section 4b) and the 1Password service-account token exists in the `tailscale` namespace (section 6 / issue #41).
 
 1. Generate an OAuth client at https://login.tailscale.com/admin/settings/oauth — Devices/Core + Auth Keys read-or-modify, Routes read, and it must be created WITH the `tag:k8s-operator` tag. Store it as the `client_id` / `client_secret` fields of the `tailscale-operator-oauth` item in the `homelab` vault (item contract: deploy/tailscale/README.md).
 2. Install Helm anywhere kubectl works:
@@ -115,7 +134,7 @@ Rotation procedure (keeps existing proxy devices): deploy/tailscale/README.md.
 
 ## 6. Secrets (private repo access)
 
-GitHub tokens are synced from 1Password by External Secrets Operator — nothing is created by hand except the least-privilege 1Password service-account token (restricted to the `homelab` vault, issue #41). `scripts/create-github-secret.sh` is deprecated.
+GitHub tokens are synced from 1Password by External Secrets Operator (installed in section 4b) — nothing is created by hand except the least-privilege 1Password service-account token (restricted to the `homelab` vault, issue #41). `scripts/create-github-secret.sh` is deprecated.
 
 Fine-grained PAT: https://github.com/settings/personal-access-tokens/new → Repository access: pick your repos → Permissions: Contents **Read-only**. Store it as the `token` field of the `github-readonly` item in the `homelab` vault (optionally `github-writer` for write-scoped jobs), then:
 
@@ -135,6 +154,7 @@ If the StatefulSet pods sit in `ImagePullBackoff`, this is why.
 ## 8. Deploy everything
 
 ```sh
+kubectl apply -k deploy/eso/base   # section 4b — idempotent re-apply of the pinned operator
 kubectl apply -f deploy/namespaces.yaml
 kubectl apply -k deploy/policies/base
 kubectl apply -k deploy/t3code/base

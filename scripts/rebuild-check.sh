@@ -109,6 +109,18 @@ else
   echo "  WARN: operator PROXY_TAGS='$ptags' (expected tag:k8s-operator — apply documented workaround)"
 fi
 
+echo "== 8. external secrets operator =="
+# deploy/eso/base runs a fake-provider smoke ExternalSecret; Ready means the
+# controller reconciles end to end without any real credentials (issue #38).
+state=$(kubectl get externalsecret eso-smoke -n external-secrets \
+  -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+if [ "$state" = "True" ]; then
+  echo "  ok: externalsecret/eso-smoke Ready (controller reconciling)"
+else
+  echo "  FAIL: externalsecret/eso-smoke not Ready (state: ${state:-missing}) — install/recover: deploy/eso/base/README.md"
+  fail=1
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL CHECKS PASS ✅"

@@ -57,8 +57,15 @@ git clone https://github.com/gwkline/homelab.git && cd homelab
 
 # 0. node ready per above
 
-# 1. secrets infra: External Secrets Operator (issue #41) + the one
-#    hand-entered 1Password bootstrap token (env/stdin, never logged)
+# 1. secrets infra: External Secrets Operator (issue #38, pinned in
+#    deploy/eso/base) must be Ready before any ExternalSecret applies, then
+#    the one hand-entered 1Password bootstrap token (env/stdin, never logged)
+kubectl apply --server-side -k deploy/eso/base   # 1: CRDs, RBAC, Deployments
+kubectl wait --for=condition=Established \
+  crd/externalsecrets.external-secrets.io crd/secretstores.external-secrets.io
+kubectl -n external-secrets rollout status deploy/external-secrets
+kubectl apply --server-side -k deploy/eso/base   # 2: SecretStore + smoke ExternalSecret
+kubectl -n external-secrets wait --for=condition=Ready externalsecret/eso-smoke --timeout=120s
 kubectl -n agents create secret generic onepassword-service-account \
   --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"   # repeat for sandbox and tailscale
 kubectl apply -k deploy/github-tokens/base       # syncs github-token(+writer) from 1Password
@@ -127,7 +134,7 @@ Fetch the kubeconfig to the driver (server runbook §4), confirm `kubectl get no
 ./scripts/recovery-drill.sh --from "$DRILL_START"
 ```
 
-The script runs and times every stage — operator (pinned chart + PROXY_TAGS workaround), namespaces/policies, image policy (policy-controller + ClusterImagePolicy, before workloads), secrets (1Password SA token + github-tokens sync), workloads (t3code, hermes, loop-agent, homepage, panel, dispatcher, factory), pods-ready, HTTPS (serve-https + serve-refresh + curl checks for t3code-0 and panel), and the `scripts/rebuild-check.sh` smoke sweep — then prints per-stage times and the total RTO. A failed stage fails the drill; the fix must land as a runbook step or follow-up issue before the next attempt (known warnings it emits are listed in section 6).
+The script runs and times every stage — operator (pinned chart + PROXY_TAGS workaround), namespaces/policies, image policy (policy-controller + ClusterImagePolicy, before workloads), external secrets (pinned ESO from `deploy/eso/base` + fake-provider smoke, before any ExternalSecret applies), secrets (1Password SA token + github-tokens sync), workloads (t3code, hermes, loop-agent, homepage, panel, dispatcher, factory), pods-ready, HTTPS (serve-https + serve-refresh + curl checks for t3code-0 and panel), and the `scripts/rebuild-check.sh` smoke sweep — then prints per-stage times and the total RTO. A failed stage fails the drill; the fix must land as a runbook step or follow-up issue before the next attempt (known warnings it emits are listed in section 6).
 
 ### Step 2 — PVC state: restore from B2 or intentionally recreate
 
@@ -165,7 +172,7 @@ Rule: every undocumented step you perform during a drill becomes either a runboo
 
 | Finding | Disposition |
 | --- | --- |
-| External Secrets Operator is not installed by any manifest — `github-token` sync stays Pending on a fresh cluster (drill script warns) | follow-up: install pinned ESO — issue #38 |
+| External Secrets Operator was not installed by any manifest | closed (issue #38): pinned install in `deploy/eso/base` (runbook-server-cluster §4b); the drill installs it in the `eso` stage before any ExternalSecret apply and smoke-checks the fake-provider ExternalSecret |
 | Host tailscaled not version-pinned | follow-up: issue #29 |
 | Apply order lives in `scripts/recovery-drill.sh` instead of a root Kustomization | follow-up: issue #20 |
 | hermes `hermes setup --portal` re-run after PVC recreation | runbook step (section 4, step 3) |

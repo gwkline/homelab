@@ -126,18 +126,38 @@ kubectl apply -k deploy/image-policy/base
 end_stage
 
 # ---------------------------------------------------------------------------
+# External Secrets Operator (issue #38): the pinned install from git
+# (deploy/eso/base) must be ready before any ExternalSecret applies (the
+# tailscale and github-tokens bases below). Pass 1 brings up CRDs, RBAC and
+# Deployments; pass 2 (after the CRDs are Established and the rollout is
+# Ready) applies the fake-provider SecretStore + smoke ExternalSecret, whose
+# Ready condition proves the controller reconciles end to end without real
+# credentials. Idempotent — re-running this stage is the recovery path
+# (deploy/eso/base/README.md).
+stage eso
+kubectl apply --server-side -k deploy/eso/base
+kubectl wait --for=condition=Established \
+  crd/externalsecrets.external-secrets.io crd/secretstores.external-secrets.io \
+  --timeout=180s
+kubectl -n external-secrets rollout status deploy/external-secrets --timeout="$POD_TIMEOUT"
+kubectl -n external-secrets rollout status deploy/external-secrets-webhook --timeout="$POD_TIMEOUT"
+kubectl -n external-secrets rollout status deploy/external-secrets-cert-controller --timeout="$POD_TIMEOUT"
+kubectl apply --server-side -k deploy/eso/base
+kubectl -n external-secrets wait --for=condition=Ready externalsecret/eso-smoke --timeout=120s
+end_stage
+
+# ---------------------------------------------------------------------------
 stage secrets
 kubectl -n agents create secret generic onepassword-service-account \
   --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"
 kubectl -n sandbox create secret generic onepassword-service-account \
   --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"
 kubectl apply -k deploy/github-tokens/base
-if kubectl get crd externalsecrets.external-secrets.io >/dev/null 2>&1; then
-  kubectl -n agents wait --for=condition=Ready externalsecret/github-token --timeout=120s ||
-    echo "WARN: github-token not synced yet (1Password item github-readonly present?)" >&2
-else
-  echo "WARN: External Secrets Operator not installed (issue #38) — github-token stays Pending and private-repo clones fail until it lands" >&2
-fi
+# ESO is guaranteed Ready by the eso stage above (a failed stage exits the
+# drill), so a missing CRD here cannot happen — the wait failing means the
+# 1Password item does not exist or the vault is unreachable.
+kubectl -n agents wait --for=condition=Ready externalsecret/github-token --timeout=120s ||
+  echo "WARN: github-token not synced yet (1Password item github-readonly present?)" >&2
 end_stage
 
 # ---------------------------------------------------------------------------
