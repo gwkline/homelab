@@ -118,6 +118,28 @@ jobs:
         working-directory: apps/panel
         run: npm test
 
+  # Panel list-and-launch e2e (#27): the panel runs inside a disposable kind
+  # cluster as its production ServiceAccount (`panel`) with the mounted
+  # cluster CA, and the suite drives the real HTTP API — /api/state listing
+  # seeded Jobs/CronJobs, POST /api/jobs creating a locked-down Job that
+  # reaches Complete, and 400s for invalid input. TLS trust or RBAC drift
+  # fails loudly with diagnostics. scripts/panel-e2e-smoke.sh reuses the
+  # kind cluster this job creates (name panel-e2e) and cleans up after.
+  panel-e2e:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: panel-e2e
+      - name: Panel list-and-launch e2e against the real Kubernetes API
+        run: ./scripts/panel-e2e-smoke.sh
+
   # Knowledge retrieval eval (#59): the cheap deterministic subset runs on
   # every PR — fully offline, no paid API — and the threshold gate blocks
   # obvious retrieval regressions via non-zero exit code.
@@ -207,7 +229,7 @@ jobs:
 
   build:
     needs:
-      [validate, lint, panel-smoke, panel-test, knowledge-eval, github-app-test]
+      [validate, lint, panel-smoke, panel-test, panel-e2e, knowledge-eval, github-app-test]
     strategy:
       matrix:
         include:

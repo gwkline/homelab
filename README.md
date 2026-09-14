@@ -45,7 +45,7 @@ scripts/new-job.sh my-task 'node /data/repos/homelab/examples/loop-hello.mjs'
 kubectl logs job/my-task -n sandbox -f
 ```
 
-The panel and dispatcher can also launch runs; hermes drives the factory through the governed Executor tools instead of raw Jobs. For fully hands-off runs, apply `deploy/dispatcher/base`: any issue labeled `run-agent` in the watched repo spawns a Job every 15 minutes, no human needed.
+The panel and dispatcher can also launch runs; hermes drives the factory through the governed Executor tools instead of raw Jobs. For fully hands-off runs, apply `deploy/dispatcher/base`: any issue labeled `run-agent` in the watched repo spawns a Job every 15 minutes, no human needed. The panel's list-and-launch behavior is proven end to end against a real cluster by `scripts/panel-e2e-smoke.sh` (see `docs/panel-e2e.md`).
 
 The software factory is also fully unattended: `deploy/factory/base` runs a collector hourly. Apply it once during cluster bring-up; its small reconciler CronJob reapplies the same manifests from `main` every 10 minutes afterward. Every open issue in each repo listed by `FACTORY_REPOS` that has no factory lifecycle label is given `factory/queued`; the orchestrator then produces a tested draft PR one issue at a time. This means factory code and schedules do not silently drift from the cluster.
 
