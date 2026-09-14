@@ -12,6 +12,9 @@
 
 APPROVAL_LABEL="factory/pending-approval"
 APPROVAL_TTL_HOURS="${FACTORY_APPROVAL_TTL_HOURS:-48}"
+# Always set (never merely unset): approval_put tests this under `set -u`,
+# and auto-approval reaches put without a prior find to initialize it.
+APPROVAL_COMMENT_ID="${APPROVAL_COMMENT_ID:-}"
 
 approval_policy() {  # <profile> <operation> -> "required <hours>" | "auto" | "none"
   case "$1:$2" in
