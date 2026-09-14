@@ -41,5 +41,12 @@ export default {
       files: ["apps/knowledge/eval/rank.ts"],
       rules: { "no-bitwise": "off" },
     },
+    {
+      // The ingest/embedding workers (#57) are sequential by design: retries
+      // back off between attempts, the bounded pool drains a cursor, and
+      // chunk upserts must preserve order inside one transaction.
+      files: ["apps/knowledge/src/embedder.ts", "apps/knowledge/src/ingest.ts"],
+      rules: { "no-await-in-loop": "off" },
+    },
   ],
 };
