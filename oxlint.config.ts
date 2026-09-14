@@ -41,5 +41,35 @@ export default {
       files: ["apps/knowledge/eval/rank.ts"],
       rules: { "no-bitwise": "off" },
     },
+    {
+      // Ingest queue tests (#58) drive the state machine step by step —
+      // claim, lease, recover — where sequential awaits ARE the behavior
+      // under test, and simulate hangs with deliberately unsettled Promise
+      // executors. Parallelizing would test a different system.
+      files: ["apps/knowledge-ingest/tests/**"],
+      rules: {
+        "no-await-in-loop": "off",
+        "no-promise-executor-return": "off",
+        "promise/avoid-new": "off",
+        "unicorn/no-await-expression-member": "off",
+      },
+    },
+    {
+      // The ingest worker (#58) processes a claimed batch sequentially on
+      // purpose: each job holds a lease, so concurrent handler execution
+      // would reorder publishes across documents for zero throughput gain
+      // (the parallelism axis is worker count, not in-batch fan-out). The
+      // poll loop is inherently sequential for the same reason.
+      files: ["apps/knowledge-ingest/server/worker.ts"],
+      rules: { "no-await-in-loop": "off" },
+    },
+    {
+      // store.ts (#58) carries the two domain error types
+      // (StoreUnavailableError, SourceNotFoundError) next to the IngestStore
+      // contract they guard — one file per two-line Error subclass would
+      // scatter the contract for no clarity.
+      files: ["apps/knowledge-ingest/server/store.ts"],
+      rules: { "max-classes-per-file": "off" },
+    },
   ],
 };
