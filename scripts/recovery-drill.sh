@@ -147,6 +147,22 @@ kubectl -n external-secrets wait --for=condition=Ready externalsecret/eso-smoke 
 end_stage
 
 # ---------------------------------------------------------------------------
+# CloudNativePG operator (issue #49): the pinned install from git
+# (deploy/cnpg/base) must be Ready before deploy/postgres applies — the
+# Cluster CRDs are part of this bundle, and the admission webhooks fail
+# closed until the controller rollout is serving. One server-side apply
+# carries CRDs, RBAC and the Deployment (CRD ordering contract:
+# deploy/cnpg/README.md). Idempotent — re-running this stage is the
+# recovery path.
+stage cnpg
+kubectl apply --server-side -k deploy/cnpg/base
+kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io \
+  --timeout=180s
+kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager \
+  --timeout="$POD_TIMEOUT"
+end_stage
+
+# ---------------------------------------------------------------------------
 stage secrets
 kubectl -n agents create secret generic onepassword-service-account \
   --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"
