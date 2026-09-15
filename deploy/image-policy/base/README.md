@@ -5,7 +5,7 @@ Sigstore policy-controller verifies, at pod-admission time, that every `ghcr.io/
 ## What enforces what
 
 - `clusterimagepolicy.yaml` — the only trusted authority is the CI workflow identity (`https://github.com/gwkline/homelab/.github/workflows/ci.yaml@refs/heads/main`) verified against public Fulcio + Rekor.
-- `deploy/namespaces.yaml` — `agents` and `sandbox` carry the `policy.sigstore.dev/include: "true"` label: the webhook intercepts only labeled namespaces (API-server-side `namespaceSelector`), so `database`, `tailscale`, and system namespaces are out of scope by construction.
+- `deploy/namespaces` — `agents` and `sandbox` carry the `policy.sigstore.dev/include: "true"` label: the webhook intercepts only labeled namespaces (API-server-side `namespaceSelector`), so `database`, `tailscale`, and system namespaces are out of scope by construction.
 - Third-party images (postgres, grafana, busybox, …) match no policy and are admitted — explicit default-allow (ADR-004 D3). Their guarantee is the digest pin (`tag@sha256`), not a signature.
 - CI (`scripts/check-image-pins.sh`) rejects any homelab image ref that is not an `@sha256` digest — verification binds to digests, never tags.
 
@@ -15,7 +15,7 @@ Applies in `scripts/recovery-drill.sh` stage `image-policy` and [rebuild runbook
 
 ```sh
 # 1. namespaces first — they carry the policy.sigstore.dev/include labels
-kubectl apply -f deploy/namespaces.yaml
+kubectl apply -k deploy/namespaces
 # 2. the controller (its CRDs must exist before the CIP can be applied)
 helm repo add sigstore https://sigstore.github.io/helm-charts
 helm upgrade --install policy-controller sigstore/policy-controller \
