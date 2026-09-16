@@ -184,7 +184,7 @@ except json.JSONDecodeError:
       "options": { "baseURL": "https://openrouter.ai/api/v1" }
     }
   },
-  "model": "openrouter/z-ai/glm-5.3-flash"
+  "model": "openrouter/stealth/union-alpha"
 }
 OCEOF
 fi
