@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: factory-medic
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+    factory.gwkline.io/component: medic
+spec:
+  # Sweep cadence: reviewer runs at :20/:50, medic 10 min later so it acts on
+  # fresh review verdicts. concurrencyPolicy Forbid: one sweep at a time.
+  schedule: "30,00 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  suspend: false
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            factory.gwkline.io/component: medic
+        spec:
+          restartPolicy: Never
+          serviceAccountName: factory-orchestrator
+          automountServiceAccountToken: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: medic-sweep
+              image: ghcr.io/gwkline/homelab/factory/orchestrator@sha256:ac374804875b1c76b830ae9140088a959b26191e85e8c6724082f8fff018532c
+              command: ["/bin/sh", "/orch/run.sh"]
+              env:
+                - name: FACTORY_REPO
+                  value: gwkline/homelab
+                - name: GH_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: github-token, key: token, optional: false }
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits:   { cpu: 200m, memory: 128Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+              volumeMounts:
+                - { name: scripts, mountPath: /orch/medic-dispatch.sh, subPath: medic-dispatch.sh, readOnly: true }
+                - { name: scripts, mountPath: /orch/stalled-sweep.sh, subPath: stalled-sweep.sh, readOnly: true }
+          volumes:
+            - name: scripts
+              configMap:
+                name: factory-medic
+                defaultMode: 0755

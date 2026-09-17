@@ -18,3 +18,5 @@ resources:
   - reviewer-cronjob.yaml
   - reviewer-launchpad-cronjob.yaml
   - reclaimer-cronjob.yaml
+  - medic-cronjob.yaml
+  - medic-cm.yaml
