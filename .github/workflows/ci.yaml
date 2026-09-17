@@ -195,6 +195,11 @@ jobs:
       # bare remote, plus the write-guard and stuck-escalation paths.
       - name: Medic fixture test
         run: sh apps/factory/medic/tests/medic.test.sh
+      # Stalled-PR sweeper (#242): three seeded PRs (green+old, ci-red fresh,
+      # ci-red stale) take distinct correct actions; a stateful gh shim makes
+      # the re-run prove idempotency (no duplicate issues/pings/comments).
+      - name: Sweeper fixture test
+        run: sh apps/factory/reviewer/tests/sweeper.test.sh
       # Factory image single source of truth: run.sh resolves the worker
       # image from the profile ConfigMap (never a second hardcoded digest),
       # the pin helper stamps every copy, and pins agree repo-wide.

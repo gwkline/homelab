@@ -24,5 +24,6 @@ WORKDIR /reviewer
 COPY apps/factory/reviewer/run-reviewer.sh /reviewer/run-reviewer.sh
 COPY apps/factory/medic/medic-lib.sh /reviewer/medic-lib.sh
 COPY apps/factory/medic/run-medic.sh /reviewer/run-medic.sh
-RUN chmod +x /reviewer/run-reviewer.sh /reviewer/run-medic.sh
+COPY apps/factory/reviewer/run-sweeper.sh /reviewer/run-sweeper.sh
+RUN chmod +x /reviewer/run-reviewer.sh /reviewer/run-medic.sh /reviewer/run-sweeper.sh
 ENTRYPOINT ["/reviewer/run-reviewer.sh"]
