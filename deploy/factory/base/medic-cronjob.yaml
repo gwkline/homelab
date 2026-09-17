@@ -1,0 +1,60 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: factory-medic
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+    factory.gwkline.io/component: medic
+spec:
+  # Scheduled medic sweep (#239): detect ci-red factory PRs and queue one
+  # repair per tick. Runs in the reviewer image (gh + jq + git + python3, no
+  # k8s API) right after the reviewer's 35,55 slots so it sees fresh verdicts.
+  schedule: "41 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  suspend: false
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      activeDeadlineSeconds: 900
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            factory.gwkline.io/component: medic
+        spec:
+          restartPolicy: Never
+          serviceAccountName: factory-reviewer # same least-privilege SA: gh API only, no k8s
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: medic
+              image: ghcr.io/gwkline/homelab/factory/reviewer@sha256:35e1d611b974d4a141583ebee005c3aaa908eac931fe837df314314b3e7d0edb
+              imagePullPolicy: Always
+              env:
+                - name: FACTORY_REPO
+                  value: gwkline/homelab
+                - name: GH_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      { name: github-token, key: token, optional: false }
+                - name: FACTORY_MEDIC_MAX_ATTEMPTS
+                  value: "3"
+                - name: FACTORY_MEDIC_MAX_CONCURRENT
+                  value: "1"
+              resources:
+                requests: { cpu: 100m, memory: 128Mi }
+                limits: { cpu: 500m, memory: 512Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+                readOnlyRootFilesystem: true
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - { name: tmp, emptyDir: {} }

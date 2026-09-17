@@ -12,6 +12,8 @@ resources:
   - profile-code-pr.yaml
   - profile-security.yaml
   - profile-reviewer.yaml
+  - profile-medic.yaml
+  - medic-cronjob.yaml
   - orchestrator-cronjob.yaml
   - orchestrator-launchpad-cronjob.yaml
   - security-cronjob.yaml

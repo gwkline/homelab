@@ -1,0 +1,50 @@
+# Factory medic profile (#239): constrained execution template, same
+# guardrails as code-pr — pinned image, no-k8s SA, netpol, TTL — with a
+# 20-minute deadline (CI fixes are small) and the worker env allowlist.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: factory-profile-medic
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+    factory.gwkline.io/profile: medic
+data:
+  profile.json: |
+    {
+      "name": "medic",
+      "version": 1,
+      "image": "ghcr.io/gwkline/homelab/factory/worker@sha256:00967767d31057a386c38f3583170e97cf32e8dc3e4f13374b10f19ee8e54608",
+      "serviceAccount": "factory-worker",
+      "activeDeadlineSeconds": 1200,
+      "backoffLimit": 0,
+      "ttlSecondsAfterFinished": 3600,
+      "resources": { "requests": {"cpu": "1", "memory": "1Gi"},
+                     "limits":   {  "cpu": "4",     "memory": "12Gi"} },
+      "envAllowlist": ["WORKER_CMD", "VERIFY_COMMAND"],
+      "netpolName": "allow-factory-medic"
+    }
+---
+# Medic worker netpol: identical egress shape to code-pr (github + registries
+# + DNS) — the repair agent needs exactly what the authoring agent needed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-factory-medic
+  namespace: sandbox
+spec:
+  podSelector:
+    matchLabels:
+      factory.gwkline.io/profile: medic
+  policyTypes: [Ingress, Egress]
+  ingress: [] # nothing may connect TO a medic worker
+  egress:
+    - to: # GitHub + git clones over HTTPS
+        - ipBlock: { cidr: 140.82.112.0/20 } # github.com
+        - ipBlock: { cidr: 185.199.108.0/22 } # raw.githubusercontent
+        - ipBlock: { cidr: 185.199.108.0/22 } # objects.githubusercontent (fastly)
+    - to: # container registries (npm, ghcr, crates.io)
+        - ipBlock: { cidr: 104.16.0.0/12 }
+        - ipBlock: { cidr: 18.214.0.0/16 } # index.crates.io
+        - ipBlock: { cidr: 108.138.128.0/17 } # static.crates.io CDN
+    - ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
