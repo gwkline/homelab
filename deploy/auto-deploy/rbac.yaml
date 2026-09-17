@@ -1,7 +1,10 @@
 # Auto-deploy watcher: applies the git-pinned workload manifests on an
-# interval (issue #35). Namespaced to `agents` — the watchlist targets live
-# there, and applying manifests is a strictly smaller grant than the old
-# cluster-wide rollout-restart role.
+# interval (issue #35). Namespaced grants only — agents for the panel/
+# t3code/hermes workloads, sandbox for the factory CronJobs (issue #240) —
+# applying manifests is a strictly smaller grant than the old cluster-wide
+# rollout-restart role. Namespaces are declared per resource (no
+# kustomization-level namespace transformer): the sandbox Role must stay
+# in sandbox while the watcher's own resources stay in agents.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -29,6 +32,48 @@ kind: RoleBinding
 metadata:
   name: auto-deploy
   namespace: agents
+  labels:
+    app.kubernetes.io/part-of: homelab
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: auto-deploy
+subjects:
+  - kind: ServiceAccount
+    name: auto-deploy
+    namespace: agents
+---
+# Factory CronJobs (issue #240) live in sandbox; each watchlisted manifest
+# is multi-document — the CronJob plus its companion SA/Role/RoleBinding
+# (and the reconciler's NetworkPolicies) — so apply needs those resources
+# too. Mirrors the grant the factory-reconciler already holds for the same
+# files. `patch` on cronjobs backs `kubectl rollout restart` on image bumps.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: auto-deploy
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+rules:
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: auto-deploy
+  namespace: sandbox
   labels:
     app.kubernetes.io/part-of: homelab
 roleRef:

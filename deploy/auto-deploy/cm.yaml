@@ -7,15 +7,31 @@ metadata:
     app.kubernetes.io/part-of: homelab
 data:
   # One target per line: kind,name,namespace,manifest
-  # `manifest` is the repo path of the single-document workload manifest the
-  # cluster should run. Manifests pin images to immutable digests (issue #35),
-  # so git is the only source of what runs: Renovate opens a digest-bump PR,
-  # CI signs the image, and applying the merged manifest is the rollout.
+  # `manifest` is the repo path of the workload manifest the cluster should
+  # run. Manifests pin images to immutable digests (issue #35), so git is the
+  # only source of what runs: Renovate opens a digest-bump PR, CI signs the
+  # image, and applying the merged manifest is the rollout. Since issue #240
+  # the list also covers the factory CronJobs (sandbox) — a merged digest
+  # bump now ships to the factory on the next watcher pass instead of
+  # waiting for the next manual redeploy.
   watchlist: |
     # kind,name,namespace,manifest
     statefulset,t3code,agents,deploy/t3code/base/statefulset.yaml
     statefulset,hermes,agents,deploy/hermes/base/statefulset.yaml
     deployment,panel,agents,deploy/panel/base/deployment.yaml
+    # Factory CronJobs (#240). Their manifests are multi-document — the
+    # CronJob plus its companion SA/Role/RoleBinding/NetworkPolicy docs —
+    # and a CronJob rolls by apply + rollout restart: the restartedAt
+    # annotation on the job template makes the next scheduled Job pod pull
+    # the fresh image.
+    cronjob,factory-orchestrator,sandbox,deploy/factory/base/orchestrator-cronjob.yaml
+    cronjob,factory-orchestrator-launchpad,sandbox,deploy/factory/base/orchestrator-launchpad-cronjob.yaml
+    cronjob,factory-reviewer,sandbox,deploy/factory/base/reviewer-cronjob.yaml
+    cronjob,factory-reviewer-launchpad,sandbox,deploy/factory/base/reviewer-launchpad-cronjob.yaml
+    cronjob,factory-security,sandbox,deploy/factory/base/security-cronjob.yaml
+    cronjob,factory-collector,sandbox,deploy/factory/base/collector-cronjob.yaml
+    cronjob,factory-reclaimer,sandbox,deploy/factory/base/reclaimer-cronjob.yaml
+    cronjob,factory-reconciler,sandbox,deploy/factory/base/reconciler-cronjob.yaml
   watch.sh: |
     #!/bin/sh
     # Declarative image sync for the agents namespace (issue #35). The old
@@ -27,15 +43,25 @@ data:
     # and `kubectl apply` each watchlisted workload manifest. Unchanged
     # manifests are no-ops; a merged digest bump rolls out on the next pass.
     # Mirrors the factory reconciler's clone+apply pattern, scoped to the
-    # workloads that used to ride :latest.
+    # workloads that used to ride :latest plus the factory CronJobs (#240).
+    # CronJobs have no rolling controller, so a changed CronJob is followed
+    # by `kubectl rollout restart` (supported on cronjobs.batch/v1): the
+    # restartedAt annotation on the job template makes the next scheduled
+    # Job pod pull the fresh image. RESTART_COOLDOWN bounds that to one
+    # restart per target per window, so even a flapping diff cannot become
+    # a restart-per-tick storm.
     set -u
 
     REPO="${REPO:-gwkline/homelab}"
     WORK="${WORK:-/tmp/homelab}"
     WATCHLIST="${WATCHLIST:-/config/watchlist}"
     INTERVAL="${INTERVAL:-300}"
+    RESTART_COOLDOWN="${RESTART_COOLDOWN:-3600}"
+    RESTART_STATE="${RESTART_STATE:-/tmp/auto-deploy-restarts}"
 
     log() { printf '%s %s\n' "$(date -u +%H:%M:%S)" "$*"; }
+
+    mkdir -p "$RESTART_STATE" 2>/dev/null
 
     # Fresh shallow clone of main. Uses the repo's read PAT when mounted
     # (ExternalSecret github-token); falls back to anonymous for public repos.
@@ -54,6 +80,41 @@ data:
       git clone --depth 1 -q "https://github.com/${REPO}.git" "$WORK" 2>/dev/null
     }
 
+    # Restart a CronJob whose apply just changed it. Gated two ways: restart
+    # only fires when `kubectl apply` reported the CronJob itself as
+    # configured/created (steady-state ticks report unchanged and restart
+    # nothing), and at most once per RESTART_COOLDOWN per target.
+    restart_cronjob() {
+      name=$1
+      ns=$2
+      stamp="${RESTART_STATE}/${ns}_${name}"
+      now=$(date +%s)
+      last=0
+      if [ -f "$stamp" ]; then
+        last=$(cat "$stamp" 2>/dev/null)
+        case "$last" in '' | *[!0-9]*) last=0 ;; esac
+      fi
+      if [ $((now - last)) -lt "$RESTART_COOLDOWN" ]; then
+        log "skip restart cronjob/${name} (cooldown)"
+        return 0
+      fi
+      if kubectl rollout restart "cronjob/${name}" -n "$ns" >/dev/null 2>&1; then
+        log "restarted cronjob/${name} (next scheduled Job pulls the new image)"
+        printf '%s\n' "$now" >"$stamp"
+      else
+        log "WARN: rollout restart failed for cronjob/${name} (RBAC/apiserver?)"
+      fi
+    }
+
+    # Audit trail: the image the workload now runs (digest = audit trail).
+    # CronJobs carry it under spec.jobTemplate.
+    image_jsonpath() {
+      case "$1" in
+        cronjob) printf '%s' '{.spec.jobTemplate.spec.template.spec.containers[0].image}' ;;
+        *) printf '%s' '{.spec.template.spec.containers[0].image}' ;;
+      esac
+    }
+
     while :; do
       if ! clone_repo; then
         log "WARN: clone ${REPO} failed (private repo without github-token?)"
@@ -65,13 +126,22 @@ data:
             log "WARN: ${kind}/${name} manifest missing from clone: ${manifest}"
             continue
           fi
-          if kubectl apply -f "$path" >/dev/null 2>&1; then
-            # Surface the image the workload now runs (digest = audit trail).
-            kubectl get "$kind" "$name" -n "$ns" \
-              -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null \
-              | while IFS= read -r img; do
-                  log "synced ${kind}/${name} -> ${img}"
-                done
+          out=$(kubectl apply -f "$path" 2>&1) && rc=0 || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            if [ "$kind" = cronjob ]; then
+              case "$out" in
+                *"cronjob.batch/${name} configured"* | *"cronjob.batch/${name} created"*)
+                  restart_cronjob "$name" "$ns"
+                  ;;
+              esac
+            fi
+            # jsonpath emits no trailing newline; capture and log directly
+            # (a `while read` pipe would swallow the unterminated line).
+            img=$(kubectl get "$kind" "$name" -n "$ns" \
+              -o "jsonpath=$(image_jsonpath "$kind")" 2>/dev/null)
+            if [ -n "$img" ]; then
+              log "synced ${kind}/${name} -> ${img}"
+            fi
           else
             log "WARN: apply failed for ${manifest} (RBAC/apiserver?)"
           fi

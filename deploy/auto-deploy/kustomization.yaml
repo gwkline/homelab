@@ -1,7 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: agents
 
+# No kustomization-level `namespace:` transformer: every resource declares
+# its namespace explicitly — the watcher's own resources in agents, the
+# factory-CronJob Role/RoleBinding (issue #240) in sandbox. A transformer
+# here would rewrite both to a single namespace.
 labels:
   - pairs:
       app.kubernetes.io/part-of: homelab
