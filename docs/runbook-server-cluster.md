@@ -166,6 +166,12 @@ kubectl apply -k deploy/headlamp/base
 kubectl apply -k deploy/cloudbeaver/base
 kubectl apply -k deploy/loki/base
 
+# Weekly node-cleanup CronJob (#252): sweeps Evicted pods + Succeeded pods
+# older than 24h across namespaces. The containerd image prune half of
+# scripts/node-cleanup.sh needs the node itself — schedule the script with a
+# crontab there too (see deploy/node-cleanup/base/README.md).
+kubectl apply -k deploy/node-cleanup/base
+
 # CloudNativePG operator (issue #49) — explicit prerequisite for the database
 # below: CRDs + RBAC + controller in one idempotent server-side apply. Wait
 # for the CRD and the rollout before any Cluster resource applies (the

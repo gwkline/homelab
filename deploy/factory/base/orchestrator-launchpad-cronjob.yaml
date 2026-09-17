@@ -15,6 +15,9 @@ spec:
   schedule: "7,17,27,37,47,57 * * * *" # every 10 min, offset from homelab (:00,:10,…)
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
+  # Same TTL as the homelab orchestrator (#252): without it every finished
+  # job pod parks on the node disk until the next manual sweep.
+  ttlSecondsAfterFinished: 86400
   jobTemplate:
     spec:
       activeDeadlineSeconds: 3900 # 65 min: covers 3600s worker + publish overhead

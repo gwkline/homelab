@@ -1,0 +1,70 @@
+# Weekly pod-debris sweep — the in-cluster half of scripts/node-cleanup.sh
+# (issue #252). Deletes Evicted pods (any age) and Succeeded pods older than
+# 24h across all namespaces, so eviction storms like #252 (49 Evicted pods
+# in `agents` in one day) never pile up silently again. Image pruning needs
+# the node and stays in the script — see README.md.
+#
+# Runs in `agents` (kubectl-only, baseline PSA safe) with the loop-agent
+# image already pinned for chaos-monkey — no new image, no hostPath, no
+# privilege. The cluster-wide pod-delete RBAC it needs lives in rbac.yaml.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: node-cleanup
+spec:
+  # Sunday 06:23 UTC: after the nightly backup window (03:30 + up to 1h),
+  # before the 07:00 chaos tick, and off every other CronJob's minute.
+  schedule: "23 6 * * 0"
+  concurrencyPolicy: Forbid
+  # A cleanup job must not accumulate debris itself: one success kept, pods
+  # TTL'd after a day.
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  ttlSecondsAfterFinished: 86400
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app: node-cleanup
+        spec:
+          serviceAccountName: node-cleanup
+          # Needs the Kubernetes API by design (that IS the job), scoped by
+          # rbac.yaml to pod get/list/delete across namespaces.
+          automountServiceAccountToken: true
+          restartPolicy: Never
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: cleanup
+              image: ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70
+              # loop-agent ships kubectl + coreutils (GNU date) — same pin
+              # chaos-monkey uses, so the signature already passes the
+              # sandbox/agents image-verification policy.
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              command: ["sh", "/etc/node-cleanup/cleanup.sh"]
+              env:
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: cleanup-script
+                  mountPath: /etc/node-cleanup
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: 128Mi
+                limits:
+                  memory: 256Mi
+          volumes:
+            - name: cleanup-script
+              configMap:
+                name: node-cleanup-script

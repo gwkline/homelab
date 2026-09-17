@@ -15,6 +15,9 @@ spec:
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
+  # Same TTL as the homelab reviewer (#252): without it every finished job
+  # pod parks on the node disk until the next manual sweep.
+  ttlSecondsAfterFinished: 86400
   suspend: false
   jobTemplate:
     spec:
