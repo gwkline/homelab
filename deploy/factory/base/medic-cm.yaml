@@ -12,8 +12,3 @@ data:
     # this key exists so the CronJob mounts resolve before first apply.
     #!/bin/sh
     echo "medic dispatch not generated" >&2; exit 1
-  stalled-sweep.sh: |
-    # Placeholder - kustomize configMapGenerator hashes
-    # apps/factory/medic/stalled-sweep.sh at build time.
-    #!/bin/sh
-    echo "stalled sweep not generated" >&2; exit 1

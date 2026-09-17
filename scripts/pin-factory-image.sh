@@ -45,6 +45,7 @@ locations() {
     factory/orchestrator)
       printf '%s\n' deploy/factory/base/orchestrator-cronjob.yaml
       printf '%s\n' deploy/factory/base/orchestrator-launchpad-cronjob.yaml
+      printf '%s\n' deploy/factory/base/medic-cronjob.yaml
       printf '%s\n' deploy/factory/base/reclaimer-cronjob.yaml
       ;;
     factory/collector)
