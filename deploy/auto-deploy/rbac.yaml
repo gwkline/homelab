@@ -23,6 +23,11 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Factory CronJobs (#240): the sandbox watchlist entries need cronjob apply
+  # so merged factory-image bumps reach the cluster autonomously.
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -35,6 +40,38 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: auto-deploy
+subjects:
+  - kind: ServiceAccount
+    name: auto-deploy
+    namespace: agents
+
+---
+# Sandbox-scoped twin role (#240): the factory CronJobs the watchlist applies
+# live in `sandbox`. Grant is limited to cronjobs get/list/watch/apply in that
+# namespace — no pods/exec, no secrets, no other namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: auto-deploy-sandbox
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+rules:
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: auto-deploy-sandbox
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: auto-deploy-sandbox
 subjects:
   - kind: ServiceAccount
     name: auto-deploy

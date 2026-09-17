@@ -16,6 +16,18 @@ data:
     statefulset,t3code,agents,deploy/t3code/base/statefulset.yaml
     statefulset,hermes,agents,deploy/hermes/base/statefulset.yaml
     deployment,panel,agents,deploy/panel/base/deployment.yaml
+    # Factory CronJobs (#240): the factory fixes the factory — a merged
+    # factory-image bump must reach the cluster without a manual redeploy.
+    # CronJobs apply like any workload; the next scheduled Job pod pulls the
+    # pinned digest. Reconciler/reclaimer also ride their own images.
+    cronjob,factory-orchestrator,sandbox,deploy/factory/base/orchestrator-cronjob.yaml
+    cronjob,factory-orchestrator-launchpad,sandbox,deploy/factory/base/orchestrator-launchpad-cronjob.yaml
+    cronjob,factory-reviewer,sandbox,deploy/factory/base/reviewer-cronjob.yaml
+    cronjob,factory-reviewer-launchpad,sandbox,deploy/factory/base/reviewer-launchpad-cronjob.yaml
+    cronjob,factory-security,sandbox,deploy/factory/base/security-cronjob.yaml
+    cronjob,factory-collector,sandbox,deploy/factory/base/collector-cronjob.yaml
+    cronjob,factory-reclaimer,sandbox,deploy/factory/base/reclaimer-cronjob.yaml
+    cronjob,factory-reconciler,sandbox,deploy/factory/base/reconciler-cronjob.yaml
   watch.sh: |
     #!/bin/sh
     # Declarative image sync for the agents namespace (issue #35). The old
