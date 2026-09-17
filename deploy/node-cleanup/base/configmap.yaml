@@ -1,0 +1,61 @@
+# The pod-debris half of scripts/node-cleanup.sh, inlined because kustomize's
+# load restrictor cannot reach outside this directory (#252). Keep the two in
+# sync: same selectors, same 24h cutoff. The containerd image prune is
+# deliberately NOT done here — it needs the node's containerd socket, which
+# is node-root-equivalent and would break the documented security model (see
+# README.md); it stays a node-side step of scripts/node-cleanup.sh.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-cleanup-script
+data:
+  cleanup.sh: |
+    #!/bin/sh
+    set -eu
+
+    log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+
+    delete_pod() {
+      # --wait=false: never block on graceful termination of debris;
+      # --ignore-not-found: the pod may vanish between listing and deleting.
+      kubectl delete pod "$2" --namespace "$1" --wait=false --ignore-not-found >/dev/null
+      log "deleted pod $1/$2"
+    }
+
+    # Evicted pods are debris at any age: the kubelet already recorded the
+    # eviction as an event (streamed to Loki by alloy), the containers are
+    # gone, and anything that should keep running is recreated by its
+    # controller (StatefulSet, Deployment, DaemonSet).
+    log "deleting Evicted pods (all namespaces, any age)"
+    evicted=$(kubectl get pods -A \
+      -o jsonpath='{range .items[?(@.status.reason=="Evicted")]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}')
+    if [ -n "$evicted" ]; then
+      printf '%s\n' "$evicted" | while IFS=" " read -r ns name; do
+        [ -n "$ns" ] || continue
+        delete_pod "$ns" "$name"
+      done
+    else
+      log "no Evicted pods found"
+    fi
+
+    # Succeeded pods older than 24h: ttlSecondsAfterFinished covers the
+    # CronJobs that set it; this sweeps stragglers. Nothing Running and no
+    # Failed pod other than Evicted is ever touched.
+    log "deleting Succeeded pods older than 24h (all namespaces)"
+    cutoff=$(date -u -d "24 hours ago" +%s)
+    completed=$(kubectl get pods -A --field-selector=status.phase=Succeeded \
+      -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,CREATED:.metadata.creationTimestamp' \
+      --no-headers)
+    if [ -n "$completed" ]; then
+      printf '%s\n' "$completed" | while IFS=" " read -r ns name created; do
+        [ -n "$ns" ] || continue
+        created_epoch=$(date -u -d "$created" +%s)
+        if [ "$created_epoch" -lt "$cutoff" ]; then
+          delete_pod "$ns" "$name"
+        fi
+      done
+    else
+      log "no Succeeded pods found"
+    fi
+
+    log "pod debris sweep done"
