@@ -17,4 +17,5 @@ resources:
   - security-cronjob.yaml
   - reviewer-cronjob.yaml
   - reviewer-launchpad-cronjob.yaml
+  - sweeper-cronjob.yaml
   - reclaimer-cronjob.yaml

@@ -88,6 +88,30 @@ CI red or CHANGES_REQUESTED                 → stays, failure-style nudge
 
 All state mutations are `PATCH /repos/{owner}/{repo}/issues/comments` on the marker comment. Rate limit is a non-issue at our volume (<30 calls per run).
 
+### Stalled-PR sweeper (#242)
+
+The `factory-sweeper` CronJob (hourly, lives in the reviewer image) keeps factory PRs from stranding in ci-red. It never closes or merges — the human stays the merge gate. Decision per open factory PR (head branch `factory/issue-<N>/…`, drafts skipped):
+
+```
+green + awaiting human, age < 7d              → no action
+green + awaiting human, age ≥ 7d              → one review-request ping
+                                                (idempotent: the review request itself is the state)
+red, went red < SWEEP_RED_GRACE_H (24h) ago   → leave for the medic (#239); logged only
+red, stale + medic has retries left           → leave for the medic
+red, stale + retries ≥ SWEEP_MEDIC_MAX_RETRIES (4),
+  or no retry markers at all, or the linked
+  issue is factory/stuck                      → file ONE factory/queued fix issue
+main > SWEEP_DRIFT_COMMITS (50) ahead of base → idempotent rebase warning comment
+```
+
+The fix issue references the stalled PR, carries the failing-check summary and base-drift note, and re-enters the normal issue→PR loop. Sweep state is derived, never stored:
+
+- `<!-- factory:sweep:filed:<pr> -->` marker comment on the PR + a `search/issues` backstop on the fix-issue body → no duplicate filings on re-sweeps.
+- `<!-- factory:sweep:drift:<pr> -->` comment is edited in place, never duplicated.
+- `<!-- factory:medic:retry:<i> -->` comments (the medic's contract, #239) are counted; the stale-red path only fires when they are exhausted or absent.
+
+Re-arm a sweep by deleting the `factory:sweep:filed` comment on the PR. Knobs: `SWEEP_PING_AFTER_H` (168), `SWEEP_PING_REVIEWER` (gwkline), `SWEEP_RED_GRACE_H` (24), `SWEEP_MEDIC_MAX_RETRIES` (4), `SWEEP_DRIFT_COMMITS` (50), `FACTORY_SWEEP_DRY_RUN`.
+
 ### Artifacts
 
 - **Patch**: pushed as a real git branch (`factory/<n>-<label>/...`) — survives forever, reviewable, no storage system needed.

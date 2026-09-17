@@ -49,6 +49,8 @@ The panel and dispatcher can also launch runs; hermes drives the factory through
 
 The software factory is also fully unattended: `deploy/factory/base` runs a collector hourly. Apply it once during cluster bring-up; its small reconciler CronJob reapplies the same manifests from `main` every 10 minutes afterward. Every open issue in each repo listed by `FACTORY_REPOS` that has no factory lifecycle label is given `factory/queued`; the orchestrator then produces a tested draft PR one issue at a time. This means factory code and schedules do not silently drift from the cluster.
 
+Stranded PRs are swept too: an hourly `factory-sweeper` CronJob converts stale ci-red factory PRs into `factory/queued` fix issues once the medic has given up, pings green PRs sitting past 7d exactly once, and warns on base drift (>50 commits). It never closes or merges anything — the human merge gate stays. Details and marker contracts: `docs/factory-v1-github-ledger.md` (Stalled-PR sweeper).
+
 Loops can report back into GitHub (PR comments, issue updates) via the `gh` CLI already in the image. Write access uses a **separate**, write-scoped 1Password item (`github-writer`, Contents+PR write on target repos only) synced into `sandbox/github-token-writer` by the same ExternalSecrets; if the item is absent, write reporting stays off and read-only jobs are unaffected (all mounts are optional). See `deploy/github-tokens/base/README.md`.
 
 ## Layout

@@ -40,6 +40,7 @@ locations() {
     factory/reviewer)
       printf '%s\n' deploy/factory/base/reviewer-cronjob.yaml
       printf '%s\n' deploy/factory/base/reviewer-launchpad-cronjob.yaml
+      printf '%s\n' deploy/factory/base/sweeper-cronjob.yaml
       printf '%s\n' deploy/factory/base/profile-reviewer.yaml
       ;;
     factory/orchestrator)
