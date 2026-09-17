@@ -44,7 +44,7 @@ echo "ok: orchestrator Role scopes profile ConfigMap reads"
 FIX="$(mktemp -d)"
 trap 'rm -rf "$FIX"' EXIT
 mkdir -p "$FIX/deploy/factory/base"
-for f in reviewer-cronjob.yaml reviewer-launchpad-cronjob.yaml profile-reviewer.yaml; do
+for f in reviewer-cronjob.yaml reviewer-launchpad-cronjob.yaml sweeper-cronjob.yaml profile-reviewer.yaml; do
   printf 'image: ghcr.io/gwkline/homelab/factory/reviewer@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' \
     > "$FIX/deploy/factory/base/$f"
 done
@@ -56,7 +56,7 @@ NEW_DIGEST="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   sed 's|deploy/factory/base/|'"$FIX"'/deploy/factory/base/|g' "$REPO_ROOT/$PIN_HELPER" > "$FIX/pin.sh"
   sh "$FIX/pin.sh" factory/reviewer "$NEW_DIGEST" >/dev/null
 )
-for f in reviewer-cronjob.yaml reviewer-launchpad-cronjob.yaml profile-reviewer.yaml; do
+for f in reviewer-cronjob.yaml reviewer-launchpad-cronjob.yaml sweeper-cronjob.yaml profile-reviewer.yaml; do
   grep -q "factory/reviewer@sha256:${NEW_DIGEST}" "$FIX/deploy/factory/base/$f" || {
     echo "FAIL: pin helper did not stamp $f"
     exit 1
