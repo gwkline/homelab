@@ -104,6 +104,13 @@ while IFS= read -r PR; do
       echo "[medic] issue #${LINKED_ISSUE} already in-progress — skipping (one repair at a time)"
       continue
       ;;
+    *,factory/queued,*)
+      # This sweep (or the orchestrator) already queued the issue and the
+      # orchestrator has not flipped it to in-progress yet. Re-dispatching
+      # would double-book the repair — wait for the label handoff.
+      echo "[medic] issue #${LINKED_ISSUE} already factory/queued — waiting for the orchestrator handoff"
+      continue
+      ;;
     *,${STUCK_LABEL},*)
       echo "[medic] issue #${LINKED_ISSUE} is ${STUCK_LABEL} — a human owns it now"
       continue

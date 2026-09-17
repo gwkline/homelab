@@ -24,7 +24,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 
 GH_STATE="${WORK}/gh-state"
-mkdir -p "${GH_STATE}/labels/6"
+mkdir -p "${GH_STATE}/labels/6/factory"
 export GH_STATE
 
 # ---- fixture git remote: factory/issue-6/code-pr with a broken shell file ----
@@ -176,6 +176,27 @@ cat > "${WORK}/shim/gh" <<'SHIM'
 #   pr-123-comments.json      served as PR #123's comment list
 #   stuck-log                 appended: escalation writes
 set -u
+
+# Real gh applies --jq on the API response. The mock returns canned bodies, so
+# split --jq (and its filter) out of "$*", serve the canned body, then apply
+# the filter with the shimmed jq — otherwise callers relying on --jq see raw
+# JSON and label guards never match.
+JQ_FILTER=""
+ARGS=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--jq" ]; then
+    JQ_FILTER="$a"
+  else
+    case "$a" in
+      --jq) ;;
+      *) ARGS="$ARGS $a" ;;
+    esac
+  fi
+  prev="$a"
+done
+set -- $ARGS
+
 case "$*" in
   *"pulls?state=open"*)
     printf '[%s]' "$(cat "$GH_STATE/prs.json")" ;;
@@ -190,7 +211,7 @@ case "$*" in
   *"pulls/123.diff"*)
     printf 'diff --git a/src/broken.sh b/src/broken.sh\n--- a/src/broken.sh\n+++ b/src/broken.sh\n@@ -1 +1 @@\n-echo (ok\n+echo ok\n' ;;
   *"issues/123/comments"*)
-    if [ "${1:-}" = "-X" ] && [ "${2:-}" = "POST" ]; then
+    if [ "${2:-}" = "-X" ] && [ "${3:-}" = "POST" ]; then
       for a in "$@"; do
         case "$a" in body=*) printf '%s\n' "${a#body=}" >> "$GH_STATE/briefs" ;; esac
       done
@@ -199,7 +220,7 @@ case "$*" in
       cat "$GH_STATE/pr-123-comments.json"
     fi ;;
   *"issues/6/comments"*)
-    if [ "${1:-}" = "-X" ] && [ "${2:-}" = "POST" ]; then
+    if [ "${2:-}" = "-X" ] && [ "${3:-}" = "POST" ]; then
       for a in "$@"; do
         case "$a" in body=*) printf '%s\n' "${a#body=}" >> "$GH_STATE/issue-comments" ;; esac
       done
@@ -210,20 +231,30 @@ case "$*" in
   *"issues/"*"/labels"*)
     # label add/remove: track in the labels dir; the issue number is in the URL
     NUM="$(printf '%s' "$*" | sed -n 's|.*/issues/\([0-9]*\)/labels.*|\1|p')"
-    if [ "${1:-}" = "-X" ] && [ "${2:-}" = "POST" ]; then
+    if [ "${2:-}" = "-X" ] && [ "${3:-}" = "POST" ]; then
       for a in "$@"; do
         case "$a" in labels[]=*) mkdir -p "$GH_STATE/labels/${NUM}"; touch "$GH_STATE/labels/${NUM}/${a#labels[]=}" ;; esac
       done
     fi
     echo '{}' ;;
+  *"issues/6"*)
+    # issue 6 view: labels
+    LBL=""
+    for f in "$GH_STATE/labels/6"/*/* "$GH_STATE/labels/6"/*; do
+      [ -f "$f" ] || continue
+      LBL="$LBL{\"name\":\"$(basename "$f")\"},"
+    done
+    echo "{\"number\":6,\"title\":\"fixture issue\",\"labels\":[$(printf '%s' "${LBL%,}")]}" ;;
   *"issues/"*|*"issue edit"*)
-    # --add-label / --remove-label form
+    # --add-label / --remove-label form. The issue number arrives either in
+    # a URL (.../issues/6) or as the bare operand of `gh issue edit 6`.
     NUM="$(printf '%s' "$*" | sed -n 's|.*/issues/\([0-9]*\)$|\1|p')"
+    [ -n "$NUM" ] || NUM="$(printf '%s' "$*" | sed -n 's|.*issue edit \([0-9]*\).*|\1|p')"
     case "$*" in
       *--add-label*)
         for a in "$@"; do
           case "$a" in
-            factory/*) mkdir -p "$GH_STATE/labels/${NUM}"; touch "$GH_STATE/labels/${NUM}/$a" ;;
+            factory/*) mkdir -p "$GH_STATE/labels/${NUM}/$(dirname "$a")"; touch "$GH_STATE/labels/${NUM}/$a" ;;
           esac
         done ;;
       *--remove-label*)
@@ -238,14 +269,6 @@ case "$*" in
     ls "$GH_STATE/labels" 2>/dev/null | while IFS= read -r d; do
       [ -f "$GH_STATE/labels/$d/$LBL" ] && echo "$d"
     done ;;
-  *"issues/6"*)
-    # issue 6 view: labels
-    LBL=""
-    for f in "$GH_STATE/labels/6"/*; do
-      [ -f "$f" ] || continue
-      LBL="$LBL{\"name\":\"$(basename "$f")\"},"
-    done
-    echo "{\"number\":6,\"title\":\"fixture issue\",\"labels\":[$(printf '%s' "${LBL%,}")]}" ;;
   *"issue comment"*)
     for a in "$@"; do
       case "$a" in -b*|--body*) BODY="${a#-b}"; BODY="${BODY#--body}"; printf '%s\n' "$BODY" >> "$GH_STATE/issue-comments" ;; esac
@@ -258,6 +281,10 @@ case "$*" in
   *)
     echo '{}' ;;
 esac
+
+if [ -n "$JQ_FILTER" ]; then
+  jq "$JQ_FILTER" 2>/dev/null || true
+fi
 SHIM
 chmod +x "${WORK}/shim/gh"
 
@@ -284,7 +311,7 @@ grep -q "Never open a PR, never push to main, never force-push" "${GH_STATE}/bri
 grep -q "factory/issue-6/code-pr" "${GH_STATE}/briefs" || fail "brief missing the branch (push target)"
 BRIEFS=$(grep -c "Medic brief" "${GH_STATE}/briefs" || true)
 [ "${BRIEFS}" = "1" ] || fail "expected 1 brief, got ${BRIEFS}"
-grep -q "attempt 1/3" "${OUT}" || fail "sweep did not report the attempt counter"
+echo "${OUT}" | grep -q "attempt 1/3" || fail "sweep did not report the attempt counter"
 
 # A second sweep while nothing is in flight would double-queue — but the
 # one-PR-per-tick bound is enforced by the sweep's own break; the orchestrator
