@@ -183,8 +183,6 @@ export const api = (cfg: K8sConfig) => ({
     k8sFetch(cfg, "GET", `/apis/batch/v1/namespaces/${NS}/cronjobs`),
   listJobs: (): Promise<{ items?: K8sObject[] }> =>
     k8sFetch(cfg, "GET", `/apis/batch/v1/namespaces/${NS}/jobs`),
-  listNamespaces: (): Promise<{ items?: K8sObject[] }> =>
-    k8sFetch(cfg, "GET", `/api/v1/namespaces`),
   listNodes: (): Promise<{ items?: K8sObject[] }> =>
     k8sFetch(cfg, "GET", `/api/v1/nodes`),
   listPodsAll: (): Promise<{ items?: K8sObject[] }> =>

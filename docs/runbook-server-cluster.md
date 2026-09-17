@@ -249,7 +249,7 @@ kubectl get svc cloudbeaver -n agents           # tailnet hostname
 # with the role from Secret cloudbeaver-db (see deploy/cloudbeaver/base/README.md)
 ```
 
-**dispatcher** (optional, issue-driven runs): requires hermes' RBAC (applied above) and a PAT in secret `github-token` for API reads. Edit the repo and command in `deploy/dispatcher/base/cronjob.yaml`, then:
+**dispatcher** (optional, issue-driven runs): self-contained since #26 — its least-privilege RBAC ships with `deploy/dispatcher/base` (no hermes dependency). Requires a PAT in secret `github-token` for API reads. Edit the repo and command in `deploy/dispatcher/base/cronjob.yaml`, then:
 
 ```sh
 kubectl apply -k deploy/dispatcher/base

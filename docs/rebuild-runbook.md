@@ -117,6 +117,9 @@ kubectl apply -k deploy/factory/base       # unattended issue -> draft PR factor
 # Also the one-command fix whenever a replaced app pod leaves its serve
 # entry pointing at a dead IP (502s): it re-points the HTTPS entry at the
 # current pod IP, idempotently.
+# Acceptance test for that automatic recovery (issue #24; disruptive — it
+# replaces the t3code-0 pod and never runs a repair script itself):
+./scripts/serve-recovery-test.sh           # expects HTTPS 200 and the proxy's 443 handler re-pointed at the new IP within the 120s objective (expected ~30-60s)
 ./scripts/serve-refresh.sh panel agents
 
 # 5. wait & verify
