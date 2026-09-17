@@ -33,22 +33,28 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: medic-sweep
-              image: ghcr.io/gwkline/homelab/factory/orchestrator@sha256:ac374804875b1c76b830ae9140088a959b26191e85e8c6724082f8fff018532c
+              image: ghcr.io/gwkline/homelab/factory/orchestrator@sha256:b59811b9b75accbd717f5fc6793806becbeec673b1228805285384a4dffa8192
               command: ["/bin/sh", "/orch/sweep.sh"]
               env:
                 - name: FACTORY_REPO
                   value: gwkline/homelab
                 - name: GH_TOKEN
                   valueFrom:
-                    secretKeyRef: { name: github-token, key: token, optional: false }
+                    secretKeyRef:
+                      { name: github-token, key: token, optional: false }
               resources:
                 requests: { cpu: 50m, memory: 64Mi }
-                limits:   { cpu: 200m, memory: 128Mi }
+                limits: { cpu: 200m, memory: 128Mi }
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities: { drop: ["ALL"] }
               volumeMounts:
-                - { name: scripts, mountPath: /orch/medic-dispatch.sh, subPath: medic-dispatch.sh, readOnly: true }
+                - {
+                    name: scripts,
+                    mountPath: /orch/medic-dispatch.sh,
+                    subPath: medic-dispatch.sh,
+                    readOnly: true,
+                  }
           volumes:
             - name: scripts
               configMap:
