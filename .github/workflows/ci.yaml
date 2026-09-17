@@ -191,6 +191,10 @@ jobs:
         run: sh apps/shared/tests/skills-sync.test.sh
       - name: Reclaimer fixture test
         run: sh apps/factory/orchestrator/tests/reclaimer.test.sh
+      # Medic fixture tests (#239): red→green convergence via a real local
+      # bare remote, plus the write-guard and stuck-escalation paths.
+      - name: Medic fixture test
+        run: sh apps/factory/medic/tests/medic.test.sh
       # Stalled-PR sweeper (#242): three seeded PRs (green+old, ci-red fresh,
       # ci-red stale) take distinct correct actions; a stateful gh shim makes
       # the re-run prove idempotency (no duplicate issues/pings/comments).

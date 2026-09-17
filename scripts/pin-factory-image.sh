@@ -33,6 +33,7 @@ locations() {
   case "$comp" in
     factory/worker)
       printf '%s\n' deploy/factory/base/profile-code-pr.yaml
+      printf '%s\n' deploy/factory/base/profile-medic.yaml
       ;;
     factory/security)
       printf '%s\n' deploy/factory/base/profile-security.yaml
@@ -42,6 +43,7 @@ locations() {
       printf '%s\n' deploy/factory/base/reviewer-launchpad-cronjob.yaml
       printf '%s\n' deploy/factory/base/sweeper-cronjob.yaml
       printf '%s\n' deploy/factory/base/profile-reviewer.yaml
+      printf '%s\n' deploy/factory/base/medic-cronjob.yaml
       ;;
     factory/orchestrator)
       printf '%s\n' deploy/factory/base/orchestrator-cronjob.yaml
