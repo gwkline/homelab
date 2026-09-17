@@ -182,6 +182,7 @@ set -u
 # the filter with the shimmed jq — otherwise callers relying on --jq see raw
 # JSON and label guards never match.
 JQ_FILTER=""
+JQ_FLAGS=""
 ARGS=""
 prev=""
 for a in "$@"; do
@@ -190,6 +191,7 @@ for a in "$@"; do
   else
     case "$a" in
       --jq) ;;
+      --slurp|--paginate) JQ_FLAGS="$JQ_FLAGS $a"; ARGS="$ARGS $a" ;;
       *) ARGS="$ARGS $a" ;;
     esac
   fi
@@ -283,7 +285,10 @@ case "$*" in
 esac
 
 if [ -n "$JQ_FILTER" ]; then
-  jq "$JQ_FILTER" 2>/dev/null || true
+  # gh applies --jq per page; --slurp changes the input shape (each page
+  # becomes one array element), so the flags must ride along or filters
+  # written for slurped input see the wrong shape.
+  jq $JQ_FLAGS --slurp "$JQ_FILTER" 2>/dev/null || true
 fi
 SHIM
 chmod +x "${WORK}/shim/gh"
