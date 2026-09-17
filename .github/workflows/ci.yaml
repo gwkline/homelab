@@ -191,6 +191,10 @@ jobs:
         run: sh apps/shared/tests/skills-sync.test.sh
       - name: Reclaimer fixture test
         run: sh apps/factory/orchestrator/tests/reclaimer.test.sh
+      # Medic fixture tests (#239): red→green convergence via a real local
+      # bare remote, plus the write-guard and stuck-escalation paths.
+      - name: Medic fixture test
+        run: sh apps/factory/medic/tests/medic.test.sh
       # Factory image single source of truth: run.sh resolves the worker
       # image from the profile ConfigMap (never a second hardcoded digest),
       # the pin helper stamps every copy, and pins agree repo-wide.
