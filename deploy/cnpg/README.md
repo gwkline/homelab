@@ -41,7 +41,8 @@ The selected metrics stack (ADR-003: single-node VictoriaMetrics with built-in `
       action: replace
       target_label: __metrics_path__
       regex: (.+)
-    - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+    - source_labels:
+        [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
       action: replace
       regex: ([^:]+)(?::\d+)?;(\d+)
       replacement: $1:$2
