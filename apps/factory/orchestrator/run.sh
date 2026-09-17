@@ -506,6 +506,10 @@ if grep -q "REPORT_B64_BEGIN" "${POD_LOGS}"; then
     | grep -v -- "---REPORT" | tr -d '\n\r ' | base64 -d 2>/dev/null | redact || true)
 fi
 TESTS_VAL=$(printf '%s' "${REPORT_JSON}" | jq -r '.tests // "not-reported"' 2>/dev/null || echo "not-reported")
+# Model attribution (#241): pull the worker's model id out of the report so
+# the run marker and PR body name it. Empty when the worker didn't record one.
+WORKER_MODEL=$(printf '%s' "${REPORT_JSON}" | jq -r '.model // ""' 2>/dev/null || echo "")
+export WORKER_MODEL
 REPORT_BLOCK=""
 if [ -n "${REPORT_JSON}" ]; then
   REPORT_BLOCK=$(printf '<details><summary>worker report</summary>\n\n```json\n%s\n```\n\n</details>' "${REPORT_JSON}")
@@ -525,7 +529,8 @@ if gitt apply --whitespace=nowarn "/tmp/patch-${NUM}.diff" 2>/tmp/apply-err; the
   echo "[orch] publish: patch applied ($(git diff --cached --stat | tail -1))"
   git add -A && git commit -qm "factory: resolve #${NUM}
 
-Produced by homelab software factory (${PROFILE} profile).
+Produced by homelab software factory (${PROFILE} profile).${WORKER_MODEL:+
+Model: ${WORKER_MODEL}}
 Refs #${NUM}"
   # Stage the branch BEFORE the gate: the staged branch is the durable artifact
   # the approval binds to (digest = branch head); opening the PR is the gated

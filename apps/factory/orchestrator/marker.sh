@@ -18,6 +18,14 @@ factory_marker_body() {  # <status> <extra-markdown> [<updated-ts>]
     _fm_rows="${_fm_rows}| Requested by | ${FACTORY_TRIGGERED_BY} |
 "
   fi
+# Model attribution (#241): record which worker model this run used so
+# outcomes (verify pass rate, merge rate) can be attributed per model.
+# Set by run.sh from the worker image's opencode config; empty for
+# non-model profiles (reviewer, security).
+if [ -n "${WORKER_MODEL:-}" ]; then
+  _fm_rows="${_fm_rows}| Model | ${WORKER_MODEL} |
+"
+fi
   cat <<EOF
 <!-- factory:run:${NUM}:${RUN_TS} -->
 ## 🏭 Factory Run

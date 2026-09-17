@@ -63,6 +63,10 @@ import json, os, re, sys
 tests, summary, base_sha, run_id, profile = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 doc = {"success": tests in ("passed", "no-command-configured"),
        "summary": summary, "tests": tests or None}
+# Model attribution (#241): which model produced this run.
+wm = os.environ.get("WORKER_MODEL")
+if wm:
+    doc["model"] = wm
 if base_sha:
     doc["base_sha"] = base_sha
 if run_id:
@@ -174,7 +178,12 @@ except json.JSONDecodeError:
   export OPENROUTER_API_KEY
 
   # Force openrouter as THE provider — no zen router, no nous fallback.
-  cat > "${OC_CONFIG_FILE}" <<'OCEOF'
+  # Model identity is kept in WORKER_MODEL (#241): the run report and the
+  # orchestrator's run-marker comment record it so outcomes are attributable
+  # per model (A/B evals like the union-alpha trial must leave a trail).
+  WORKER_MODEL="openrouter/stealth/union-alpha"
+  export WORKER_MODEL
+  cat > "${OC_CONFIG_FILE}" <<OCEOF
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
@@ -184,7 +193,7 @@ except json.JSONDecodeError:
       "options": { "baseURL": "https://openrouter.ai/api/v1" }
     }
   },
-  "model": "openrouter/stealth/union-alpha"
+  "model": "${WORKER_MODEL}"
 }
 OCEOF
 fi
