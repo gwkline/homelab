@@ -54,6 +54,7 @@ verify_for() {
 }
 
 # ---- 1. find ci-red factory PRs ---------------------------------------------
+[ -n "${MEDIC_TRACE:-}" ] && set -x
 PRS_JSON="$(gh api --paginate --slurp "repos/${REPO}/pulls?state=open&per_page=100" \
   | jq '[.[][] | select((.head.ref // "") | startswith("factory/issue-"))]')"
 
