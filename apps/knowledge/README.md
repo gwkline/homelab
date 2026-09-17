@@ -46,6 +46,19 @@ Offline unit tests cover SQL construction, validation (query text, namespace, in
 
 This channel ends at ranked, cited chunks — fusing with BM25 ranks happens only in `src/fusion.ts` upstream.
 
+## Ingestion: Git repositories (#61)
+
+`src/git-source.ts` is the first real knowledge source: it syncs selected files from a Git repository into normalized, provenance-complete documents. Like the retrievers, it ends at its contract boundary — whole-file documents with citation-ready provenance; chunking and embeddings are downstream (#59+).
+
+A source config (`GitSourceConfig`) names everything (#61 acceptance): `repositoryUrl` (https, ssh/scp, or local path), `ref` (branch/tag/commit-ish, syntax-validated before it can reach a git argv), `include`/`exclude` globs (gitignore-lite: `*`, `**`, trailing `/` subtrees, bare names, `/`-anchoring), and the knowledge `namespace` (the D9 collection key). Sync runs as clone-or-fetch into a shared cache (`openGitRepository`, bare clones, blobless for remotes), then diffs the commit's tree against a per-source manifest.
+
+- **Provenance.** Every document records repository URL, ref, commit SHA, path, git blob SHA, sha256 `contentHash` of the stored text (the D3/D10 no-op key), canonical commit-pinned URL (exact for GitHub/GitLab/Bitbucket, `file://` for local checkouts), `firstCommitSha`, and — on change/rename — `previousBlobHash`/`previousContentHash`/`renamedFrom`. Document ids are deterministic sha1-based UUIDs of (namespace, path); line-range provenance starts at the whole file (`lineRange`), which chunkers narrow per chunk.
+- **Incremental.** The manifest maps path → last-ingested `blobHash`; the next sync diffs the tree against it. Unchanged blobs are never read (`cat-file` runs only for adds/changes), modified files bump the version on the same document id, deletions tombstone (path, hashes, commit) so stale paths stop appearing while history stays explainable, and a deleted blob reappearing at a new path is detected as a rename. Skipped blobs (binary/empty/secret/too-large) are never manifest-tracked — they re-surface as skipped ops until they change.
+- **Defaults.** Binary extensions plus NUL/mojibake sniffing, generated and vendored directories (`node_modules`, `dist`, `vendor`, `gen`, …), lockfiles (`*.lock`, `package-lock.json`, `go.sum`, …), and secret-looking files are excluded without configuration. Secret detection (name patterns like `.env*`/`*.pem`/`id_rsa*` plus a PEM private-key content sniff) stays on even with `applyDefaultExcludes: false` — credentials must never reach the corpus by opt-out. Markdown and code are tagged with distinct `contentKind`s (heading/paragraph vs line/AST chunking is the downstream chunker's call, never assumed identical here).
+- **Auth without config writes.** An optional `token` rides to git as an `http.extraheader` override via `GIT_CONFIG_*` environment variables — the GitHub Actions checkout mechanism — scoped to exactly the spawned git processes: nothing is written to any `.git/config`, nothing with the token appears in argv or logs, prompts are disabled (`GIT_TERMINAL_PROMPT=0`, batch-mode ssh) so private-repo auth failures fail fast. Public repos need no token.
+
+Tests (`tests/git-source.test.ts`) are fully offline: pure coverage of glob matching, default exclusions, blob gating, config validation, planning (add/change/delete/rename/copies), and canonical URLs, plus end-to-end syncs against real fixture repositories built in temp dirs — proving provenance fields against `git rev-parse`, add/change/delete/rename across three syncs, unchanged-blob skipping, and namespace scoping. Persistence of the documents/tombstones onto the ADR-002 D3 `document` table is the ingestion worker's job; the in-memory store (`createInMemoryGitSourceStore`) is the phase-one contract.
+
 ## Evaluation harness
 
 `eval/` compares BM25-only, vector-only, and fused retrieval from one command:
