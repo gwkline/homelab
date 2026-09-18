@@ -59,15 +59,16 @@ git clone https://github.com/gwkline/homelab.git && cd homelab
 
 # 1. secrets infra: External Secrets Operator (issue #38, pinned in
 #    deploy/eso/base) must be Ready before any ExternalSecret applies, then
-#    the one hand-entered 1Password bootstrap token (env/stdin, never logged)
+#    the one hand-entered 1Password bootstrap token (issue #41): the script
+#    is idempotent, reads the token from OP_SERVICE_ACCOUNT_TOKEN or stdin
+#    (hidden prompt), and never logs it
 kubectl apply --server-side -k deploy/eso/base   # 1: CRDs, RBAC, Deployments
 kubectl wait --for=condition=Established \
   crd/externalsecrets.external-secrets.io crd/secretstores.external-secrets.io
 kubectl -n external-secrets rollout status deploy/external-secrets
 kubectl apply --server-side -k deploy/eso/base   # 2: SecretStore + smoke ExternalSecret
 kubectl -n external-secrets wait --for=condition=Ready externalsecret/eso-smoke --timeout=120s
-kubectl -n agents create secret generic onepassword-service-account \
-  --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"   # repeat for sandbox and tailscale
+./scripts/create-onepassword-service-account.sh  # Secret onepassword-service-account -> agents, sandbox, tailscale
 kubectl apply -k deploy/github-tokens/base       # syncs github-token(+writer) from 1Password
 
 # 2. namespaces + policies (before deploy/tailscale — its serve-fixer RBAC

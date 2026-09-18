@@ -291,7 +291,7 @@ The backup job runs in the `agents` namespace, next to the PVCs it reads — PVC
 
 ### Enable
 
-External Secrets Operator must be installed and connected to the vault (service-account token bootstrapped, store healthy — the `onepassword` SecretStore in `agents` comes from `deploy/github-tokens/base`, nothing extra to apply). Then:
+External Secrets Operator must be installed and connected to the vault (service-account token bootstrapped via `scripts/create-onepassword-service-account.sh`, store healthy — the `onepassword` SecretStore in `agents` comes from `deploy/github-tokens/base`, nothing extra to apply). Then:
 
 ```sh
 kubectl apply -k deploy/backup/base
