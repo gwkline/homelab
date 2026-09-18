@@ -21,7 +21,7 @@ Everything the drill starts from must be in this list. If you reach for anything
 | Credential | Source |
 | --- | --- |
 | 1Password service-account token (`OP_SERVICE_ACCOUNT_TOKEN`) | 1Password `homelab` vault — least-privilege SA token (issue #41); entered via env/stdin only |
-| GitHub tokens | 1Password items `github-readonly` / `github-writer`; synced by `kubectl apply -k deploy/github-tokens/base` (issue #45) |
+| GitHub tokens | 1Password items `github-readonly` / `github-writer`; synced by the root entry point `kubectl apply -k clusters/home` (issue #45; standalone: `deploy/github-tokens/base/README.md`) |
 | Tailscale OAuth (`TS_CLIENT_ID` / `TS_CLIENT_SECRET`) | macOS Keychain `homelab-tailscale`; tag `tag:k8s-operator` must exist on the OAuth client ([deploy/tailscale/README.md](../deploy/tailscale/README.md)) |
 | B2 restore credentials (`restic-backup` item) | 1Password `Homelab` vault: `RESTIC_REPOSITORY`, `B2_ACCOUNT_ID`, `B2_ACCOUNT_KEY`, `RESTIC_PASSWORD` ([runbook-server-cluster](runbook-server-cluster.md) §11) |
 
@@ -36,7 +36,7 @@ No hidden state is copied from the existing cluster. The only crossers are the d
 | Sigstore policy-controller chart | `0.10.7` | `scripts/recovery-drill.sh` (`POLICY_CHART_VERSION`); the ClusterImagePolicy it verifies against lives in [deploy/image-policy/base](../deploy/image-policy/base/README.md) (issue #91, ADR-004) |
 | tailscaled (host package) | latest stable via install.sh | **unpinned — known gap**, owned by issue #29 |
 
-`bootstrap/bootstrap.sh` is the root node entry point; `scripts/recovery-drill.sh` is the root cluster entry point (it runs the documented apply order — until issue #20 replaces it with a root Kustomization, the script is that order's source of truth).
+`bootstrap/bootstrap.sh` is the root node entry point; `clusters/home` is the root cluster entry point (issue #20): one Kustomization composing namespaces, policies, platform prerequisites, and workloads with the dependency contract documented in [clusters/home/README.md](../clusters/home/README.md). `scripts/recovery-drill.sh` times that same order stage by stage.
 
 ## 3. Node prerequisites (physical host only)
 
@@ -68,42 +68,38 @@ kubectl apply --server-side -k deploy/eso/base   # 2: SecretStore + smoke Extern
 kubectl -n external-secrets wait --for=condition=Ready externalsecret/eso-smoke --timeout=120s
 kubectl -n agents create secret generic onepassword-service-account \
   --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"   # repeat for sandbox and tailscale
-kubectl apply -k deploy/github-tokens/base       # syncs github-token(+writer) from 1Password
 
-# 2. namespaces + policies (before deploy/tailscale — its serve-fixer RBAC
-#    reaches into agents)
-kubectl apply -f deploy/namespaces.yaml
-kubectl apply -k deploy/policies/base
-
-# 2b. image admission policy (issue #91 / ADR-004): the sigstore
-#     policy-controller webhook must be in force BEFORE workloads are
-#     applied — it admits pods only when the exact digest of a
-#     ghcr.io/gwkline/homelab/** image carries a signature from this repo's
-#     CI workflow. Namespaces above carry the include labels; break-glass
-#     and failure behavior: deploy/image-policy/base/README.md
+# 2. image admission policy (issue #91 / ADR-004): the sigstore
+#     policy-controller webhook must be in force BEFORE the root apply
+#     below admits workload pods — it admits pods only when the exact
+#     digest of a ghcr.io/gwkline/homelab/** image carries a signature from
+#     this repo's CI workflow. Its CRD also defines the ClusterImagePolicy
+#     the root composes. Break-glass and failure behavior:
+#     deploy/image-policy/base/README.md
 helm repo add sigstore https://sigstore.github.io/helm-charts
 helm upgrade --install policy-controller sigstore/policy-controller \
   --version 0.10.7 -n cosign-system --create-namespace
 kubectl -n cosign-system rollout status deploy/policy-controller-webhook
-kubectl apply -k deploy/image-policy/base
 
-# 3. tailscale operator: credentials synced from 1Password, then helm with
-#    the pinned values file — never --set oauth.* (issue #43)
-kubectl apply -k deploy/tailscale                # ns + SecretStore + ExternalSecret -> Secret operator-oauth; serve-fixer
+# 3. the root entry point (issue #20): one render, one apply — namespaces +
+#     policies (namespaces sort first in the render, before the tailscale
+#     serve-fixer RBAC that reaches into agents), the ClusterImagePolicy,
+#     the github-tokens sync, the tailscale stack (namespace, SecretStore,
+#     operator-oauth ExternalSecret, serve-fixers), and every normal
+#     workload: t3code, hermes, loop-agent, homepage, panel, headlamp,
+#     dispatcher, factory. Full inventory + dependency contract:
+#     clusters/home/README.md
+kubectl apply -k clusters/home
+
+# 4. tailscale operator: after the root apply — it consumes the
+#    operator-oauth Secret the root synced from 1Password; helm with the
+#    pinned values file — never --set oauth.* (issue #43)
 helm repo add tailscale https://pkgs.tailscale.com/helmcharts
 helm upgrade --install tailscale-operator tailscale/tailscale-operator \
   --version 1.102.3 -n tailscale --create-namespace \
   -f deploy/tailscale/values.yaml
 kubectl -n tailscale set env deploy/operator PROXY_TAGS=tag:k8s-operator  # chart bug workaround (documented)
 kubectl rollout restart deploy/operator -n tailscale
-
-# 4. workloads
-kubectl apply -k deploy/t3code/base
-kubectl apply -k deploy/hermes/base
-kubectl apply -k deploy/loop-agent/base
-kubectl apply -k deploy/panel/base         # admin portal (https://panel.$TAILNET_NAME)
-kubectl apply -k deploy/headlamp/base      # k8s web UI (https://headlamp.$TAILNET_NAME)
-kubectl apply -k deploy/factory/base       # unattended issue -> draft PR factory
 
 # 4b. HTTPS for tailscale-proxied services (one-time tailnet approval already
 # granted; re-run after operator reinstall or proxy pod replacement)
@@ -128,6 +124,10 @@ kubectl get pods -A -w
 # (deploy/tailscale/README.md); scripts/serve-https.sh auto-discovers it.
 curl -s -o /dev/null -w "%{http_code}\n" "https://t3code-0.${TAILNET_NAME:-<tailnet>}/"
 ```
+
+Render the whole normal set without applying anything: `kubectl kustomize clusters/home` — the inventory (156 resources across 5 namespaces) is deterministic and contains no duplicate resource IDs.
+
+**Opt-in overlays** are intentionally excluded from the root and applied separately when wanted: `kubectl apply -k clusters/home/overlays/backup` (nightly B2 restic backup — only after the B2 credentials from section 1 exist in 1Password, since production backup execution before credentials exist is exactly what the root must not compose) and `kubectl apply -k clusters/home/overlays/gvisor` (loop-agent CronJob under gVisor instead of the stock runtime; requires runsc in the nodes' containerd config).
 
 Fetch the kubeconfig to the driver (server runbook §4), confirm `kubectl get nodes` is Ready, and export the four credentials from section 1.
 
@@ -177,7 +177,7 @@ Rule: every undocumented step you perform during a drill becomes either a runboo
 | --- | --- |
 | External Secrets Operator was not installed by any manifest | closed (issue #38): pinned install in `deploy/eso/base` (runbook-server-cluster §4b); the drill installs it in the `eso` stage before any ExternalSecret apply and smoke-checks the fake-provider ExternalSecret |
 | Host tailscaled not version-pinned | follow-up: issue #29 |
-| Apply order lives in `scripts/recovery-drill.sh` instead of a root Kustomization | follow-up: issue #20 |
+| Apply order lives in `scripts/recovery-drill.sh` instead of a root Kustomization | closed (issue #20): `clusters/home` root Kustomization is the source of truth (clusters/home/README.md); the drill times the same order stage by stage |
 | hermes `hermes setup --portal` re-run after PVC recreation | runbook step (section 4, step 3) |
 | t3code pairing from desktop/phone | runbook step (section 4, step 3); durable auth persistence tracked by issue #19 |
 | API-level manifest validation before apply (invalid RoleBindings, missing SAs) | follow-up: issue #16 |

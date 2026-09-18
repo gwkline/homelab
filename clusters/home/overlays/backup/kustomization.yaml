@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Opt-in overlay: the full normal set (../../base) PLUS the nightly restic
+# backup of the t3code/hermes PVCs to B2 (03:30). The root deliberately
+# excludes production backup execution until the B2 credentials exist in
+# 1Password — render/apply this only after they do
+# (docs/secrets-inventory.md, docs/rebuild-runbook.md §1).
+#
+#   kubectl apply -k clusters/home/overlays/backup
+resources:
+  - ../../base
+  - ../../../../deploy/backup/base

@@ -155,7 +155,7 @@ If the StatefulSet pods sit in `ImagePullBackoff`, this is why.
 
 ```sh
 kubectl apply -k deploy/eso/base   # section 4b — idempotent re-apply of the pinned operator
-kubectl apply -f deploy/namespaces.yaml
+kubectl apply -k deploy/namespaces
 kubectl apply -k deploy/policies/base
 kubectl apply -k deploy/t3code/base
 kubectl apply -k deploy/hermes/base

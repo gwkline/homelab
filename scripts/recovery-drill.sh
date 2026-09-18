@@ -107,7 +107,7 @@ end_stage
 
 # ---------------------------------------------------------------------------
 stage namespaces
-kubectl apply -f deploy/namespaces.yaml
+kubectl apply -k deploy/namespaces
 kubectl apply -k deploy/policies/base
 end_stage
 

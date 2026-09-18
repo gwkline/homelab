@@ -37,7 +37,7 @@ Losing a Secret means rotating it: recreate the Secret with a new password and t
 ## Bring-up
 
 ```sh
-kubectl apply -f deploy/namespaces.yaml      # database namespace (restricted PSA)
+kubectl apply -k deploy/namespaces          # database namespace (restricted PSA)
 kubectl apply -k deploy/postgres/base
 kubectl get cluster pg-primary -n database -w # wait for "Cluster in healthy state"
 ```

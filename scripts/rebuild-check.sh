@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.." || exit 1
 fail=0
 
 echo "== 1. manifest conformance (kubectl diff) =="
-for d in deploy/namespaces.yaml deploy/policies/base deploy/t3code/base \
+for d in deploy/namespaces deploy/policies/base deploy/t3code/base \
          deploy/hermes/base deploy/loop-agent/base deploy/panel/base \
          deploy/homepage/base deploy/headlamp/base deploy/tailscale \
          deploy/factory/base; do

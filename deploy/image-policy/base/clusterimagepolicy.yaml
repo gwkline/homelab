@@ -7,7 +7,7 @@
 # — see README.md and ADR-004 D3.
 #
 # Enforcement is opt-in per namespace: the webhook only intercepts namespaces
-# labeled policy.sigstore.dev/include=true (deploy/namespaces.yaml).
+# labeled policy.sigstore.dev/include=true (deploy/namespaces).
 apiVersion: policy.sigstore.dev/v1beta1
 kind: ClusterImagePolicy
 metadata:

@@ -1,0 +1,63 @@
+# Root cluster entry point (issue #20): one Kustomization composing the
+# complete normal workload set — namespaces, policies, platform
+# prerequisites, and workloads. Plain kubectl only, no Flux:
+#
+#   kubectl kustomize clusters/home          # render the full inventory
+#   kubectl apply -k clusters/home           # apply it (see ordering below)
+#
+# Ordering / dependency contract (docs/rebuild-runbook.md §4 is the
+# authoritative drill):
+#
+#   1. External Secrets Operator — deploy/eso/base carries both the CRDs and
+#      an ExternalSecret (eso-smoke), so on a fresh cluster it must be
+#      applied in two passes with a wait between (CRDs Established, rollout
+#      Ready) BEFORE this root applies. Re-applying it here afterwards is
+#      idempotent.
+#   2. policy-controller (helm, pinned) — its CRD defines the
+#      ClusterImagePolicy composed below, and the webhook must be in force
+#      before workload pods are admitted (ADR-004). Install before this
+#      root applies.
+#   3. tailscale-operator (helm, pinned) — apply AFTER this root: the root
+#      creates the tailscale namespace and syncs its operator-oauth Secret
+#      from 1Password (deploy/tailscale), which the operator consumes.
+#   4. Hand-entered 1Password service-account tokens (agents, sandbox,
+#      tailscale namespaces) stay a manual runbook step — secrets are never
+#      rendered into Git.
+#
+# Within the render, kustomize sorts Namespace first, so deploy/namespaces
+# (agents/sandbox/database, with their PSA + sigstore include labels) exists
+# before the tailscale serve-fixer RBAC that reaches into agents.
+#
+# Intentionally NOT composed here (opt-in or per-component, documented in
+# the deploy/* READMEs and runbook-server-cluster.md):
+#   - backup (overlays/backup) — production backup execution is excluded
+#     until its B2 credentials exist
+#   - gvisor (overlays/gvisor) — replaces the stock loop-agent runtime
+#   - chaos, grafana, loki, postgres/cnpg, cloudbeaver, executor,
+#     auto-deploy — applied per-component when wanted
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # namespaces + policies (before any workload: PSA labels, default-deny
+  # ingress/egress, and the tailscale serve-fixer RBAC in agents)
+  - ../../../deploy/namespaces
+  - ../../../deploy/policies/base
+  # platform prerequisites (ESO + 1Password-backed GitHub token sync)
+  - ../../../deploy/eso/base
+  - ../../../deploy/github-tokens/base
+  # admission policy (requires the policy-controller CRD, see note 2 above)
+  - ../../../deploy/image-policy/base
+  # tailscale stack: namespace, SecretStore, operator-oauth ExternalSecret,
+  # t3code + panel serve-fixers (the operator itself is helm, note 3)
+  - ../../../deploy/tailscale
+  # workloads: t3code, Hermes, loop-agent, homepage, panel, headlamp,
+  # dispatcher, factory
+  - ../../../deploy/t3code/base
+  - ../../../deploy/hermes/base
+  - ../../../deploy/loop-agent/base
+  - ../../../deploy/homepage/base
+  - ../../../deploy/panel/base
+  - ../../../deploy/headlamp/base
+  - ../../../deploy/dispatcher/base
+  - ../../../deploy/factory/base
