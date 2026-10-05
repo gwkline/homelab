@@ -88,12 +88,7 @@ Rotate by minting a new token, updating the item, and `kubectl -n work rollout r
 
 ## Depot builds (optional)
 
-Work CI builds images with `depot bake`; the depot CLI ships in the
-image so runner agents can reproduce/inspect builds. It stays inert
-without `DEPOT_TOKEN`: store a Depot org token in 1Password (vault
-`homelab`, item `work-depot-token`, field `token`) and it syncs via
-`base/depot-token.yaml` — the env lands on the next rollout restart.
-Absent item = ExternalSecret `Ready=False` + runner unaffected.
+Work CI builds images with `depot bake`; the depot CLI ships in the image so runner agents can reproduce/inspect builds. It stays inert without `DEPOT_TOKEN`: store a Depot org token in 1Password (vault `homelab`, item `work-depot-token`, field `token`) and it syncs via `base/depot-token.yaml` — the env lands on the next rollout restart. Absent item = ExternalSecret `Ready=False` + runner unaffected.
 
 ## Codex auth
 
