@@ -20,7 +20,7 @@ setup_git_auth() {
     echo '#!/bin/sh'
     echo 'case "$1" in'
     echo '  Username*) echo "x-access-token" ;;'
-    echo '  Password*) cat <<"__TOK__"' 
+    echo '  Password*) cat <<"__TOK__"'
     printf '%s\n' "${_token}"
     echo '__TOK__'
     echo '  ;;'
@@ -29,6 +29,19 @@ setup_git_auth() {
   chmod 700 "${_askpass}"
   export GIT_ASKPASS="${_askpass}"
   unset _token
+
+  # Persist GitHub auth beyond this process's environment. Agent
+  # tooling (t3's workspace provisioning, exec'd shells) spawns git with
+  # a sanitized env — GIT_ASKPASS dropped — so remote fetches fail with
+  # "could not read Username". A user-level credential helper closes
+  # that: it reads the mounted token file at use time, so it works with
+  # no env at all, puts no secret in the config, and picks up kubelet
+  # secret-mount refreshes automatically. Idempotent — safe on every
+  # boot.
+  if [ -n "${GITHUB_TOKEN_FILE:-}" ] && [ -r "${GITHUB_TOKEN_FILE}" ]; then
+    git config --global credential.https://github.com.helper \
+      "!f() { echo username=x-access-token; echo password=\$(cat \"${GITHUB_TOKEN_FILE}\"); }; f"
+  fi
 }
 
 # Optional: expose a write-scoped token to the gh CLI for loops that report
