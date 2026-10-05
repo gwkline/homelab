@@ -99,13 +99,27 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 | Rotation owner | User, from within the session (delete/rewrite the file) |
 | Status | Per-workload (t3code only) |
 
+### B4. `work-github-token` — work repositories (work-t3code runner)
+
+| Attribute | Value |
+| --- | --- |
+| Namespace | `work` only |
+| Secret name / keys | `work-github-token` / `token`, `repos` |
+| 1Password ref | item `work-github-writer`, fields `token` (the PAT) and `repos` (clone URLs, one per line — kept out of git because this repository is public) |
+| Delivery | ExternalSecret `deploy/github-tokens/base/work-github-token.yaml`, `refreshInterval: 1h`, `creationPolicy: Owner`; template trims whitespace. Store (`onepassword`) in `work` requires the hand-created `onepassword-service-account` Secret (C1) in `work` |
+| Required permissions | Fine-grained PAT — **Repository access: only the operator's selected work repositories** (never "All repositories", never a personal repo), with Contents: read+write and Pull requests: read+write. Deliberately a single read+write token (operator decision 2026-10-04): the repo scoping IS the isolation boundary. The `repos` field must stay in sync with the PAT's repository list |
+| Consumers | work-t3code StatefulSet (`work`: `/secrets/token` file mount → git clone/push + gh via the entrypoint bridge; `WORKSPACE_REPOS` env from key `repos`, deliberately non-optional so the runner fails closed without the credential) |
+| Isolation guarantees | The personal items (`github-readonly`, `github-writer`) have no ExternalSecret in `work`, so they never materialize there; conversely this token cannot read any personal repo. `work` namespace egress is public-internet-only (deploy/policies/base), and work PVCs are excluded from deploy/backup/base — work code/credentials never reach personal backups |
+| Rotation owner | Operator updates the item fields in 1Password; file-mount reader picks the token up automatically (≤1h 6m). Long-running pod keeps the old value in its exported `GH_TOKEN` — `kubectl -n work rollout restart statefulset work-t3code` after rotating |
+| Status | Per-workload (work runner only) |
+
 ## C. Bootstrap-only secrets
 
 Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret would be circular) and not part of steady-state GitOps.
 
 | # | Credential | Location / Secret | Key(s) | 1Password ref | Notes |
 | --- | --- | --- | --- | --- | --- |
-| C1 | 1Password service-account token | Secret `onepassword-service-account` in `agents` **and** `sandbox` (created by hand per `docs/rebuild-runbook.md`) | `token` | The token itself lives only in 1Password's non-homelab storage / operator device; it authorizes the dedicated `homelab` vault **only** — least privilege by construction | The only hand-entered secret in the stack. Consumers: the `SecretStore` `onepassword` in each namespace. Rotation owner: operator (create a new SA, update both Secrets, ESO re-authenticates on next refresh) |
+| C1 | 1Password service-account token | Secret `onepassword-service-account` in `agents` **and** `sandbox` **and** `work` (created by hand per `docs/rebuild-runbook.md`; the `work` copy is a one-time step of the work-t3code bootstrap — `deploy/work-t3code/README.md`) | `token` | The token itself lives only in 1Password's non-homelab storage / operator device; it authorizes the dedicated `homelab` vault **only** — least privilege by construction | The only hand-entered secret in the stack. Consumers: the `SecretStore` `onepassword` in each namespace. Rotation owner: operator (create a new SA, update the Secrets, ESO re-authenticates on next refresh) |
 | C2 | Tailscale OAuth client | Helm values at install: `helm upgrade --install tailscale-operator … --set oauth.clientId/--set oauth.clientSecret` (`docs/runbook-server-cluster.md` §5, `docs/rebuild-runbook.md`) — lands in the operator's Secret in ns `tailscale`, never in git | `client-id`, `client-secret` | 1Password item `homelab-tailscale` (operator device Keychain): fields `client-id`, `client-secret` | OAuth client must carry `tag:k8s-operator`. Rotation owner: operator (re-run helm with new values, restart operator). See `deploy/tailscale/README.md` |
 | C3 | K3s node join token | Read from `/var/lib/rancher/k3s/server/node-token` on the server node (`bootstrap/bootstrap.sh`); never stored in git or the cluster API | n/a | None proposed — node-local, single-node cluster | Rotation owner: operator (regenerate on the node). Not a Kubernetes Secret |
 | C4 | `ghcr-pull` (when used) | `kubectl create secret docker-registry` per namespace — manual, documented in `README.md` | `.dockerconfigjson` | Proposed item `ghcr-pull` (A3) | Bootstrap-time because no ESO path exists yet |
@@ -137,8 +151,8 @@ Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret w
 
 Every runtime secret reference in the repo maps to an entry above:
 
-- `secretKeyRef` / `envFrom.secretRef`: hermes (A1), t3code (A1, optional), panel (A1, optional file), factory orchestrator (A1 + B1), factory security/collector/reviewer/reconciler (A1), loop-agent (A1 + A2, optional), dispatch-watcher (A1 + A2 via examples/jobs.ts patterns), chaos-monkey (A1, optional), backup restic CronJob (B2), orchestrator-generated worker Jobs (A1, B1).
-- Secret volumes: hermes, t3code, panel, loop-agent, dispatcher, chaos-monkey, panel Jobs — all `github-token`/`github-token-writer` (A1/A2).
+- `secretKeyRef` / `envFrom.secretRef`: hermes (A1), t3code (A1, optional), work-t3code (B4, optional file), panel (A1, optional file), factory orchestrator (A1 + B1), factory security/collector/reviewer/reconciler (A1), loop-agent (A1 + A2, optional), dispatch-watcher (A1 + A2 via examples/jobs.ts patterns), chaos-monkey (A1, optional), backup restic CronJob (B2), orchestrator-generated worker Jobs (A1, B1).
+- Secret volumes: hermes, t3code, panel, loop-agent, dispatcher, chaos-monkey, panel Jobs — all `github-token`/`github-token-writer` (A1/A2); work-t3code — `work-github-token` (B4).
 - `kubectl create secret`: `onepassword-service-account` (C1), `backup-target` emergency script (B2), `ghcr-pull` (A3/C4).
 - Non-Secret credential flows: Tailscale OAuth (C2), K3s token (C3), t3code `auth.json` (B3).
 

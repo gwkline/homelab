@@ -1,0 +1,76 @@
+# work-t3code — isolated work code runner
+
+A second t3code instance ([`deploy/t3code`](../t3code)) that runs **work repositories** on the homelab without exposing the personal stack. Same image, same UX (tailnet URL, browser pairing, coding CLIs), different namespace, different credential, different blast radius.
+
+This repository is public, so it deliberately carries **no work identifiers**: no employer name, no org, no repo URLs. Everything specific lives in one 1Password item.
+
+## Isolation contract
+
+| Boundary | How |
+| --- | --- |
+| GitHub | The pod mounts **only** Secret `work-github-token`: a fine-grained PAT whose _Repository access_ is limited to the operator's selected work repositories (Contents + Pull requests read/write). It cannot read any personal repo. The personal tokens (`github-readonly`/`github-writer`) are not synced into `work` — no workload there can read them. |
+| Repo list | The cloned repos ride in the same Secret (key `repos`, one URL per line), not a committed ConfigMap — the public repo stays free of work identifiers. |
+| Network | The `work` namespace is default-deny ingress AND egress. Egress is DNS + public internet only — the Kubernetes API, LAN, tailnet, and every other homelab service are carved out (see `deploy/policies/base/networkpolicy.yaml`, `work-egress-public-only`). Work code can clone/push GitHub and install packages; it cannot touch the personal stack even if compromised. |
+| Personal skills | No skills-sync init container: private personal skills (`.dotfiles`) are authenticated by the personal read token, which this pod does not have — and personal skills stay out of work sessions by design. |
+| Factory tooling | No Executor MCP registration: the work runner cannot request factory runs on the personal cluster. |
+| Backups | Work PVCs (`data-work-t3code-0`, `t3state-work-t3code-0`) are deliberately **not** in `deploy/backup/base` — work code and credentials never land in the personal restic/B2 bucket. Trade-off: a lost node means re-pairing the browser session and re-logging the CLIs; repos just re-clone. |
+| Exposure | Only the Tailscale operator proxy and the Homepage siteMonitor can reach it (`netpol.yaml`). URL: `https://work-t3code-0.<tailnet>.ts.net`. |
+
+## One-time bootstrap
+
+1. **Create the PAT** at https://github.com/settings/personal-access-tokens/new (an account with access to the work organization):
+   - Repository access: **Only select repositories** → select the work repositories the runner may touch (start with one or two).
+   - Permissions: Contents **Read and write**, Pull requests **Read and write**
+   - Never "All repositories"; never a personal repo. This scoping is the whole isolation contract — widening it is a reviewed PR to `docs/secrets-inventory.md` first.
+2. **Store it in 1Password**: vault `homelab`, item `work-github-writer`, with TWO fields:
+   - `token` — the raw PAT (no trailing newline)
+   - `repos` — the repo URLs to clone, one per line, matching the PAT's Repository access list (e.g. `https://github.com/<org>/<repo>.git`)
+3. **Bootstrap the ESO store** (once per cluster; copy the service-account token the same way as the bring-up, never echo it):
+
+   ```sh
+   # token in a temp file with umask 077, deleted after
+   kubectl -n work create secret generic onepassword-service-account \
+     --from-file=token=/tmp/ops --dry-run=client -o yaml | kubectl apply -f -
+   ```
+
+4. **Apply everything**:
+
+   ```sh
+   KUBECONFIG=~/kubeconfig-homelab
+   kubectl apply -f deploy/namespaces.yaml
+   kubectl apply -k deploy/policies/base
+   kubectl apply -k deploy/github-tokens/base   # work SecretStore + ExternalSecret
+   kubectl apply -k deploy/work-t3code/base
+   kubectl apply -k deploy/auto-deploy          # watchlist entry + work RBAC
+   kubectl apply -k deploy/homepage/base        # dashboard entry
+   ```
+
+5. **Verify**:
+
+   ```sh
+   kubectl get secretstore -n work              # onepassword Ready
+   kubectl get externalsecret -n work           # work-github-token SecretSynced
+   kubectl -n work rollout status statefulset work-t3code
+   kubectl get svc work-t3code-0 -n work \
+     -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'  # tailnet URL
+   # The mounted token must NOT see personal repos (expect 404/NotFound):
+   kubectl -n work exec work-t3code-0 -- \
+     gh api repos/gwkline/homelab --jq .name 2>&1 | head -1
+   # And the scoped clone worked: the workspace lists the work repos from
+   # the 1Password `repos` field after first boot.
+   kubectl -n work exec work-t3code-0 -- ls /data/repos
+   ```
+
+6. **Pair from the tailnet URL** (same flow as the personal t3code).
+
+## Adding a repo / widening scope
+
+Everything lives in the 1Password item `work-github-writer`: widen the PAT's _Repository access_ in GitHub (regenerate the PAT if needed), update the `token` field, and add the URL to the `repos` field. No git change. The ExternalSecret re-syncs within ~1h (or immediately after `kubectl -n work annotate externalsecret work-github-token \ force-sync=$(date +%s) --overwrite`), and the workspace updates on the next pod restart (`kubectl -n work rollout restart statefulset work-t3code`).
+
+## Image updates
+
+The StatefulSet pins the same digest as the personal t3code. Renovate's "homelab image digests" group bumps both manifests in one PR; the auto-deploy watcher applies it (watchlist entry `statefulset,work-t3code,work,deploy/work-t3code/base/statefulset.yaml`).
+
+## Token rotation
+
+Update the `token` field in 1Password (item `work-github-writer`). ESO converges ≤1h 6m; the file mount updates in place, but the running pod holds the old value in its exported `GH_TOKEN` — restart the StatefulSet after rotating.

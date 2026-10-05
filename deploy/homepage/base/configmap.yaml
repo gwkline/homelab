@@ -26,6 +26,11 @@ data:
             description: Interactive agent servers
             href: https://t3code-0.${HOMEPAGE_VAR_TAILNET_NAME}
             siteMonitor: http://t3code-headless.agents.svc.cluster.local:3773
+        - Work T3 Code:
+            icon: mdi-briefcase
+            description: Work code runner - isolated namespace, scoped token
+            href: https://work-t3code-0.${HOMEPAGE_VAR_TAILNET_NAME}
+            siteMonitor: http://work-t3code-headless.work.svc.cluster.local:3773
         - Hermes:
             icon: mdi-brain
             description: Orchestrator - messaging gateway or kubectl exec

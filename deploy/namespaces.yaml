@@ -27,6 +27,25 @@ metadata:
     # Image-signature verification opt-in (see the agents namespace note).
     policy.sigstore.dev/include: "true"
 ---
+# Work-isolation zone (work-t3code): a code runner for employer/work
+# repositories. Interactive workloads run here
+# behind the same PSA level as `agents`, but the namespace is otherwise
+# walled off: default-deny ingress AND egress (deploy/policies/base), with
+# egress limited to DNS + the public internet — never the Kubernetes API,
+# the LAN, the tailnet, or another homelab service. The only GitHub
+# credential synced into this namespace is work-github-token, a PAT scoped
+# to the operator's selected work repos (deploy/github-tokens/base/work-github-token.yaml).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: work
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: baseline
+    # Image-signature verification opt-in (see the agents namespace note).
+    policy.sigstore.dev/include: "true"
+---
 # Dedicated namespace for the PostgreSQL cluster (deploy/postgres). Restricted
 # PSA works because CloudNativePG's default pod security context already runs
 # non-root with all capabilities dropped (see deploy/postgres/README.md).
