@@ -75,3 +75,17 @@ The StatefulSet pins the same digest as the personal t3code. Renovate's "homelab
 ## Token rotation
 
 Update the `token` field in 1Password (item `work-github-writer`). ESO converges ≤1h 6m; the file mount updates in place, but the running pod holds the old value in its exported `GH_TOKEN` — restart the StatefulSet after rotating.
+
+## Claude Code auth (headless)
+
+Claude's interactive paste-prompt does not consume non-TTY stdin, so the in-pod browser login flow cannot complete inside the pod. The work runner uses the supported headless path instead:
+
+1. On a machine where you're logged into Claude: `claude setup-token` (prints a long-lived `claude_oauth_…` token)
+2. Store it in 1Password: vault `homelab`, item `work-claude-oauth`, field `token` (no trailing newline)
+3. The ExternalSecret (`base/claude-oauth.yaml`) syncs it into `work`; the StatefulSet injects it as `CLAUDE_CODE_OAUTH_TOKEN`. Claude reads that env var fresh in every session.
+
+Rotate by minting a new token, updating the item, and `kubectl -n work rollout restart statefulset work-t3code` (env vars never update in a running pod).
+
+## Codex auth
+
+Blocked on the OpenAI org's **device-code-auth** setting (needs enabling by a work org admin). Once on: `codex login --device-auth` inside the pod prints a URL + one-time code; the login completes on its own. Alternative: `codex login --with-access-token` with an API key (billed per-token, not the ChatGPT plan) — would follow the same 1Password → ExternalSecret → env pattern as claude if ever needed.
