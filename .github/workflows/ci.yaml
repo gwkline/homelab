@@ -321,7 +321,12 @@ jobs:
       packages: read
       pull-requests: write
     steps:
+      # depth 2: the gate below diffs HEAD~1..HEAD to see whether
+      # apps/t3code changed; a depth-1 clone would make HEAD~1 vanish and
+      # the gate would silently skip every run.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 2
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -341,6 +346,18 @@ jobs:
         env:
           DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
+          # Repin only when it can matter. Every main build re-resolves the
+          # floating dist-tags (CACHEBUST), so unrelated merges mint new
+          # digests too; without this gate each one would spawn a repin PR
+          # awaiting an admin merge. Act only on the weekly schedule or
+          # when apps/t3code itself changed (a deploy-relevant rebuild).
+          if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
+            t3_changes="$(git diff --name-only HEAD~1 HEAD -- apps/t3code || true)"
+            if [ -z "${t3_changes}" ]; then
+              echo "not scheduled and apps/t3code unchanged — skipping repin"
+              exit 0
+            fi
+          fi
           if grep -q "t3code@${DIGEST}" deploy/t3code/base/statefulset.yaml \
              && grep -q "t3code@${DIGEST}" deploy/work-t3code/base/statefulset.yaml; then
             echo "manifests already pin ${DIGEST} — nothing to do"
