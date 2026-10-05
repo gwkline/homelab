@@ -29,7 +29,7 @@ RUN curl -fsSL https://sh.rustup.rs \
 # within the same channel — so the bleeding edge still flows, but only
 # through a reviewed diff. A rebuild from this commit installs exactly these.
 # renovate: datasource=npm depName=t3
-ARG T3_VERSION=0.0.39-nightly.20260902.1260
+ARG T3_VERSION=0.0.46-nightly.20261004.2657
 # renovate: datasource=npm depName=@openai/codex
 ARG CODEX_VERSION=0.152.1
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
