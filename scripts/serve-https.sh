@@ -11,10 +11,13 @@
 # fails when the ConfigMap copy and this file drift apart).
 set -eu
 
-TS_NS="tailscale"
-SVC_NS="agents"
-HOST="t3code-0"
-PORT="3773"
+# Target is env-overridable so one implementation serves every fixer
+# (t3code-serve-fixer uses the defaults; work-t3code-serve-fixer sets
+# HOST/SVC_NS). The byte-exact ConfigMap copy stays single-source.
+TS_NS="${TS_NS:-tailscale}"
+SVC_NS="${SVC_NS:-agents}"
+HOST="${HOST:-t3code-0}"
+PORT="${PORT:-3773}"
 # Least privilege (issue #32): the proxy pod is discovered via the
 # operator's parent-resource labels, and the name guard below is a second,
 # independent check — this can only ever select the t3code proxy StatefulSet

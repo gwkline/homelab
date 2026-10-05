@@ -43,6 +43,7 @@ This repository is public, so it deliberately carries **no work identifiers**: n
    kubectl apply -k deploy/work-t3code/base
    kubectl apply -k deploy/auto-deploy          # watchlist entry + work RBAC
    kubectl apply -k deploy/homepage/base        # dashboard entry
+   kubectl apply -k deploy/tailscale            # work-t3code-serve-fixer (HTTPS proxy)
    ```
 
 5. **Verify**:

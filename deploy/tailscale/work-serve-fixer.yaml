@@ -1,0 +1,146 @@
+# work-t3code serve-fixer: same workaround as t3code-serve-fixer (the
+# operator provisions serve config once with a stale pod IP), for the
+# isolated work runner's tailnet proxy. Own ServiceAccount/Role per the
+# independent-revocability pattern (serve-fixer.yaml header, issue #32):
+# no pods/log, no write verbs other than pods/exec create, and the only
+# cross-namespace read is the work-t3code-0 pod's own IP, name-pinned
+# below. The scripts come from the shared serve-fixer-cm ConfigMap —
+# serve-https.sh is env-parameterized (HOST/SVC_NS below override its
+# t3code defaults), so there is still exactly one implementation.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: work-serve-fixer
+  namespace: tailscale
+  labels:
+    app.kubernetes.io/part-of: homelab
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: work-serve-fixer
+  namespace: tailscale
+  labels:
+    app.kubernetes.io/part-of: homelab
+rules:
+  # Discovery only (read-only): proxy pod names are operator-generated.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # The repair primitive (`tailscale serve` inside the work-t3code proxy pod).
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: work-serve-fixer
+  namespace: tailscale
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: work-serve-fixer
+subjects:
+  - kind: ServiceAccount
+    name: work-serve-fixer
+---
+# Read-only access to the work runner pod's IP from the work namespace,
+# pinned to the StatefulSet pod's stable name — this identity cannot read
+# any personal workload's pods (the isolation boundary holds here too).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: work-serve-fixer-app-reader
+  namespace: work
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: ["work-t3code-0"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: work-serve-fixer-app-reader
+  namespace: work
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: work-serve-fixer-app-reader
+subjects:
+  - kind: ServiceAccount
+    name: work-serve-fixer
+    namespace: tailscale
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: work-t3code-serve-fixer
+  namespace: tailscale
+  labels:
+    app.kubernetes.io/name: work-t3code-serve-fixer
+    app.kubernetes.io/part-of: homelab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: work-t3code-serve-fixer
+  template:
+    metadata:
+      labels:
+        app: work-t3code-serve-fixer
+    spec:
+      serviceAccountName: work-serve-fixer
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: fixer
+          # Same digest-pinned image as t3code-serve-fixer (issues #91, #32):
+          # a swapped mutable tag must not be able to replace the pod that
+          # holds exec access.
+          image: ghcr.io/gwkline/homelab/loop-agent@sha256:331ed63c3ff4e781c10c1044c1c5ad475c5d6d8d6a3d3e02bed05a3f6a6e12a3
+          command:
+            - /bin/sh
+            - /scripts/serve-fixer.sh
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # serve-https.sh target overrides (defaults point at t3code-0
+            # in agents): this fixer converges the work runner's proxy.
+            - name: HOST
+              value: work-t3code-0
+            - name: SVC_NS
+              value: work
+            # kubectl's discovery cache lives under $HOME; point it at the
+            # writable emptyDir since the root filesystem is read-only.
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: t3code-serve-fixer
+            defaultMode: 0755
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi

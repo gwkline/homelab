@@ -75,6 +75,23 @@ else
   echo "  FAIL: t3code-0 LB address pending"
   fail=1
 fi
+# Work runner (work-t3code): same supported-endpoint contract, its own fixer.
+whost=$(kubectl get svc work-t3code-0 -n work -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+if [ -n "$whost" ]; then
+  code=$(curl -s -m 10 -o /dev/null -w "%{http_code}" "https://${whost}/")
+  curl_rc=$?
+  if [ "$curl_rc" -ne 0 ]; then
+    echo "  FAIL: https://$whost request failed (curl exit $curl_rc — certificate/TLS or connection error; code $code)"
+    fail=1
+  elif [ "$code" = "200" ]; then
+    echo "  ok: https://$whost -> 200"
+  else
+    echo "  FAIL: https://$whost -> $code (502 = stale serve backend; fixer logs: kubectl logs -n tailscale deploy/work-t3code-serve-fixer)"
+    fail=1
+  fi
+else
+  echo "  WARN: work-t3code-0 LB address pending (work runner not deployed?)"
+fi
 
 echo "== 6. tailscale service annotations =="
 # Every exposed Service must declare its hostname and required tags in the

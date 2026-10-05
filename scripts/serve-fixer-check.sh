@@ -25,7 +25,7 @@ note() { echo "  $1"; }
 bad() { echo "  FAIL: $1"; fail=1; }
 
 echo '==> static: fixer images digest-pinned'
-for f in deploy/tailscale/serve-fixer.yaml deploy/tailscale/panel-serve-fixer.yaml; do
+for f in deploy/tailscale/serve-fixer.yaml deploy/tailscale/panel-serve-fixer.yaml deploy/tailscale/work-serve-fixer.yaml; do
   if grep -E '^[[:space:]]*image:' "$f" | grep -v '@sha256:' >/dev/null 2>&1; then
     bad "unpinned image ref in $f"
   else
@@ -41,7 +41,7 @@ else
 fi
 
 echo '==> static: non-root, read-only rootfs, no privilege escalation'
-for f in deploy/tailscale/serve-fixer.yaml deploy/tailscale/panel-serve-fixer.yaml; do
+for f in deploy/tailscale/serve-fixer.yaml deploy/tailscale/panel-serve-fixer.yaml deploy/tailscale/work-serve-fixer.yaml; do
   for want in 'runAsNonRoot: true' 'readOnlyRootFilesystem: true' 'allowPrivilegeEscalation: false' 'drop: \["ALL"\]'; do
     if grep -qE "$want" "$f"; then
       note "ok: $f has $want"
@@ -61,6 +61,11 @@ if grep -q 'resourceNames: \["panel"\]' deploy/tailscale/panel-serve-fixer.yaml;
   note 'ok: panel-serve-fixer agents read pinned to endpoints panel'
 else
   bad 'panel-serve-fixer.yaml: agents read not pinned to panel endpoints'
+fi
+if grep -q 'resourceNames: \["work-t3code-0"\]' deploy/tailscale/work-serve-fixer.yaml; then
+  note 'ok: work-serve-fixer work-ns read pinned to pod work-t3code-0'
+else
+  bad 'work-serve-fixer.yaml: work pods read not pinned to work-t3code-0'
 fi
 
 echo '==> static: ConfigMap carries byte-exact copies of the repo scripts (issue #11)'
@@ -118,6 +123,7 @@ fi
 # Live checks: assert access as each fixer identity via impersonation.
 T3="--as=system:serviceaccount:tailscale:serve-fixer"
 PAN="--as=system:serviceaccount:tailscale:panel-serve-fixer"
+WK="--as=system:serviceaccount:tailscale:work-serve-fixer"
 
 can() {
   # can <as-flags> <verb> <resource[/name]> <namespace> -> 0 when allowed
@@ -137,8 +143,10 @@ expect() {
 echo '==> live: fixer identities may touch only their own target'
 expect yes "$T3" get pod/t3code-0 agents 'serve-fixer can read pod t3code-0' 'serve-fixer cannot read pod/t3code-0'
 expect yes "$T3" create pods/exec tailscale 'serve-fixer can create pods/exec (documented residual)' 'serve-fixer cannot create pods/exec'
-expect yes "$PAN" get endpoints/panel agents 'panel-serve-fixer can read endpoints panel' 'panel-serve-fixer cannot read endpoints/panel'
+expect yes "$PAN" get endpoints/panel agents 'panel-serve-fixer can read endpoints panel' 'panel-serve-fixer cannot read endpoints panel'
 expect yes "$PAN" create pods/exec tailscale 'panel-serve-fixer can create pods/exec (documented residual)' 'panel-serve-fixer cannot create pods/exec'
+expect yes "$WK" get pod/work-t3code-0 work 'work-serve-fixer can read pod work-t3code-0' 'work-serve-fixer cannot read pod/work-t3code-0'
+expect yes "$WK" create pods/exec tailscale 'work-serve-fixer can create pods/exec (documented residual)' 'work-serve-fixer cannot create pods/exec'
 
 echo '==> live: fixer identities denied everywhere else'
 expect no "$T3" get pod/hermes-0 agents 'serve-fixer denied pod/hermes-0' 'serve-fixer can read pod hermes-0'
@@ -152,6 +160,10 @@ expect no "$PAN" get pod/t3code-0 agents 'panel-serve-fixer cannot read pod/t3co
 expect no "$PAN" get endpoints/t3code-0 agents 'panel-serve-fixer cannot read endpoints/t3code-0' 'panel-serve-fixer can read endpoints t3code-0'
 expect no "$PAN" list pods agents 'panel-serve-fixer cannot list pods in agents' 'panel-serve-fixer can list pods in agents'
 expect no "$PAN" list secrets tailscale 'panel-serve-fixer cannot list secrets' 'panel-serve-fixer can list secrets (proxy authkeys)'
+expect no "$WK" get pod/t3code-0 agents 'work-serve-fixer cannot read personal pod t3code-0' 'work-serve-fixer can read pod t3code-0'
+expect no "$WK" get pod/hermes-0 agents 'work-serve-fixer cannot read pod hermes-0' 'work-serve-fixer can read pod hermes-0'
+expect no "$WK" list pods work 'work-serve-fixer cannot list pods in work' 'work-serve-fixer can list pods in work'
+expect no "$WK" list secrets tailscale 'work-serve-fixer cannot list secrets' 'work-serve-fixer can list secrets (proxy authkeys)'
 
 note 'INFO: pods/exec create is namespace-scoped by necessity (operator-generated pod names, RBAC cannot pin names) — a compromised fixer image could exec into unrelated operator/proxy pods; documented in deploy/tailscale/README.md'
 

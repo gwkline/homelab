@@ -18,3 +18,4 @@ resources:
   - serve-fixer.yaml
   - serve-fixer-cm.yaml
   - panel-serve-fixer.yaml
+  - work-serve-fixer.yaml
