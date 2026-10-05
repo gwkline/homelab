@@ -47,7 +47,7 @@ spec:
           # Same digest as the personal t3code StatefulSet — same image,
           # same admission signature check, different namespace/credentials.
           # Renovate bumps this pin with the other homelab image digests.
-          image: ghcr.io/gwkline/homelab/t3code@sha256:44eadb74b150da72ea43d4210edab86e0d6759f49763a8354999a665d56231bd
+          image: ghcr.io/gwkline/homelab/t3code@sha256:a43547a8722eb606b89557d04b24660935d17dbeced3e47ba182b102b9522ec6
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
