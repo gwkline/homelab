@@ -76,6 +76,17 @@ spec:
                 secretKeyRef:
                   name: work-github-token
                   key: repos
+            # Claude Code headless auth (see claude-oauth.yaml): long-lived
+            # token minted by `claude setup-token`, read fresh by every
+            # claude session. Non-optional on purpose — without it the
+            # runner's claude is dead weight, so fail closed like the
+            # credential above. Rotating = update the 1Password item, wait
+            # for ESO (≤1h), then rollout restart this StatefulSet.
+            - name: CLAUDE_CODE_OAUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: work-claude-oauth
+                  key: token
           volumeMounts:
             - name: data
               mountPath: /data

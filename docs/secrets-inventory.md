@@ -113,6 +113,20 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 | Rotation owner | Operator updates the item fields in 1Password; file-mount reader picks the token up automatically (≤1h 6m). Long-running pod keeps the old value in its exported `GH_TOKEN` — `kubectl -n work rollout restart statefulset work-t3code` after rotating |
 | Status | Per-workload (work runner only) |
 
+### B5. `work-claude-oauth` — Claude Code on the work runner
+
+| Attribute | Value |
+| --- | --- |
+| Namespace | `work` only |
+| Secret name / key | `work-claude-oauth` / `token` |
+| 1Password ref | item `work-claude-oauth`, field `token` (the `claude_oauth_…` token printed by `claude setup-token`, minted on an operator machine with an active Claude subscription) |
+| Delivery | ExternalSecret `deploy/work-t3code/base/claude-oauth.yaml`, `refreshInterval: 1h`, `creationPolicy: Owner`; template trims whitespace |
+| Required permissions | Claude subscription OAuth token; grants model access, no repository access |
+| Consumers | work-t3code StatefulSet (`work`, env `CLAUDE_CODE_OAUTH_TOKEN` via secretKeyRef — the supported headless/CI auth path; claude's interactive paste-prompt does not consume non-TTY stdin, so in-pod browser login cannot complete) |
+| Scope note | Personal-workload credential deliberately placed on the work runner (operator decision 2026-10-04); not synced to any other namespace. Codex on the work runner is separate: it needs the OpenAI org's device-code-auth setting enabled for `codex login --device-auth`, or an API-key path — no secret exists yet |
+| Rotation owner | Operator mints a new `claude setup-token`, updates the 1Password field, then `kubectl -n work rollout restart statefulset work-t3code` (env never updates in a running pod) |
+| Status | Per-workload (work runner only) |
+
 ## C. Bootstrap-only secrets
 
 Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret would be circular) and not part of steady-state GitOps.
@@ -151,7 +165,7 @@ Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret w
 
 Every runtime secret reference in the repo maps to an entry above:
 
-- `secretKeyRef` / `envFrom.secretRef`: hermes (A1), t3code (A1, optional), work-t3code (B4, optional file), panel (A1, optional file), factory orchestrator (A1 + B1), factory security/collector/reviewer/reconciler (A1), loop-agent (A1 + A2, optional), dispatch-watcher (A1 + A2 via examples/jobs.ts patterns), chaos-monkey (A1, optional), backup restic CronJob (B2), orchestrator-generated worker Jobs (A1, B1).
+- `secretKeyRef` / `envFrom.secretRef`: hermes (A1), t3code (A1, optional), work-t3code (B4 repos env; B5 claude env; A1-equivalent token via optional file), panel (A1, optional file), factory orchestrator (A1 + B1), factory security/collector/reviewer/reconciler (A1), loop-agent (A1 + A2, optional), dispatch-watcher (A1 + A2 via examples/jobs.ts patterns), chaos-monkey (A1, optional), backup restic CronJob (B2), orchestrator-generated worker Jobs (A1, B1).
 - Secret volumes: hermes, t3code, panel, loop-agent, dispatcher, chaos-monkey, panel Jobs — all `github-token`/`github-token-writer` (A1/A2); work-t3code — `work-github-token` (B4).
 - `kubectl create secret`: `onepassword-service-account` (C1), `backup-target` emergency script (B2), `ghcr-pull` (A3/C4).
 - Non-Secret credential flows: Tailscale OAuth (C2), K3s token (C3), t3code `auth.json` (B3).
