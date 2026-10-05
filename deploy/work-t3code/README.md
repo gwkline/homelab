@@ -88,4 +88,6 @@ Rotate by minting a new token, updating the item, and `kubectl -n work rollout r
 
 ## Codex auth
 
-Blocked on the OpenAI org's **device-code-auth** setting (needs enabling by a work org admin). Once on: `codex login --device-auth` inside the pod prints a URL + one-time code; the login completes on its own. Alternative: `codex login --with-access-token` with an API key (billed per-token, not the ChatGPT plan) — would follow the same 1Password → ExternalSecret → env pattern as claude if ever needed.
+`codex login` (default browser OAuth) works headless via a callback tunnel: start `codex login` in the pod (it listens on localhost:1455), then `kubectl -n work port-forward work-t3code-0 1455:1455` from the operator machine and open the printed URL in a browser — the localhost redirect lands in the pod and the login completes itself. Tokens persist via the entrypoint's agent-state sync (`~/.codex/auth.json` → PVC).
+
+Account caveat (2026-10-04): a workspace-managed ChatGPT account gets its token grant rejected at the token endpoint ("token_exchange_failed", org policy) even though the browser flow itself works — sign in with a personal ChatGPT account, or have the org enable device-code / unmanaged-client grants. `codex login --device-auth` remains the no-tunnel alternative once the org allows it; an API key (`printenv OPENAI_API_KEY | codex login --with-api-key`) needs no browser and no org policy, but bills at API rates instead of the plan.
