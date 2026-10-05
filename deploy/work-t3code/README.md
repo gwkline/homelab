@@ -70,7 +70,7 @@ Everything lives in the 1Password item `work-github-writer`: widen the PAT's _Re
 
 ## Image updates
 
-The StatefulSet pins the same digest as the personal t3code. Renovate's "homelab image digests" group bumps both manifests in one PR; the auto-deploy watcher applies it (watchlist entry `statefulset,work-t3code,work,deploy/work-t3code/base/statefulset.yaml`).
+The t3code image floats its coding CLIs on npm dist-tags (`t3@nightly`, codex/claude-code `@latest`) — no CLI versions are recorded in this repo. Every image build resolves current versions (a CACHEBUST build-arg defeats the layer cache), CI rebuilds weekly on Monday 06:00 ET, and the `repin-t3code-image` job opens an automerging PR that pins the freshly published digest into both t3code StatefulSets; the auto-deploy watcher applies it (watchlist entry `statefulset,work-t3code,work,deploy/work-t3code/base/statefulset.yaml`). Manifests stay digest-pinned (issue #35) — the float lives in the build, not in what runs. Note: the repin PR is opened with the workflow's GITHUB_TOKEN, which does not trigger CI, so it needs an admin merge (weekly, Monday mornings) until a PAT-driven variant lands.
 
 ## Token rotation
 

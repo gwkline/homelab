@@ -23,25 +23,29 @@ RUN curl -fsSL https://sh.rustup.rs \
   && chmod -R a+rX "${RUSTUP_HOME}" "${CARGO_HOME}" \
   && cargo --version
 
-# Coding CLIs. Every version is a recorded resolution (issue #35): nightly
-# and beta channels are pinned to the exact version the dist-tag pointed at
-# when this image last changed, and Renovate (renovate.json) proposes bumps
-# within the same channel — so the bleeding edge still flows, but only
-# through a reviewed diff. A rebuild from this commit installs exactly these.
-# renovate: datasource=npm depName=t3
-ARG T3_VERSION=0.0.46-nightly.20261004.2657
-# renovate: datasource=npm depName=@openai/codex
-ARG CODEX_VERSION=0.152.1
-# renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.258
+# Coding CLIs (t3, codex, claude-code) float on their npm dist-tags
+# (operator direction 2026-10-05): NO version is recorded in this repo —
+# every image build resolves whatever the channel currently serves, and
+# ci.yaml additionally rebuilds weekly. The previous exact-pin + Renovate
+# flow kept serving stale CLIs (server-side claude 2.1.258 vs client
+# 2.1.289 made model calls fail with "version X or newer is required"),
+# and the nightly pins rotted for a month between bumps. opencode stays
+# pinned: Renovate still proposes reviewed bumps for it.
+#
+# CACHEBUST defeats the GHA layer cache for the resolution layer: with a
+# floating dist-tag, a cached npm-install layer would silently keep the
+# versions some earlier build resolved. CI passes
+# --build-arg CACHEBUST=<run id> on every build so resolution always
+# re-runs; the default keeps plain `docker build` working.
+ARG CACHEBUST=1
 # renovate: datasource=npm depName=opencode-ai
 ARG OPENCODE_VERSION=1.18.23
 # renovate: datasource=npm depName=opencode-ai
 ARG OPENCODE_BETA_VERSION=0.0.0-beta-202608110357
-RUN npm install -g \
-      "t3@${T3_VERSION}" \
-      "@openai/codex@${CODEX_VERSION}" \
-      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+RUN CACHEBUST="${CACHEBUST}" npm install -g \
+      t3@nightly \
+      "@openai/codex@latest" \
+      "@anthropic-ai/claude-code@latest" \
       "opencode-ai@${OPENCODE_VERSION}" \
   && npm install -g --prefix /opt/opencode-v2 "opencode-ai@${OPENCODE_BETA_VERSION}" \
   && ln -sf /opt/opencode-v2/bin/opencode /usr/local/bin/opencode-beta \
