@@ -87,6 +87,16 @@ spec:
                 secretKeyRef:
                   name: work-claude-oauth
                   key: token
+            # Depot build token (see depot-token.yaml). Optional: the item
+            # may be absent — the depot CLI stays inert and the runner
+            # boots regardless. Materializes as soon as the 1Password
+            # item exists (env then lands on the next rollout restart).
+            - name: DEPOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: work-depot-token
+                  key: token
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: /data
