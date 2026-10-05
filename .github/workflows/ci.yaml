@@ -11,6 +11,15 @@ on:
       - ".github/workflows/ci.yaml"
   pull_request:
   workflow_dispatch:
+  # Weekly agent-CLI freshness (2026-10-05): apps/t3code floats t3/codex/
+  # claude-code on npm dist-tags, so each build resolves whatever is
+  # current. Without a code change nothing ever rebuilds, so run the
+  # pipeline every Monday 06:00 ET; the repin-t3code-image job below
+  # rolls the freshly published digest out via an automerging manifest
+  # PR. (Schedule events run on the default branch; the push.paths filter
+  # applies only to pushes.)
+  schedule:
+    - cron: "0 10 * * 1"
 
 env:
   REGISTRY: ghcr.io
@@ -258,9 +267,15 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile || format('apps/{0}/Dockerfile', matrix.app) }}
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # t3code floats its CLIs on dist-tags; a unique CACHEBUST per run
+          # keeps the GHA cache from replaying a stale resolution layer
+          # (see apps/t3code/Dockerfile). Other images don't declare the
+          # ARG, so it is ignored there.
+          build-args: |
+            CACHEBUST=${{ github.run_id }}
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}
 
@@ -275,10 +290,91 @@ jobs:
 
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       - name: Sign image (keyless)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # Same condition as push: above — scheduled main builds publish and
+        # must sign, or signature-verifying admission rejects the rollout.
+        if: (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main'
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
           IMAGE: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.app }}
         run: |
           test -n "${DIGEST}"
           cosign sign --yes "${IMAGE}@${DIGEST}"
+
+  # Floating-CLI rollout loop (2026-10-05). t3code builds resolve current
+  # npm dist-tags, but the StatefulSets pin digests (issue #35) and git is
+  # the only source of what runs — a fresh image alone changes nothing in
+  # the cluster. After any publishing main-line build (merge or weekly
+  # schedule), pin the t3code/work-t3code manifests to the just-published
+  # digest via a PR the auto-deploy watcher then applies. Idempotent: when
+  # the manifests already carry the digest (unchanged CLI resolutions),
+  # the job exits without a PR. Known limitation: pushes with GITHUB_TOKEN
+  # do not trigger CI (GitHub event suppression), so the PR's required
+  # checks will not start and it needs an admin/bypass merge — dropping a
+  # PAT into a repo secret and using it here would make the loop fully
+  # autonomous.
+  repin-t3code-image:
+    needs: [build]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve published t3code digest
+        id: digest
+        run: |
+          d="$(docker buildx imagetools inspect "ghcr.io/${{ github.repository }}/t3code:latest" --format '{{.Manifest.Digest}}')"
+          test -n "$d"
+          echo "digest=$d" >> "$GITHUB_OUTPUT"
+
+      - name: Update manifest pins (no-op when current)
+        id: update
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          if grep -q "t3code@${DIGEST}" deploy/t3code/base/statefulset.yaml \
+             && grep -q "t3code@${DIGEST}" deploy/work-t3code/base/statefulset.yaml; then
+            echo "manifests already pin ${DIGEST} — nothing to do"
+            exit 0
+          fi
+          sed -i "s#t3code@sha256:[a-f0-9]\\{64\\}#t3code@${DIGEST}#g" \
+            deploy/t3code/base/statefulset.yaml \
+            deploy/work-t3code/base/statefulset.yaml
+          kubectl kustomize deploy/t3code/base >/dev/null
+          kubectl kustomize deploy/work-t3code/base >/dev/null
+          echo "changed=1" >> "$GITHUB_OUTPUT"
+
+      - name: Open repin PR (automerge when possible)
+        if: steps.update.outputs.changed == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          open="$(gh pr list --state open --json headRefName --jq '.[].headRefName' | grep -c '^repin/t3code' || true)"
+          if [ "$open" != "0" ]; then
+            echo "a repin PR is already open — skipping (it will carry the newest digest)"
+            exit 0
+          fi
+          branch="repin/t3code-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -am "Re-pin t3code/work-t3code to ${DIGEST}"
+          git push origin "$branch"
+          gh pr create --fill-first --title "Re-pin t3code images to the latest floating build"
+          # GitHub suppresses workflow events caused by GITHUB_TOKEN, so this
+          # bot PR's required checks will not start on their own and true
+          # auto-merge cannot fire. Enable it anyway (free if a PAT-driven
+          # variant lands later); otherwise the PR waits for an admin merge.
+          if ! gh pr merge "$branch" --auto --squash --delete-branch; then
+            echo "auto-merge not enabled for this PR — it awaits an admin merge"
+          fi
