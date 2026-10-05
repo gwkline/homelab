@@ -1,0 +1,21 @@
+# work-t3code's own state dir: environment-id, browser pairings, sessions,
+# agent CLI credentials. Same standalone-claim pattern as the personal
+# t3code (see deploy/t3code/base/t3state-pvc.yaml): the StatefulSet mounts
+# it by name and declares no volumeClaimTemplate for it.
+#
+# Deliberately NOT referenced by deploy/backup/base: work credentials must
+# not land in the personal restic/B2 bucket. Consequence: a lost node means
+# re-pairing the browser session and re-logging in the coding CLIs —
+# accepted trade-off (operator decision 2026-10-04).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: t3state-work-t3code-0
+  namespace: work
+  labels:
+    app.kubernetes.io/part-of: homelab
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi

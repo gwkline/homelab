@@ -1,0 +1,37 @@
+# Governs the StatefulSet's pod identity. Headless: DNS resolves to pod IPs
+# and the declared port is what Homepage's siteMonitor targets.
+apiVersion: v1
+kind: Service
+metadata:
+  name: work-t3code-headless
+  namespace: work
+spec:
+  clusterIP: None
+  selector:
+    app: work-t3code
+  ports:
+    - name: http
+      port: 3773
+      targetPort: http
+---
+# Tailnet exposure via the Tailscale operator, same pattern as t3code-0:
+# https://work-t3code-0.<tailnet>.ts.net with automatic certs. The OAuth
+# client is only allowed tag:k8s-operator (deploy/tailscale/README.md).
+apiVersion: v1
+kind: Service
+metadata:
+  name: work-t3code-0
+  namespace: work
+  annotations:
+    tailscale.com/hostname: work-t3code-0
+    tailscale.com/tags: tag:k8s-operator
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app: work-t3code
+    statefulset.kubernetes.io/pod-name: work-t3code-0
+  ports:
+    - name: https
+      port: 443
+      targetPort: http

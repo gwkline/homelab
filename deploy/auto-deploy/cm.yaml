@@ -28,6 +28,9 @@ data:
     cronjob,factory-collector,sandbox,deploy/factory/base/collector-cronjob.yaml
     cronjob,factory-reclaimer,sandbox,deploy/factory/base/reclaimer-cronjob.yaml
     cronjob,factory-reconciler,sandbox,deploy/factory/base/reconciler-cronjob.yaml
+    # Work runner (work-t3code): rides the same t3code image, so Renovate's
+    # grouped homelab-digest PR must roll it out too.
+    statefulset,work-t3code,work,deploy/work-t3code/base/statefulset.yaml
   watch.sh: |
     #!/bin/sh
     # Declarative image sync for the agents namespace (issue #35). The old

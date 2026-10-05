@@ -1,0 +1,45 @@
+# Work GitHub credential, synced from 1Password into the `work` namespace.
+#
+# 1Password item contract (docs/secrets-inventory.md B4):
+#   vault:  homelab
+#   item:   work-github-writer
+#   fields: token — fine-grained PAT whose Repository access covers ONLY the
+#                  operator's selected work repositories, with Contents and
+#                  Pull requests read+write. The repo scoping IS the
+#                  isolation boundary.
+#           repos — the repo URLs to clone into the workspace, one per
+#                  line. Kept out of git so this (public) repository carries
+#                  no work identifiers; must stay in sync with the PAT's
+#                  Repository access list.
+#
+# This is the ONLY GitHub credential mounted into work-t3code (single
+# read+write token by operator decision 2026-10-04). It can never reach a
+# personal repository; the personal tokens (github-readonly/github-writer)
+# are not synced into `work` and no workload there can read them.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: work-github-token
+  namespace: work
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: onepassword
+  target:
+    name: work-github-token
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        # Trim guards against a trailing newline in the 1Password field —
+        # a newline in the token breaks git auth.
+        token: "{{ .token | trim }}"
+        repos: "{{ .repos | trim }}"
+  data:
+    - secretKey: token
+      remoteRef:
+        key: work-github-writer/token
+    - secretKey: repos
+      remoteRef:
+        key: work-github-writer/repos

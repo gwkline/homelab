@@ -17,6 +17,7 @@ kubectl apply -k deploy/github-tokens/base
 | --- | --- | --- | --- | --- |
 | `github-readonly` | `token` | `github-token` | agents, sandbox | fine-grained PAT, Contents: read-only on every private repo agents read |
 | `github-writer` | `token` | `github-token-writer` | sandbox | fine-grained PAT, Contents + Pull requests: write on target repos **only** |
+| `work-github-writer` | `token`, `repos` | `work-github-token` | work | fine-grained PAT, Contents + Pull requests: read+write, repository access limited to the operator's selected work repositories **only**; `repos` = clone URLs, one per line, kept out of git (work-t3code isolation boundary — see `deploy/work-t3code/README.md`) |
 
 Read and writer credentials are separate 1Password items with separate permissions; the read token never gets write scopes and the writer never grants access to the read token's repos. The writer item is **optional**: if it is absent, the `github-token-writer` ExternalSecret reports `Ready=False` and keeps retrying — the expected state. Every consumer mounts it with `optional: true`, so read-only jobs are unaffected.
 

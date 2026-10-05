@@ -1,14 +1,16 @@
-# Network isolation for the two agent namespaces.
+# Network isolation for the agent namespaces plus the work isolation zone.
 #
-# INGRESS: default-deny in both namespaces. Per-workload exposure rules live
-# beside each workload (e.g. deploy/t3code/base/netpol.yaml) so one apply
-# brings up everything it needs.
+# INGRESS: default-deny in agents, sandbox, and work. Per-workload exposure
+# rules live beside each workload (e.g. deploy/t3code/base/netpol.yaml,
+# deploy/work-t3code/base/netpol.yaml) so one apply brings up everything it
+# needs.
 #
-# EGRESS: sandbox (throwaway loop/factory pods) is default-deny with a narrow
-# allowlist — DNS to kube-dns plus the public internet, with every private
-# range carved out (k8s API/service CIDRs, node CIDRs, RFC1918 LAN,
-# link-local metadata, tailnet CGNAT). Workloads that need private targets
-# get a named allowance beside their manifests — see docs/egress-policy.md.
+# EGRESS: sandbox (throwaway loop/factory pods) and `work` (isolated work
+# code runner) are default-deny with a narrow allowlist — DNS to kube-dns
+# plus the public internet, with every private range carved out (k8s
+# API/service CIDRs, node CIDRs, RFC1918 LAN, link-local metadata, tailnet
+# CGNAT). Workloads that need private targets get a named allowance beside
+# their manifests — see docs/egress-policy.md.
 # The `agents` namespace (interactive t3code/hermes) keeps egress open:
 # hermes requires the Kubernetes API, and its identity is trusted.
 apiVersion: networking.k8s.io/v1
@@ -28,6 +30,64 @@ metadata:
 spec:
   podSelector: {}
   policyTypes: [Ingress]
+---
+# Work namespace egress baseline (work-t3code). `work` is the work
+# isolation zone: pods may reach the public internet (GitHub, npm, model
+# APIs) and nothing else — not the Kubernetes API, not the LAN or tailnet,
+# not any other homelab service. Failure mode is fail-closed: a new workload
+# in `work` without its own egress allowance simply cannot phone anywhere
+# private. Ingress is default-deny; the runner's exposure rules live in
+# deploy/work-t3code/base/netpol.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: work
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: work
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+---
+# Same allowlist shape as sandbox-egress-public-only: DNS to kube-dns
+# only, then the public internet minus every private/special range. Work
+# code needs broad package/registry access to be useful as a runner; the
+# carve-outs are what keep it off the personal stack.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: work-egress-public-only
+  namespace: work
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: # 1. DNS: kube-dns pods only
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to: # 2. Public internet except private/special ranges
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8 # RFC1918 + k3s pod/service CIDRs (incl. API 10.43.0.1)
+              - 172.16.0.0/12 # RFC1918
+              - 192.168.0.0/16 # RFC1918 — node/LAN addresses
+              - 169.254.0.0/16 # link-local (cloud metadata et al.)
+              - 100.64.0.0/10 # CGNAT — tailnet and future private services
 ---
 # Egress baseline: nothing leaves any sandbox pod unless a policy allows it.
 # Selects every sandbox pod (including factory profile pods) so a future

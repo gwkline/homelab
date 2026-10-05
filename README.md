@@ -63,7 +63,7 @@ apps/loop-agent/    unattended loop image (Chromium, docker CLI)
                     Both coding images ship a pinned Rust toolchain (cargo).
 apps/hermes/        persistent orchestrator image (kubectl included)
 deploy/
-  namespaces.yaml   agents + sandbox + database namespaces with PSA labels
+  namespaces.yaml   agents + sandbox + database + work namespaces with PSA labels
   policies/base/    default-deny NetworkPolicies
   image-policy/base/ cosign image-signature admission policy (ClusterImagePolicy; ADR-004)
   cnpg/base/        pinned CloudNativePG operator 1.30.0 (prerequisite for postgres)
@@ -76,6 +76,7 @@ deploy/
   dispatcher/base/  label-driven issue -> Job automation
   factory/base/      issue collector -> coding worker -> draft PR
   github-tokens/base/ ExternalSecrets syncing GitHub tokens from 1Password
+  work-t3code/      isolated work code runner (scoped token, public-repo-safe)
   tailscale/        Tailscale operator install notes
    t3code/base/      StatefulSet + per-replica Services
    hermes/base/      StatefulSet + scoped RBAC + cluster guide

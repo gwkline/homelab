@@ -1,0 +1,37 @@
+# Workload-owned exposure rules. Namespace-level default-deny (ingress AND
+# egress) for `work` lives in deploy/policies/base; this file declares the
+# only paths allowed in:
+#   1. Tailscale operator proxies (the tailnet UI is how the runner is used).
+#   2. Homepage siteMonitor — cross-namespace (homepage runs in `agents`),
+#      so the rule needs the namespaceSelector + podSelector combination.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-to-work-t3code
+  namespace: work
+spec:
+  podSelector:
+    matchLabels:
+      app: work-t3code
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tailscale
+      ports:
+        - protocol: TCP
+          port: 3773
+    - from:
+        # Homepage siteMonitor: pod-scoped and namespace-scoped, so only the
+        # homepage pod in `agents` can probe :3773 — other agents pods stay
+        # denied by the work namespace's default-deny-ingress.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agents
+          podSelector:
+            matchLabels:
+              app: homepage
+      ports:
+        - protocol: TCP
+          port: 3773
