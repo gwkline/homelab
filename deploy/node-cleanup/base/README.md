@@ -32,6 +32,21 @@ recurrence:
    23 6 * * 0 root /usr/local/bin/node-cleanup.sh >>/var/log/node-cleanup.log 2>&1
    ```
 
+## Kill switch
+
+The in-cluster half is disarmed by one ConfigMap key — same pattern as the
+chaos monkey (`deploy/chaos/base`). Set `enabled` to anything but `"true"`
+and the next run exits before deleting anything:
+
+```sh
+kubectl -n agents patch configmap node-cleanup-script \
+  -p '{"data":{"enabled":"false"}}'
+```
+
+To re-arm, patch it back to `"true"` (or re-apply this directory). The
+node-side script has no switch — it only runs when invoked, and its first
+invocation should be `--dry-run`.
+
 ## Acceptance criteria (#252)
 
 - Evicted-pod count back to 0 and staying there: the CronJob + the

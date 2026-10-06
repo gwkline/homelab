@@ -4,16 +4,28 @@
 # deliberately NOT done here — it needs the node's containerd socket, which
 # is node-root-equivalent and would break the documented security model (see
 # README.md); it stays a node-side step of scripts/node-cleanup.sh.
+#
+# Kill switch: set key `enabled` to anything but "true" and the next run exits
+# before deleting anything (same pattern as chaos-config). Behaviour and
+# switch both live in this ConfigMap, so both stay in git.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: node-cleanup-script
 data:
+  enabled: "true"
   cleanup.sh: |
     #!/bin/sh
     set -eu
 
     log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+
+    # ---- kill switch --------------------------------------------------------
+    enabled="$(cat /etc/node-cleanup/enabled 2>/dev/null || true)"
+    if [ "$enabled" != "true" ]; then
+      log "kill switch: node-cleanup-script/enabled='${enabled:-<unset>}' — no deletions"
+      exit 0
+    fi
 
     delete_pod() {
       # --wait=false: never block on graceful termination of debris;
