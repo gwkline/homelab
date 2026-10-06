@@ -66,6 +66,8 @@ POST /api/factory/merge   { repo, pr, strategy: "squash"|"merge"|"rebase" }
 GET  /api/factory/stats?repo=<owner/name>
      → { repo, weeks: [8 ISO Mondays], stats: { openIssues, openPrs,
          issuesOpened[8], issuesClosed[8], prsOpened[8], prsMerged[8] } }
+     Responses are cached server-side for ~120s (`cached: true` on a cache
+     hit) so panel refreshes don't hammer GitHub.
 GET  /api/factory/stats/rollup
      → one call over every FACTORY_REPOS repo: { totals, repos, weeks,
          history, persisted }. Cross-repo totals + per-repo breakdown derived

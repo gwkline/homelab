@@ -275,9 +275,14 @@ test("GET /api/factory/stats aggregates queue, output and merge trend", async ()
 
   const day = 86_400_000;
 
+  // Upstream request counter: proves the second stats hit is served from
+  // the server-side cache without any new GitHub round-trips (#184).
+  let ghHits = 0;
+
   // Mock GitHub API server: issue labels, PR lists, per-PR detail enrichment
   const gh = createServer((req, res) => {
     const url = req.url ?? "";
+    ghHits += 1;
     if (req.headers.authorization !== "Bearer test-token") {
       res.writeHead(401).end('{"message":"unauthorized"}');
       return;
@@ -495,6 +500,17 @@ test("GET /api/factory/stats aggregates queue, output and merge trend", async ()
       j.weeklyMerges.reduce((acc, w) => acc + w.merged, 0),
       2
     );
+
+    // Second hit inside the ~120s TTL comes from the server-side cache
+    // (#184): flagged cached, and zero new upstream GitHub requests.
+    const hitsAfterFirst = ghHits;
+    assert.ok(hitsAfterFirst > 0);
+    const r2 = await fetch(
+      `http://127.0.0.1:${port}/api/factory/stats?repo=gwkline/launchpad`
+    );
+    assert.equal(r2.status, 200);
+    assert.equal(((await r2.json()) as { cached: boolean }).cached, true);
+    assert.equal(ghHits, hitsAfterFirst);
   } finally {
     child.kill();
     gh.close();
