@@ -593,36 +593,55 @@ jobs:
         id: repin
         run: |
           set -eu
-          manifest_for() {
+          # app → every manifest that pins its image (single source of truth
+          # per component; factory apps fan out across cronjobs + profiles).
+          files_for() {
             case "$1" in
-              panel)              echo deploy/panel/base/deployment.yaml ;;
-              hermes)             echo deploy/hermes/base/statefulset.yaml ;;
-              knowledge-ingest)   echo deploy/knowledge/base/deployment-knowledge-ingest.yaml ;;
-              knowledge-retrieval) echo deploy/knowledge/base/deployment-knowledge-retrieval.yaml ;;
+              panel)               echo "deploy/panel/base/deployment.yaml" ;;
+              hermes)              echo "deploy/hermes/base/statefulset.yaml" ;;
+              knowledge-ingest)    echo "deploy/knowledge/base/deployment-knowledge-ingest.yaml" ;;
+              knowledge-retrieval) echo "deploy/knowledge/base/deployment-knowledge-retrieval.yaml" ;;
+              factory/orchestrator) echo "deploy/factory/base/orchestrator-cronjob.yaml deploy/factory/base/orchestrator-launchpad-cronjob.yaml deploy/factory/base/reclaimer-cronjob.yaml" ;;
+              factory/reviewer)     echo "deploy/factory/base/reviewer-cronjob.yaml deploy/factory/base/reviewer-launchpad-cronjob.yaml deploy/factory/base/medic-cronjob.yaml deploy/factory/base/sweeper-cronjob.yaml deploy/factory/base/profile-reviewer.yaml" ;;
+              factory/security)    echo "deploy/factory/base/security-cronjob.yaml deploy/factory/base/profile-security.yaml" ;;
+              factory/worker)      echo "deploy/factory/base/profile-code-pr.yaml deploy/factory/base/profile-medic.yaml" ;;
+              factory/collector)   echo "deploy/factory/base/collector-cronjob.yaml" ;;
+              loop-agent)          echo "deploy/factory/base/reconciler-cronjob.yaml" ;;
+            esac
+          }
+          # source dir whose change means a deploy-relevant rebuild. For the
+          # factory/reviewer image this includes medic + sweeper sources (they
+          # ride the reviewer image; their scripts live in apps/factory/*).
+          srcdirs_for() {
+            case "$1" in
+              factory/reviewer) echo "apps/factory/reviewer apps/factory/medic" ;;
+              *)                 echo "apps/${1}" ;;
             esac
           }
           REPINNED=""
-          for app in panel hermes knowledge-ingest knowledge-retrieval; do
-            manifest="$(manifest_for "$app")"
+          for app in panel hermes knowledge-ingest knowledge-retrieval \
+                     factory/orchestrator factory/reviewer factory/security factory/worker factory/collector loop-agent; do
+            files="$(files_for "$app")"
             if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
-              # Deploy-relevant change only: the app's source or its own
-              # manifest dir. Unrelated merges also mint new digests (every
+              # Deploy-relevant change only: the app's source or one of its
+              # pin files. Unrelated merges also mint new digests (every
               # build re-pushes :latest), so without this gate each merge
-              # would spawn a churn PR for every app.
-              src="apps/${app}"
-              mdir="$(dirname "$manifest")"
-              diffs="$(git diff --name-only HEAD~1 HEAD -- "$src" "$mdir" || true)"
+              # would spawn a churn PR for every app. A repin commit itself
+              # trips the file gate, finds the digest already pinned, and
+              # no-ops.
+              srcdirs="$(srcdirs_for "$app")"
+              diffs="$(git diff --name-only HEAD~1 HEAD -- ${srcdirs} ${files} || true)"
               if [ -z "${diffs}" ]; then
                 echo "${app}: unchanged — skip"
                 continue
               fi
             fi
             digest="$(docker buildx imagetools inspect "ghcr.io/${GITHUB_REPOSITORY}/${app}:latest" --format '{{.Manifest.Digest}}')"
-            if grep -q "/${app}@${digest}" "$manifest"; then
+            if grep -q "/${app}@${digest}" ${files}; then
               echo "${app}: already pinned to ${digest}"
               continue
             fi
-            sed -i "s#/${app}@sha256:[a-f0-9]\\{64\\}#/${app}@${digest}#g" "$manifest"
+            sed -i "s#/${app}@sha256:[a-f0-9]\\{64\\}#/${app}@${digest}#g" ${files}
             REPINNED="${REPINNED} ${app}"
             echo "${app}: repinned -> ${digest}"
           done
