@@ -1,0 +1,356 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "content": "# CNPG / Postgres health (k8s level)\n\nPostgres runs as the CloudNativePG `Cluster` **pg-primary** (`deploy/postgres`, namespace **database**, single instance — not HA). This dashboard is deliberately k8s-level only: **no postgres exporter is deployed on main** — `deploy/postgres/base/netpol.yaml` already reserves scrape access for one on port 9187, so pg-level panels (connections, replication lag, cache hit rate) can be added here once an exporter lands. Tracked as a gap in `deploy/grafana/base/README.md`.\n\n**Datasource:** every panel uses the *Metrics datasource* variable at the top of the page — pick VictoriaMetrics (or any Prometheus-compatible datasource); it is deliberately **not pinned** so this dashboard works with whichever metrics backend is provisioned.",
+        "mode": "markdown"
+      },
+      "title": "About this dashboard",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Containers reporting Ready in the database namespace — for pg-primary this should equal the instance count.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 5 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(kube_pod_status_ready{namespace=\"database\", condition=\"true\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Ready containers",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Container restarts across the postgres cluster pods in the last 24h.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 5 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"database\"}[24h]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Restarts (24h)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Pods currently Running in the database namespace.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 5 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(kube_pod_status_phase{namespace=\"database\", phase=\"Running\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Running pods",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Fullest postgres PVC (pg_wal + data). Fires homelab-pvc-nearly-full at >90%.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 90 }
+            ]
+          },
+          "max": 100,
+          "min": 0,
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 5 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "max(100 * (1 - kubelet_volume_stats_available_bytes{namespace=\"database\"} / kubelet_volume_stats_capacity_bytes{namespace=\"database\"}))",
+          "refId": "A"
+        }
+      ],
+      "title": "Max PVC usage",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "CPU used by each postgres pod vs its requested CPU.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "id": 6,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"database\", container!=\"\"}[5m]))",
+          "legendFormat": "{{pod}} used",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum by (pod) (kube_pod_container_resource_requests{namespace=\"database\", resource=\"cpu\", unit=\"core\"})",
+          "legendFormat": "{{pod}} requested",
+          "refId": "B"
+        }
+      ],
+      "title": "CPU usage vs requests",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Memory working set of each postgres pod vs its requested memory.",
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "id": 7,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"database\", container!=\"\"})",
+          "legendFormat": "{{pod}} used",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum by (pod) (kube_pod_container_resource_requests{namespace=\"database\", resource=\"memory\", unit=\"byte\"})",
+          "legendFormat": "{{pod}} requested",
+          "refId": "B"
+        }
+      ],
+      "title": "Memory working set vs requests",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Container restarts per postgres pod over the last 24h — CrashLoop or OOM churn shows up here first.",
+      "fieldConfig": {
+        "defaults": { "min": 0, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "id": 8,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace=\"database\"}[24h]))",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Restarts by pod (24h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Consumed capacity per postgres PVC from kubelet volume stats.",
+      "fieldConfig": {
+        "defaults": { "max": 100, "min": 0, "unit": "percent" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "id": 9,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "100 * (1 - kubelet_volume_stats_available_bytes{namespace=\"database\"} / kubelet_volume_stats_capacity_bytes{namespace=\"database\"})",
+          "legendFormat": "{{persistentvolumeclaim}}",
+          "refId": "A"
+        }
+      ],
+      "title": "PVC usage (%)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Current volume capacity vs what the PVC spec requested — CNPG resizes PVCs when the Cluster spec grows.",
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "id": 10,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "kubelet_volume_stats_capacity_bytes{namespace=\"database\"}",
+          "legendFormat": "{{persistentvolumeclaim}} capacity",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "kube_persistentvolumeclaim_resource_requests_storage_bytes{namespace=\"database\"}",
+          "legendFormat": "{{persistentvolumeclaim}} requested",
+          "refId": "B"
+        }
+      ],
+      "title": "PVC capacity vs requested",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Pod phase in the database namespace over time — pg-primary-1 plus CNPG's own pods in cnpg-system are excluded (this namespace only).",
+      "fieldConfig": {
+        "defaults": { "min": 0, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "id": 11,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum by (phase) (kube_pod_status_phase{namespace=\"database\"})",
+          "legendFormat": "{{phase}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Pod phase over time",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["homelab", "postgres", "metrics"],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "VictoriaMetrics",
+          "value": "victoriametrics"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Metrics datasource",
+        "multi": false,
+        "name": "DS_METRICS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Homelab Postgres",
+  "uid": "homelab-postgres",
+  "version": 1
+}
