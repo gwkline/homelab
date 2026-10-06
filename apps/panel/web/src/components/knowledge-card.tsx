@@ -1,153 +1,32 @@
-import { Database, ExternalLink, RefreshCw, Search } from "lucide-react";
+import {
+  Database,
+  ExternalLink,
+  Maximize2,
+  RefreshCw,
+  Search,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import {
+  EXCERPT_MAX,
+  ago,
+  citationUrl,
+  getJson,
+  postJson,
+  sourceBadge,
+  sourceLabel,
+} from "../lib/knowledge";
+import type { SearchHit, SourceRow, SyncJob } from "../lib/knowledge";
 import { cn } from "../lib/utils";
 import { Badge, Button, Card, CardHeader, Input } from "./ui";
 
-interface SourceJob {
-  jobId: string;
-  startedAt: string | null;
-  status: string;
-}
-interface SourceRow {
-  chunkCount: number;
-  currentJob: SourceJob | null;
-  documentCount: number;
-  kind: string;
-  lastError: { at: string | null; message: string } | null;
-  lastSyncAt: string | null;
-  namespace: string;
-  path: string | null;
-  ref: string | null;
-  repo: string | null;
-  sourceId: string;
-  url: string | null;
-}
-interface SyncJob {
-  attempts: number | null;
-  chunksIngested: number | null;
-  documentsIngested: number | null;
-  error: string | null;
-  finishedAt: string | null;
-  jobId: string;
-  sourceId: string | null;
-  startedAt: string | null;
-  status: string;
-}
-interface SearchHit {
-  anchors: { start: number | null; type: string; value: string | null }[];
-  chunkId: string;
-  namespace: string;
-  scores: {
-    bm25: { rank: number; score: number } | null;
-    fused: { rank: number; score: number };
-    vector: { rank: number; score: number } | null;
-  };
-  source: {
-    kind: string;
-    path: string | null;
-    sourceId: string;
-    url: string | null;
-  };
-  text: string;
-  title: string;
-  version: { commit: string | null; createdAt: string; status: string };
-}
-
 type Phase = "error" | "loading" | "ready" | "unconfigured";
 
-const ago = (iso: string | null): string => {
-  if (iso === null) {
-    return "never";
-  }
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) {
-    return "unknown";
-  }
-  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-  if (s < 60) {
-    return `${s}s ago`;
-  }
-  const m = Math.floor(s / 60);
-  if (m < 60) {
-    return `${m}m ago`;
-  }
-  const h = Math.floor(m / 60);
-  if (h < 24) {
-    return `${h}h ago`;
-  }
-  return `${Math.floor(h / 24)}d ago`;
-};
-
-const sourceLabel = (s: SourceRow): string => {
-  if (s.repo !== null) {
-    return s.ref === null ? s.repo : `${s.repo}@${s.ref}`;
-  }
-  return s.path ?? s.url ?? s.sourceId;
-};
-
-// Citation link: prefer the resolvable source URL; github sources without one
-// are rebuilt from (owner/repo, commit, path). GitHub blob links get a line
-// anchor from the chunk's first offset anchor so the link opens at the cited
-// passage.
-const withLineAnchor = (url: string, hit: SearchHit): string => {
-  if (!url.startsWith("https://github.com/") || !url.includes("/blob/")) {
-    return url;
-  }
-  const offset = hit.anchors.find(
-    (a) => a.type === "offset" && a.start !== null
-  );
-  if (offset === undefined || offset.start === null) {
-    return url;
-  }
-  return `${url}#L${offset.start + 1}`;
-};
-
-const citationUrl = (hit: SearchHit): string | null => {
-  if (hit.source.url !== null && hit.source.url !== "") {
-    return withLineAnchor(hit.source.url, hit);
-  }
-  if (hit.source.kind === "github" && hit.source.path !== null) {
-    const commit = hit.version.commit ?? "main";
-    return withLineAnchor(
-      `https://github.com/${hit.source.sourceId}/blob/${commit}/${hit.source.path}`,
-      hit
-    );
-  }
-  return null;
-};
-
-const sourceBadge = (s: SourceRow): string => {
-  if (s.currentJob !== null) {
-    return s.currentJob.status;
-  }
-  return s.lastError === null ? "healthy" : "failed";
-};
-
-const getJson = async (
-  url: string
-): Promise<{ body: Record<string, unknown>; ok: boolean }> => {
-  const res = await fetch(url);
-  const body = await res.json().catch(() => ({}));
-  return { body: body as Record<string, unknown>, ok: res.ok };
-};
-
-const postJson = async (
-  url: string,
-  payload: Record<string, unknown>
-): Promise<{ body: Record<string, unknown>; ok: boolean }> => {
-  const res = await fetch(url, {
-    body: JSON.stringify(payload),
-    headers: { "content-type": "application/json" },
-    method: "POST",
-  });
-  const body = await res.json().catch(() => ({}));
-  return { body: body as Record<string, unknown>, ok: res.ok };
-};
-
-const EXCERPT_MAX = 240;
-
-export const KnowledgeCard = () => {
+export const KnowledgeCard = ({
+  onOpenExplorer,
+}: {
+  onOpenExplorer?: () => void;
+} = {}) => {
   const [phase, setPhase] = useState<Phase>("loading");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [sources, setSources] = useState<SourceRow[]>([]);
@@ -294,12 +173,22 @@ export const KnowledgeCard = () => {
         title="knowledge"
         subtitle="registered sources · ingestion health · cited search"
         action={
-          <Button
-            onClick={loadSources}
-            className="bg-muted text-foreground h-7 px-2 py-1 text-xs hover:opacity-80"
-          >
-            <RefreshCw size={12} /> reload
-          </Button>
+          <div className="flex items-center gap-2">
+            {onOpenExplorer !== undefined && (
+              <Button
+                onClick={onOpenExplorer}
+                className="bg-muted text-foreground h-7 px-2 py-1 text-xs hover:opacity-80"
+              >
+                <Maximize2 size={12} /> open explorer
+              </Button>
+            )}
+            <Button
+              onClick={loadSources}
+              className="bg-muted text-foreground h-7 px-2 py-1 text-xs hover:opacity-80"
+            >
+              <RefreshCw size={12} /> reload
+            </Button>
+          </div>
         }
       />
       <div className="space-y-5 p-5">
