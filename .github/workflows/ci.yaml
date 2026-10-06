@@ -55,7 +55,7 @@ jobs:
         run: npx ultracite check
       - name: oxfmt --check (refuse unformatted files)
         run: npx oxfmt --check .
-      - name: tsc --noEmit (max-strict tsconfigs, panel + factory github-app)
+      - name: tsc --noEmit (max-strict tsconfigs, panel + factory github-app + collector)
         run: npm run typecheck
       - name: No CommonJS anywhere (require/module.exports)
         run: |

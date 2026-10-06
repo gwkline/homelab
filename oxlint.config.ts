@@ -42,7 +42,6 @@ export default {
       rules: { "no-bitwise": "off" },
     },
     {
-    {
       // The ingest/embedding workers (#57) are sequential by design: retries
       // back off between attempts, the bounded pool drains a cursor, and
       // chunk upserts must preserve order inside one transaction.
