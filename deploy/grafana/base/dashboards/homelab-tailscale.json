@@ -1,0 +1,323 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "content": "# Tailscale operator, proxies, and serve-fixers\n\nThe **tailscale** namespace runs the Tailscale Kubernetes operator, the `ts-*` proxy StatefulSets it provisions for exposed Services, and the serve-fixer Deployments (t3code, panel, work) that re-apply `tailscale serve` when app pod IPs drift — the 502-after-rollout workaround (`deploy/tailscale/README.md`).\n\n**Datasources:** metric panels use the *Metrics datasource* variable at the top of the page — pick VictoriaMetrics (or any Prometheus-compatible datasource); it is deliberately **not pinned**. The two log panels are pinned to the provisioned Loki (`uid: loki`).",
+        "mode": "markdown"
+      },
+      "title": "About this dashboard",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Pods currently Running in the tailscale namespace (operator, serve-fixers, ts-* proxies).",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 5 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(kube_pod_status_phase{namespace=\"tailscale\", phase=\"Running\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Running pods",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Container restarts across operator, serve-fixers, and proxies in the last 24h.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 5 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"tailscale\"}[24h]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Restarts (24h)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Ready replicas across the ts-* proxy StatefulSets — a drop means a tailnet endpoint is down.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 5 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(kube_statefulset_status_replicas_ready{namespace=\"tailscale\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Ready proxy replicas",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Pods stuck Pending in tailscale — usually a proxy that cannot get an IP.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 5 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(kube_pod_status_phase{namespace=\"tailscale\", phase=\"Pending\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Pending pods",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "CPU used by each tailscale pod (operator, serve-fixers, ts-* proxies).",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "id": 6,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"tailscale\", container!=\"\"}[5m]))",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "title": "CPU usage by pod",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Memory working set of each tailscale pod.",
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "id": 7,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"tailscale\", container!=\"\"})",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Memory working set by pod",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Container restarts per tailscale pod over the last 24h.",
+      "fieldConfig": {
+        "defaults": { "min": 0, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "id": 8,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace=\"tailscale\"}[24h]))",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Restarts by pod (24h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Pods by phase in the tailscale namespace over time.",
+      "fieldConfig": {
+        "defaults": { "min": 0, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "id": 9,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum by (phase) (kube_pod_status_phase{namespace=\"tailscale\"})",
+          "legendFormat": "{{phase}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Pods by phase over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Serve-fixer loop logs: pod-IP drift detection, tailscale serve re-applies, and the exited-nonzero retry loop.",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 25 },
+      "id": 10,
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{namespace=\"tailscale\", workload=~\".*serve-fixer.*\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Serve-fixer activity (Loki)",
+      "type": "logs"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Everything else in the namespace: the operator and the ts-* proxy pods.",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 25 },
+      "id": 11,
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{namespace=\"tailscale\", workload!~\".*serve-fixer.*\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Operator + proxy logs (Loki)",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["homelab", "tailscale", "metrics"],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "VictoriaMetrics",
+          "value": "victoriametrics"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Metrics datasource",
+        "multi": false,
+        "name": "DS_METRICS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Homelab Tailscale",
+  "uid": "homelab-tailscale",
+  "version": 1
+}

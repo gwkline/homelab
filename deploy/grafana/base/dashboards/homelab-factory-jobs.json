@@ -1,0 +1,315 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "content": "# Factory pipeline health\n\nThe factory (`deploy/factory`) runs CronJobs in the **sandbox** namespace — orchestrator (`*/10`), collector (hourly `:05`), reviewer, reconciler, security, sweeper, reclaimer, and the launchpads — that spawn sandbox Jobs and keep the live PR/issue ledger on GitHub. Finished Jobs are GC'd after 24h; a failed tick stays failed (`backoffLimit: 0`) so it is visible here.\n\n**Datasources:** metric panels use the *Metrics datasource* variable at the top of the page — pick VictoriaMetrics (or any Prometheus-compatible datasource); it is deliberately **not pinned** so this dashboard works with whichever metrics backend is provisioned. The ledger logs panel at the bottom is pinned to the provisioned Loki (`uid: loki`), where every `job_name=\"...\"` link jumps straight to that run's full logs.",
+        "mode": "markdown"
+      },
+      "title": "About this dashboard",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Jobs with pods currently running in sandbox.",
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 5 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(kube_job_status_active{namespace=\"sandbox\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Active Jobs",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Jobs that reached Succeeded in the last 24h.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 5 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(increase(kube_job_status_succeeded{namespace=\"sandbox\"}[24h]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Succeeded Jobs (24h)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Failed sandbox Jobs in the last 24h — a failed factory tick stays failed (backoffLimit: 0).",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 3 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 5 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(increase(kube_job_status_failed{namespace=\"sandbox\"}[24h]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Failed Jobs (24h)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Suspended factory CronJobs — should always be 0.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 5 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(kube_cronjob_spec_suspend{namespace=\"sandbox\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Suspended CronJobs",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Sandbox Jobs by status over time: currently active plus succeeded/failed completions.",
+      "fieldConfig": {
+        "defaults": { "min": 0, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "id": 6,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(kube_job_status_active{namespace=\"sandbox\"})",
+          "legendFormat": "active",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(increase(kube_job_status_succeeded{namespace=\"sandbox\"}[$__auto]))",
+          "legendFormat": "succeeded",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "sum(increase(kube_job_status_failed{namespace=\"sandbox\"}[$__auto]))",
+          "legendFormat": "failed",
+          "refId": "C"
+        }
+      ],
+      "title": "Jobs by status over time (sandbox)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Failed-job rate by Job name (top 8, 1h window). VictoriaMetrics renames kube-state-metrics' job label to exported_job (scrape-job label wins).",
+      "fieldConfig": {
+        "defaults": { "min": 0, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "id": 7,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "topk(8, sum by (exported_job) (increase(kube_job_status_failed{namespace=\"sandbox\"}[1h])))",
+          "legendFormat": "{{exported_job}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Failed Jobs by name (1h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Wall-clock duration of finished sandbox Jobs (completion time minus start time). Spikes are stuck runs. Only Jobs still within the k8s TTL (24h) are visible.",
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "id": 8,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "topk(8, kube_job_status_completion_time{namespace=\"sandbox\"} - kube_job_status_start_time{namespace=\"sandbox\"})",
+          "legendFormat": "{{exported_job}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Job durations (finished Jobs)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+      "description": "Each series ramps from 0 since that CronJob's last scheduled run; a value persisting above the cron interval (10 min for the orchestrator, 1 h for collector/reclaimer) means a missed fire.",
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "id": 9,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
+          "expr": "time() - kube_cronjob_status_last_schedule_time{namespace=\"sandbox\"}",
+          "legendFormat": "{{cronjob}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Seconds since last CronJob fire",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Logs from the factory CronJob pods (collector, reconciler, sweeper, ...) — the PR/issue ledger activity as it is posted to GitHub. The live ledger is GitHub labels; finished Job objects are GC'd after 24h.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 25 },
+      "id": 10,
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{namespace=\"sandbox\", job_name=~\"factory-.*\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Factory ledger activity (Loki)",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["homelab", "factory", "metrics"],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "VictoriaMetrics",
+          "value": "victoriametrics"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Metrics datasource",
+        "multi": false,
+        "name": "DS_METRICS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Homelab Factory Jobs",
+  "uid": "homelab-factory-jobs",
+  "version": 1
+}

@@ -1,0 +1,198 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "content": "# Chaos monkey kill/recovery timeline\n\n`chaos-monkey` (`deploy/chaos`) fires twice a day (07:00/19:00 UTC), deletes ONE random workload pod in agents/sandbox, and verifies the replacement reaches Ready within the timeout, posting the result to `gwkline/homelab` issue #113. Runs are Job pods in sandbox (Loki `workload` label `chaos-monkey`); the kill switch is `chaos-config/enabled`.\n\n**Datasource:** pure Loki, pinned to the provisioned datasource (`uid: loki`) — no metrics datasource needed. Every `[chaos]` line is here: `deleting ...` (the kill), `recovered: replacement Ready Ns after deletion` (the recovery), or `ERROR: no Ready replacement` (a failed drill).",
+        "mode": "markdown"
+      },
+      "title": "About this dashboard",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Pod deletions in the last 7d — one per scheduled run.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 5 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "sum(count_over_time({namespace=\"sandbox\", workload=\"chaos-monkey\"} |= \"deleting\" [7d]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Kills (7d)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Confirmed recoveries in the last 7d — replacement reached Ready within the timeout.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 5 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "sum(count_over_time({namespace=\"sandbox\", workload=\"chaos-monkey\"} |= \"recovered:\" [7d]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Recoveries (7d)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Runs where no replacement reached Ready within the timeout — the cluster failed the drill.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 5 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "sum(count_over_time({namespace=\"sandbox\", workload=\"chaos-monkey\"} |= \"ERROR: no Ready replacement\" [7d]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Recovery failures (7d)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Kill events (deleting) vs confirmed recoveries (recovered:) — the gap between the two lines is a deletion still pending recovery.",
+      "fieldConfig": {
+        "defaults": { "min": 0, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 9 },
+      "id": 5,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "sum(count_over_time({namespace=\"sandbox\", workload=\"chaos-monkey\"} |= \"deleting\" [$__auto]))",
+          "legendFormat": "kills",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "sum(count_over_time({namespace=\"sandbox\", workload=\"chaos-monkey\"} |= \"recovered:\" [$__auto]))",
+          "legendFormat": "recoveries",
+          "refId": "B"
+        }
+      ],
+      "title": "Kill and recovery events over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Runs that ended without a deletion: kill switch off, no eligible targets, or no Ready candidate.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 9 },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "sum(count_over_time({namespace=\"sandbox\", workload=\"chaos-monkey\"} |~ \"(?i)kill switch|nothing to do|skipping run\" [7d]))",
+          "refId": "A"
+        }
+      ],
+      "title": "No-op runs (7d)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Full [chaos] timeline: target selection, the delete, the recovery watch, and the GitHub posting.",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 17 },
+      "id": 7,
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{namespace=\"sandbox\", workload=\"chaos-monkey\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Chaos run timeline (Loki)",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["homelab", "chaos", "loki"],
+  "templating": { "list": [] },
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Homelab Chaos",
+  "uid": "homelab-chaos",
+  "version": 1
+}
