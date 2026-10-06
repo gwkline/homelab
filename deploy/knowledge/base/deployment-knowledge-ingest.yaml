@@ -28,7 +28,7 @@ spec:
           # image when this lands on main. Pin it with
           #   scripts/pin-factory-image.sh knowledge/ingest <digest>
           # (see deploy/knowledge/README.md, "Bootstrap order").
-          image: ghcr.io/gwkline/homelab/knowledge-ingest@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          image: ghcr.io/gwkline/homelab/knowledge-ingest@sha256:43f6bb3ce81eedfcb13ed924151037737beaed9f4930f840644a956201d95ded
           env:
             - name: KNOWLEDGE_INGEST_DATABASE_URL
               valueFrom:
