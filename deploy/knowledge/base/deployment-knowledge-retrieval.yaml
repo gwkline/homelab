@@ -28,7 +28,7 @@ spec:
           # image when this lands on main. Pin it with
           #   scripts/pin-factory-image.sh knowledge/retrieval <digest>
           # (see deploy/knowledge/README.md, "Bootstrap order").
-          image: ghcr.io/gwkline/homelab/knowledge-retrieval@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          image: ghcr.io/gwkline/homelab/knowledge-retrieval@sha256:4709aac95796a0e77ec00adf403b57ef8c6eb0810443c46403629a12e953e3b9
           env:
             - name: KNOWLEDGE_RETRIEVAL_DATABASE_URL
               valueFrom:
