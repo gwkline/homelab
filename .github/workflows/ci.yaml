@@ -158,6 +158,85 @@ jobs:
         working-directory: apps/knowledge
         run: npm run eval -- --json --subset
 
+  # Knowledge ingest service tests (#58 + the retrieval issues): the queue's
+  # idempotency/lease contracts and the real extract → chunk → embed → upsert
+  # pipeline handler, all offline (deterministic fake embeddings, memory
+  # store; the live-DB integration suite skips without DATABASE_URL). The
+  # service typechecks against apps/knowledge sources (relative imports), so
+  # the knowledge lib deps are installed first.
+  knowledge-ingest-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            apps/knowledge/package-lock.json
+            apps/knowledge-ingest/package-lock.json
+      - name: Install knowledge lib deps (typecheck @types)
+        working-directory: apps/knowledge
+        run: npm ci --no-audit --no-fund
+      - name: Install ingest deps
+        working-directory: apps/knowledge-ingest
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        working-directory: apps/knowledge-ingest
+        run: npm run typecheck
+      - name: Test (queue contracts + pipeline handler)
+        working-directory: apps/knowledge-ingest
+        run: npm test
+
+  # Knowledge retrieval service tests: API surface (health, auth, search,
+  # ingest passthrough) on the memory store plus the Postgres store's SQL
+  # construction and mapping against a fake pg client — offline by design.
+  knowledge-retrieval-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/knowledge-retrieval/package-lock.json
+      - name: Install retrieval deps
+        working-directory: apps/knowledge-retrieval
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        working-directory: apps/knowledge-retrieval
+        run: npm run typecheck
+      - name: Test (API surface + pg store)
+        working-directory: apps/knowledge-retrieval
+        run: npm test
+
+  # Knowledge MCP adapter tests (#64): tool registration + passthrough over
+  # the in-memory transport, contract bounds, and error shaping — offline.
+  knowledge-mcp-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/knowledge-mcp/package-lock.json
+      - name: Install mcp deps
+        working-directory: apps/knowledge-mcp
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        working-directory: apps/knowledge-mcp
+        run: npm run typecheck
+      - name: Test (tool registration + client contract)
+        working-directory: apps/knowledge-mcp
+        run: npm test
+
   # GitHub App token service (#70): integration tests with mocked JWT/token
   # exchange (no network, no real App needed).
   github-app-test:
@@ -256,6 +335,10 @@ jobs:
         panel-smoke,
         panel-test,
         knowledge-eval,
+        knowledge-ingest-test,
+        knowledge-retrieval-test,
+        knowledge-mcp-test,
+        github-app-test,
         github-app-test,
         collector-test,
       ]
@@ -271,6 +354,8 @@ jobs:
           - app: factory/orchestrator
           - app: factory/reviewer
           - app: factory/collector
+          - app: knowledge-ingest
+          - app: knowledge-retrieval
           - app: pg-textsearch
             dockerfile: images/pg-textsearch/Dockerfile
     runs-on: ubuntu-latest
