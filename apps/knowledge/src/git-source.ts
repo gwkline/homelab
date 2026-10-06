@@ -35,12 +35,24 @@
  * directory/lockfile/generated sets — secret detection stays on in every
  * mode, because credentials must never reach the corpus by opt-out.
  *
- * Auth: an optional token is applied per invocation through the
- * `http.extraheader` git config override passed via `GIT_CONFIG_*`
- * environment variables (the mechanism GitHub Actions' checkout uses).
- * The token never lands in any `.git/config`, never appears in argv or
- * logs, and works for authorized private repos over HTTPS; public repos
- * need no token at all.
+ * Auth: an optional token arrives via `GitSourceConfig.token` or the
+ * environment (`GIT_SOURCE_TOKEN_FILE`, then `GIT_SOURCE_TOKEN` — the
+ * mounted-Secret/raw-PAT shapes the homelab's git auth already uses) and
+ * is applied per invocation through the `http.extraheader` git config
+ * override passed via `GIT_CONFIG_*` environment variables (the mechanism
+ * GitHub Actions' checkout uses). The token never lands in any
+ * `.git/config`, never appears in argv or logs, and is never accepted
+ * URL-embedded (URLs carrying credentials are rejected); private-repo
+ * auth failures fail fast with prompts disabled, and public repos need
+ * no token at all. Access is strictly read-only: clone and fetch, never
+ * push.
+ *
+ * Pipeline hand-off: each upserted document converts to one ingest-queue
+ * job (`buildIngestJob`) — the #57/#58 worker's `document-version`
+ * payload shape — so chunking, embedding, and durable persistence stay
+ * downstream. Unchanged content reaching the worker is a full no-op via
+ * the schema's content-hash guard, and the manifest here means unchanged
+ * blobs never even get re-read or re-emitted.
  *
  * Like `src/bm25.ts`/`src/pgvector.ts`: pure pieces (glob matching, tree
  * filtering, planning, assessment, normalization) are covered by offline
@@ -49,7 +61,7 @@
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -554,6 +566,26 @@ export const normalizeRepositoryUrl = (raw: string): string => {
       `git-source: repositoryUrl protocol ${JSON.stringify(parsed.protocol)} is not supported (use https, ssh, or a local path)`
     );
   }
+  // Credentials embedded in the URL are the one auth shape this source
+  // refuses: they end up in argv, logs, and the manifest. Passwords are
+  // rejected on every scheme; usernames are rejected on the basic-auth
+  // transports (https/git), where a username without a password is the
+  // GitHub PAT-as-username pattern. An ssh username (`ssh://git@host/…`)
+  // is a real account name and stays allowed. Tokens must arrive via
+  // `config.token` or the `GIT_SOURCE_TOKEN`(_FILE) env vars instead.
+  if (parsed.password !== "") {
+    throw new Error(
+      "git-source: repositoryUrl must not embed a password; pass the token via GitSourceConfig.token or GIT_SOURCE_TOKEN instead"
+    );
+  }
+  if (
+    parsed.username !== "" &&
+    ["git:", "http:", "https:"].includes(parsed.protocol)
+  ) {
+    throw new Error(
+      "git-source: repositoryUrl must not embed credentials in the username; pass the token via GitSourceConfig.token or GIT_SOURCE_TOKEN instead"
+    );
+  }
   return value;
 };
 
@@ -682,7 +714,11 @@ export interface GitSourceConfig {
   refresh?: boolean;
   /** Repository URL (https, ssh/scp, or local path) or clone. Required. */
   repositoryUrl: string;
-  /** Access token for private repos; used in-memory only, never stored. */
+  /**
+   * Access token for private repos; used in-memory only, never stored.
+   * When absent, `GIT_SOURCE_TOKEN_FILE` then `GIT_SOURCE_TOKEN` supply
+   * one. Credentials embedded in the repository URL are always rejected.
+   */
   token?: string | null;
 }
 
@@ -734,6 +770,55 @@ const validatedToken = (token: string): string => {
     );
   }
   return token;
+};
+
+/**
+ * Env var carrying a raw access token for private repos (the
+ * `GITHUB_TOKEN` shape the homelab's git auth already uses).
+ * Read-only: the value is used per invocation and never persisted.
+ */
+export const GIT_SOURCE_TOKEN_ENV = "GIT_SOURCE_TOKEN";
+
+/**
+ * Env var naming a file that holds the token (the mounted-Secret shape,
+ * mirroring `GITHUB_TOKEN_FILE` in `apps/shared/workspace-lib.sh`).
+ * Preferred over `GIT_SOURCE_TOKEN` when both are set.
+ */
+export const GIT_SOURCE_TOKEN_FILE_ENV = "GIT_SOURCE_TOKEN_FILE";
+
+/**
+ * Resolve the access token from the environment: the token file first
+ * (the mounted-Secret shape), then the raw env var, else `null` (public
+ * repos need no token). The file's trailing newline is trimmed; the
+ * resolved value is validated and returned for per-invocation use only.
+ */
+export const resolveGitSourceTokenFromEnv = async (
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string | null> => {
+  const filePath = env[GIT_SOURCE_TOKEN_FILE_ENV];
+  if (filePath !== undefined && filePath !== "") {
+    let token: string;
+    try {
+      const fileContents = await readFile(filePath, "utf-8");
+      token = fileContents.trim();
+    } catch (error) {
+      throw new Error(
+        `git-source: cannot read ${GIT_SOURCE_TOKEN_FILE_ENV} ${JSON.stringify(filePath)}`,
+        { cause: error }
+      );
+    }
+    if (token.length === 0) {
+      throw new Error(
+        `git-source: ${GIT_SOURCE_TOKEN_FILE_ENV} ${JSON.stringify(filePath)} is empty`
+      );
+    }
+    return validatedToken(token);
+  }
+  const raw = env[GIT_SOURCE_TOKEN_ENV];
+  if (raw !== undefined && raw !== "") {
+    return validatedToken(raw);
+  }
+  return null;
 };
 
 /** Validate and normalize a source config before any git command runs. */
@@ -990,9 +1075,12 @@ export interface GitTombstone {
 
 /**
  * Persistence contract for sync. A durable implementation maps onto the
- * ADR-002 D3 `document` table (`source = "git"`, `external_id = path`,
- * `content_hash`, version bumps, `deleted_at` tombstones); the in-memory
- * store keeps tests offline.
+ * ADR-002 D3 `document` table: `upsertDocument` feeds the chunk+embed
+ * ingest worker (`buildIngestJob` below produces its queue payload, and
+ * the worker persists the `document`/`document_version` rows), while
+ * `tombstoneDocument` maps onto `src/schema.ts`'s
+ * `buildDocumentTombstone` + `buildChunkSupersede`. The in-memory store
+ * keeps tests offline.
  */
 export interface GitSourceStore {
   loadManifest: (sourceKey: string) => Promise<GitSourceManifest>;
@@ -1036,6 +1124,102 @@ export const createInMemoryGitSourceStore = (): InMemoryGitSourceStore => {
       documents.set(document.documentId, document);
       return Promise.resolve();
     },
+  };
+};
+
+// --- the ingest-queue bridge (#57/#58 worker contract) ---
+
+/**
+ * Job kind for one normalized document version, matching the ingest
+ * worker's `document-version` jobs (`parseDocumentPayload` shape).
+ */
+export const GIT_INGEST_JOB_KIND = "document-version";
+
+/** Worker job ids/kinds are identifiers: `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`. */
+const INGEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+
+/**
+ * Deterministic job id for one document version: re-emitting the same
+ * version (a retried sync, a rebuilt manifest after state loss) enqueues
+ * the same id, and the worker's idempotent enqueue (`ON CONFLICT (id) DO
+ * NOTHING`) makes it a no-op instead of a duplicate job.
+ */
+export const ingestJobIdFor = (document: {
+  documentId: string;
+  version: number;
+}): string => `git-${document.documentId}-v${document.version}`;
+
+/**
+ * Deterministic `document_version` row id the worker's chunks cite. On
+ * conflicts (history is append-only) the worker resolves and reuses the
+ * existing row, so a stale prediction here can never fork history.
+ */
+export const ingestVersionIdFor = (document: {
+  documentId: string;
+  version: number;
+}): string => `${document.documentId}-v${document.version}`;
+
+/**
+ * The worker payload for one document version: the exact
+ * `parseDocumentPayload` fields (`content`, identity, `format` =
+ * `contentKind`, citation `title`/`url`) plus a `provenance` object the
+ * worker ignores but the durable job row keeps for auditability —
+ * repository, commit, blob hashes, path, and rename lineage.
+ */
+export const toIngestJobPayload = (
+  document: GitSourceDocument
+): Record<string, unknown> => ({
+  content: document.text,
+  documentId: document.documentId,
+  externalId: document.externalId,
+  format: document.contentKind,
+  namespace: document.namespace,
+  provenance: {
+    blobHash: document.blobHash,
+    commitSha: document.commitSha,
+    contentHash: document.contentHash,
+    firstCommitSha: document.firstCommitSha,
+    language: document.language,
+    lineRange: document.lineRange,
+    path: document.path,
+    previousBlobHash: document.previousBlobHash,
+    previousContentHash: document.previousContentHash,
+    ref: document.ref,
+    renamedFrom: document.renamedFrom,
+    repositoryUrl: document.repositoryUrl,
+  },
+  source: document.source,
+  title: document.title,
+  url: document.url,
+  versionId: ingestVersionIdFor(document),
+});
+
+/** One queued ingest job, structurally the worker's `IngestJobSpec` shape. */
+export interface GitIngestJob {
+  jobId: string;
+  kind: string;
+  payload: Record<string, unknown>;
+}
+
+/**
+ * Build the ingest job for one synced document: a durable store's
+ * `upsertDocument` enqueues exactly this (the worker owns chunking,
+ * embedding, and the document/version rows). Ids are validated against
+ * the worker's identifier pattern here so a mis-shaped document id fails
+ * at the source, not inside the queue.
+ */
+export const buildIngestJob = (document: GitSourceDocument): GitIngestJob => {
+  const jobId = ingestJobIdFor(document);
+  const versionId = ingestVersionIdFor(document);
+  if (!INGEST_ID_PATTERN.test(jobId) || !INGEST_ID_PATTERN.test(versionId)) {
+    throw new Error(
+      `git-source: document id ${JSON.stringify(document.documentId)} is not usable as an ingest job id`
+    );
+  }
+  return {
+    jobId,
+    kind: GIT_INGEST_JOB_KIND,
+    payload: toIngestJobPayload(document),
   };
 };
 
@@ -1286,11 +1470,10 @@ export const syncGitSource = async (
 };
 
 /**
- * Per-invocation auth environment. The token rides in `GIT_CONFIG_*` env
- * vars as an `http.extraheader` override — scoped to exactly these git
- * processes, never written to any config file, never part of argv. Also
- * disables interactive prompts so a private repo with a missing/invalid
- * token fails fast instead of hanging.
+ * Per-invocation basic-auth header for private-repo HTTPS: the token
+ * becomes an `http.extraheader` override riding in `GIT_CONFIG_*` env
+ * vars — scoped to exactly the spawned git processes, never written to
+ * any config file, never part of argv.
  */
 const gitAuthConfig = (token: string): NodeJS.ProcessEnv => {
   const authorization = Buffer.from(
@@ -1426,7 +1609,11 @@ export const openGitRepository = async (
     cacheDir,
     createHash("sha1").update(repositoryUrl, "utf-8").digest("hex").slice(0, 20)
   );
-  const env = gitProcessEnv(options.token ?? null);
+  // Explicit config token wins; otherwise the environment supplies one
+  // (token file, then raw env var) and public repos stay tokenless.
+  const token =
+    options.token ?? (await resolveGitSourceTokenFromEnv(process.env));
+  const env = gitProcessEnv(token);
   const localRoot =
     repositoryUrl.startsWith("/") || repositoryUrl.startsWith("file://");
   let cloned = false;

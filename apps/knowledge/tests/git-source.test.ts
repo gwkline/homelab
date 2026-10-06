@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 
 import {
   assessBlob,
+  buildIngestJob,
   canonicalSourceUrl,
   classifyContent,
   createInMemoryGitSourceStore,
@@ -16,6 +17,9 @@ import {
   deriveSourceKey,
   documentIdFor,
   filterGitTree,
+  GIT_INGEST_JOB_KIND,
+  GIT_SOURCE_TOKEN_ENV,
+  GIT_SOURCE_TOKEN_FILE_ENV,
   gitProcessEnv,
   isBinaryExtension,
   isDefaultExcluded,
@@ -25,6 +29,7 @@ import {
   openGitRepository,
   planGitSource,
   resolveGitSourceConfig,
+  resolveGitSourceTokenFromEnv,
   sha256Hex,
   sniffBinary,
   syncGitRepository,
@@ -849,6 +854,11 @@ test("normalized URLs cover scp syntax and reject garbage", () => {
     normalizeRepositoryUrl("https://github.com/owner/repo.git"),
     "https://github.com/owner/repo.git"
   );
+  // ssh usernames are real account names and stay allowed.
+  assert.equal(
+    normalizeRepositoryUrl("ssh://git@github.com/owner/repo.git"),
+    "ssh://git@github.com/owner/repo.git"
+  );
   assert.throws(() => normalizeRepositoryUrl(""), /repositoryUrl/u);
   assert.throws(
     () => normalizeRepositoryUrl("ftp://example.com/repo"),
@@ -858,6 +868,181 @@ test("normalized URLs cover scp syntax and reject garbage", () => {
     () => normalizeRepositoryUrl("relative/path"),
     /repositoryUrl/u
   );
+});
+
+test("URL-embedded credentials are rejected in every form", () => {
+  for (const url of [
+    "https://user:token@github.com/owner/repo.git",
+    "https://token@github.com/owner/repo.git",
+    "http://user:pass@example.com/repo.git",
+    "git://token@example.com/repo.git",
+    "ssh://user:pass@example.com/repo.git",
+  ]) {
+    assert.throws(() => normalizeRepositoryUrl(url), /must not embed/u, url);
+  }
+  assert.throws(
+    () =>
+      resolveGitSourceConfig({
+        namespace: "n",
+        ref: "main",
+        repositoryUrl: "https://token@github.com/owner/repo.git",
+      }),
+    /must not embed/u
+  );
+});
+
+test("token resolution: env file first, then raw env, then none", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "git-source-token-"));
+  t.after(() => rm(root, { force: true, recursive: true }));
+  const tokenFile = path.join(root, "token");
+  await writeFile(tokenFile, "ghp_file-mounted-token-1234\n");
+
+  assert.equal(
+    await resolveGitSourceTokenFromEnv({
+      [GIT_SOURCE_TOKEN_FILE_ENV]: tokenFile,
+    }),
+    "ghp_file-mounted-token-1234"
+  );
+  assert.equal(
+    await resolveGitSourceTokenFromEnv({
+      [GIT_SOURCE_TOKEN_FILE_ENV]: tokenFile,
+      [GIT_SOURCE_TOKEN_ENV]: "ghp_raw-env-token-123456",
+    }),
+    "ghp_file-mounted-token-1234"
+  );
+  assert.equal(
+    await resolveGitSourceTokenFromEnv({
+      [GIT_SOURCE_TOKEN_ENV]: "ghp_raw-env-token-123456",
+    }),
+    "ghp_raw-env-token-123456"
+  );
+  assert.equal(await resolveGitSourceTokenFromEnv({}), null);
+  assert.equal(
+    await resolveGitSourceTokenFromEnv({
+      [GIT_SOURCE_TOKEN_ENV]: "",
+    }),
+    null
+  );
+
+  await assert.rejects(
+    () =>
+      resolveGitSourceTokenFromEnv({
+        [GIT_SOURCE_TOKEN_FILE_ENV]: path.join(root, "missing"),
+      }),
+    /cannot read/u
+  );
+  const emptyFile = path.join(root, "empty");
+  await writeFile(emptyFile, "\n");
+  await assert.rejects(
+    () =>
+      resolveGitSourceTokenFromEnv({ [GIT_SOURCE_TOKEN_FILE_ENV]: emptyFile }),
+    /is empty/u
+  );
+  await assert.rejects(
+    () => resolveGitSourceTokenFromEnv({ [GIT_SOURCE_TOKEN_ENV]: "short" }),
+    /token/u
+  );
+});
+
+test("clone failures are loud and never leak the token", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "git-source-clone-"));
+  t.after(() => rm(root, { force: true, recursive: true }));
+  const missing = path.join(root, "missing-repo");
+  const token = "ghp_clone-failure-token-12345";
+  // Empty strings read as "unset" to the resolver, so static keys restore
+  // cleanly without dynamic deletes.
+  const previousFile = process.env.GIT_SOURCE_TOKEN_FILE;
+  const previousRaw = process.env.GIT_SOURCE_TOKEN;
+  process.env.GIT_SOURCE_TOKEN_FILE = "";
+  process.env.GIT_SOURCE_TOKEN = token;
+  t.after(() => {
+    process.env.GIT_SOURCE_TOKEN_FILE = previousFile ?? "";
+    process.env.GIT_SOURCE_TOKEN = previousRaw ?? "";
+  });
+  const store = createInMemoryGitSourceStore();
+  await assert.rejects(
+    () =>
+      syncGitRepository(store, {
+        cacheDir: path.join(root, "cache"),
+        namespace: "n",
+        ref: "main",
+        repositoryUrl: missing,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /git clone failed/u);
+      assert.equal(error.message.includes(token), false);
+      return true;
+    }
+  );
+  // The failed clone leaves no cache entry to poison the next attempt.
+  assert.equal(store.documents.size, 0);
+});
+
+test("documents convert to worker-shaped ingest jobs deterministically", async (t) => {
+  const fixture = await createFixtureRepository();
+  t.after(fixture.cleanup);
+  const store = createInMemoryGitSourceStore();
+  await syncGitRepository(
+    store,
+    sourceConfig(fixture.repoDir, { cacheDir: fixture.cacheDir })
+  );
+  const readme = store.documents.get(documentIdFor(NAMESPACE, "README.md"));
+  assert.ok(readme);
+
+  const job = buildIngestJob(readme);
+  assert.equal(job.kind, GIT_INGEST_JOB_KIND);
+  assert.equal(job.kind, "document-version");
+  // The worker's identifier pattern for job ids and kinds.
+  assert.match(job.jobId, /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
+  assert.equal(job.jobId, `git-${readme.documentId}-v1`);
+  assert.deepEqual(buildIngestJob(readme), job);
+
+  const payload = job.payload as Record<string, unknown>;
+  // Exactly the fields the ingest worker's parseDocumentPayload reads.
+  assert.equal(payload["content"], readme.text);
+  assert.equal(payload["documentId"], readme.documentId);
+  assert.equal(payload["externalId"], "README.md");
+  assert.equal(payload["format"], "markdown");
+  assert.equal(payload["namespace"], NAMESPACE);
+  assert.equal(payload["source"], "git");
+  assert.equal(payload["title"], "README.md");
+  assert.equal(payload["url"], readme.url);
+  assert.equal(payload["versionId"], `${readme.documentId}-v1`);
+
+  const provenance = payload["provenance"] as Record<string, unknown>;
+  assert.equal(provenance["commitSha"], readme.commitSha);
+  assert.equal(provenance["blobHash"], readme.blobHash);
+  assert.equal(provenance["path"], "README.md");
+  assert.equal(provenance["repositoryUrl"], fixture.repoDir);
+  assert.equal(provenance["ref"], "main");
+  assert.equal(provenance["firstCommitSha"], readme.firstCommitSha);
+  assert.equal(provenance["previousBlobHash"], null);
+  assert.equal(provenance["renamedFrom"], null);
+  assert.deepEqual(provenance["lineRange"], { end: 3, start: 1 });
+
+  // A modified file yields a distinct job id for its new version while
+  // the payload keeps the lineage fields the manifest diff produced.
+  await writeFixtureFile(
+    fixture.repoDir,
+    "README.md",
+    "# Fixture repo v2\n\nChanged.\n"
+  );
+  commitAll(fixture.repoDir, "modify readme");
+  await syncGitRepository(
+    store,
+    sourceConfig(fixture.repoDir, { cacheDir: fixture.cacheDir })
+  );
+  const updated = store.documents.get(documentIdFor(NAMESPACE, "README.md"));
+  assert.ok(updated);
+  const nextJob = buildIngestJob(updated);
+  assert.notEqual(nextJob.jobId, job.jobId);
+  assert.equal(nextJob.jobId, `git-${readme.documentId}-v2`);
+  const nextPayload = nextJob.payload as Record<string, unknown>;
+  const nextProvenance = nextPayload["provenance"] as Record<string, unknown>;
+  assert.equal(nextProvenance["previousBlobHash"], readme.blobHash);
+  assert.equal(nextProvenance["previousContentHash"], readme.contentHash);
+  assert.equal(nextPayload["format"], "markdown");
 });
 
 test("empty and missing refs fail loudly", async (t) => {
