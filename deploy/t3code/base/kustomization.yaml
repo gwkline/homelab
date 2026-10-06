@@ -12,6 +12,7 @@ resources:
   - configmap.yaml
   - executor.yaml
   - skills-sync.yaml
+  - rbac.yaml
   - netpol.yaml
   - service.yaml
   - statefulset.yaml

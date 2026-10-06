@@ -130,6 +130,30 @@ RUN ARCH="$(uname -m)" \
   && depot --version \
   && rm -rf /tmp/uv* /tmp/depot*
 
+# kubectl — read-only cluster inspection from t3 agent sessions
+# (Gavin direction 2026-10-06: the grafana-dashboard agent needs live
+# logs/state, not just repo manifests). The pod's ServiceAccount
+# (deploy/t3code/base/rbac.yaml) only ever gets get/list — the work
+# runner has NO ServiceAccount token and no kubectl-dependent RBAC.
+# Pinned manually: dl.k8s.io is not a Renovate datasource; kubectl is
+# backward-compatible with the cluster across a few versions, so this
+# pin rides along with occasional image bumps. Checksums are verified
+# per-arch at build time (pipeline proven 2026-10-06).
+ARG KUBECTL_VERSION=v1.37.1
+RUN ARCH="$(uname -m)" \
+  && case "$ARCH" in \
+       x86_64|amd64) KARCH=amd64 ;; \
+       arm64|aarch64) KARCH=arm64 ;; \
+       *) echo "unsupported arch ${ARCH}" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KARCH}/kubectl" -o /tmp/kubectl \
+  && curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KARCH}/kubectl.sha256" -o /tmp/kubectl.sha256 \
+  && echo "$(cat /tmp/kubectl.sha256)  kubectl" > /tmp/kubectl-check.sha256 \
+  && (cd /tmp && sha256sum -c kubectl-check.sha256) \
+  && install -m 0755 /tmp/kubectl /usr/local/bin/kubectl \
+  && kubectl version --client >/dev/null \
+  && rm -f /tmp/kubectl /tmp/kubectl.sha256 /tmp/kubectl-check.sha256
+
 COPY apps/shared/workspace-lib.sh /usr/local/lib/workspace-lib.sh
 COPY apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
 COPY apps/t3code/init-workspace.sh /usr/local/bin/init-workspace
