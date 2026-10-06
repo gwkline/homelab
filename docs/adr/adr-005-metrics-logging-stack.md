@@ -1,4 +1,4 @@
-# ADR-003: Observability stack — Grafana + single-node VictoriaMetrics + Loki/Alloy
+# ADR-005: Observability stack — Grafana + single-node VictoriaMetrics + Loki/Alloy
 
 **Status:** Accepted (2026-09-02) **Deciders:** Gavin Kline, ox-alpha **Implements:** #36 · **Blocks:** metrics-stack and logging-stack implementation issues (boundary fixed in D8)
 

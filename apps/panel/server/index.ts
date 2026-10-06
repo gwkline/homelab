@@ -71,7 +71,7 @@ const FACTORY_PROFILE_INFO = [
     name: "security",
   },
 ] as const;
-// Run lifecycle states derived from the ledger labels (ADR-002). First match
+// Run lifecycle states derived from the ledger labels (ADR-009). First match
 // wins when several factory labels co-exist on one issue.
 const FACTORY_RUN_STATES: [string, string][] = [
   ["factory/queued", "queued"],
@@ -1408,7 +1408,7 @@ const fetchIssue = async (
   }
 };
 
-// Latest run marker comment = the durable audit event for a Run (ADR-002:
+// Latest run marker comment = the durable audit event for a Run (ADR-009:
 // created once, edited in place). Absent/failed comment reads degrade to
 // label-only state.
 const fetchRunMarker = async (

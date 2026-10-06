@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/part-of: homelab
     factory.gwkline.io/component: orchestrator
 spec:
-  # Second orchestrator instance targeting gwkline/launchpad (ADR-002 ledger).
+  # Second orchestrator instance targeting gwkline/launchpad (ADR-009 ledger).
   # Staggered 7 past the homelab tick so two workers rarely overlap on the
   # single node. Reuses the factory-orchestrator ServiceAccount/RBAC below —
   # same permissions (Jobs + pods in sandbox ONLY).

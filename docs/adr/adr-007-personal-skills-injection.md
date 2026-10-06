@@ -1,4 +1,4 @@
-# ADR-003: Personal-skills repository and injection contract
+# ADR-007: Personal-skills repository and injection contract
 
 **Status:** Accepted (2026-09-02) **Deciders:** Gavin Kline, ox-alpha **Implements:** #69 · **Depends:** #68 (P-Stack final installation shape — precedence in D9 is designed so P-Stack slots in without rework)
 

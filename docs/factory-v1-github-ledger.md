@@ -1,8 +1,10 @@
-# ADR-002: GitHub-as-ledger — no factory database in v1
+# ADR-009: GitHub-as-ledger — no factory database in v1
 
 **Status:** Accepted (2026-08-26, supersedes ADR-001's Postgres decision) **Implements:** #71 revision · **Simplifies:** #54 (dropped), #75 (dropped), #76 (reduced)
 
 ## Decision
+
+This ADR supersedes the storage half of ADR-001 — its Postgres-backed run-state ledger is dropped; the run contract itself carries over unchanged (see "What stays from ADR-001").
 
 GitHub issues are the **source of truth for both work AND run state** in v1. There is no factory database. Execution state lives in issue labels and a structured status comment per run. Throughput target is deliberately low (≥10 min between jobs); we accept weaker transactional guarantees in exchange for public visibility and zero infrastructure.
 

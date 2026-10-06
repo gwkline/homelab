@@ -1,5 +1,5 @@
 # Canonical skills manifest — the trust registry of a personal-skills
-# repository (ADR-003, homelab#69).
+# repository (ADR-007, homelab#69).
 #
 # Rules:
 # - One entry per skill directory under skills/; every directory must be

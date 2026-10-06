@@ -1,6 +1,6 @@
 #!/bin/sh
 # install-personal-skills.sh — inject the personal-skills repository into
-# agent harnesses (ADR-003, homelab#69).
+# agent harnesses (ADR-007, homelab#69).
 #
 # Flow: resolve a pinned skills source, apply the manifest allowlist and
 # review gates, install each allowlisted skill into the configured harness

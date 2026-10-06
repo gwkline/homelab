@@ -1,5 +1,5 @@
 #!/bin/sh
-# Factory orchestrator (#78, ADR-002 GitHub-as-ledger).
+# Factory orchestrator (#78, ADR-009 GitHub-as-ledger).
 # Runs as a single-instance CronJob (concurrency: Forbid).
 #
 # One tick:
@@ -498,7 +498,7 @@ if [ "${EXTRACTED}" != "1" ] || [ ! -s "/tmp/patch-${NUM}.diff" ]; then
   exit 0
 fi
 
-# Structured worker report (ADR-002 artifact): embedded in the run comment so
+# Structured worker report (ADR-009 artifact): embedded in the run comment so
 # the PR's verification story survives the pod. Redacted like log tails.
 REPORT_JSON=""
 if grep -q "REPORT_B64_BEGIN" "${POD_LOGS}"; then

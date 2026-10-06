@@ -73,7 +73,7 @@ RUN ARCH="$(uname -m)" \
 # P-Stack agent workflows (issue #68): the official Cursor plugin tree, fetched
 # at build time and pinned to an upstream commit — no local fork. The pin lives
 # here (single source of truth); apps/factory/worker/tests/pstack-sync.test.sh
-# cross-checks it against ADR-003 and verifies every path the runtime installer
+# cross-checks it against ADR-007 and verifies every path the runtime installer
 # references still exists at that commit, so an upstream bump cannot break
 # paths unnoticed. License (MIT) and plugin.json ship inside the fetched tree.
 ARG PSTACK_REPO=cursor/plugins

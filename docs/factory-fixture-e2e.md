@@ -2,7 +2,7 @@
 
 Written fixture for reproducing the full GitHub issue → factory Run → draft PR flow. Another agent (or engineer) should be able to follow this top-to-bottom with no improvisation and no manual Kubernetes commands on the happy path.
 
-Architecture: ADR-002 (`docs/factory-v1-github-ledger.md`) — GitHub is the ledger, labels are the state machine, one marker comment per Run.
+Architecture: ADR-009 (`docs/factory-v1-github-ledger.md`) — GitHub is the ledger, labels are the state machine, one marker comment per Run.
 
 ## Preconditions (check once)
 

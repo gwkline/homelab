@@ -2,7 +2,7 @@
 # Factory reclaimer: retries failed issues when the worker stack moved on,
 # parks them as factory/stuck when they keep failing (#94 follow-up).
 #
-# GitHub is the ledger (ADR-002). This job only relabels + comments:
+# GitHub is the ledger (ADR-009). This job only relabels + comments:
 #   factory/failed (+ no factory/stuck) + open + eligible  →  one action/tick
 #   - requeue: remove failed, add queued (orchestrator picks it up next tick)
 #   - stuck:   add factory/stuck (human review; collector/orchestrator skip it)

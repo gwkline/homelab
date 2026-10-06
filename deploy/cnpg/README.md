@@ -16,7 +16,7 @@ Security posture is upstream's own: the manager runs as UID 10001 with `ALL` cap
 
 ## Resource bounds
 
-Pinned in `base/kustomization.yaml` to upstream's own values so a bundle refresh cannot silently change the reviewed footprint: requests **100m / 100Mi**, limits **100m CPU / 200Mi**. That is a rounding error against the machine's ~4.2Gi request headroom (ADR-003 D1 budget, 8 GB-RAM nodes) and leaves CPU headroom for reconcile bursts without unbounded memory growth.
+Pinned in `base/kustomization.yaml` to upstream's own values so a bundle refresh cannot silently change the reviewed footprint: requests **100m / 100Mi**, limits **100m CPU / 200Mi**. That is a rounding error against the machine's ~4.2Gi request headroom (ADR-005 D1 budget, 8 GB-RAM nodes) and leaves CPU headroom for reconcile bursts without unbounded memory growth.
 
 ## Metrics
 
@@ -27,7 +27,7 @@ prometheus.io/scrape: "true"
 prometheus.io/port: "8080"
 ```
 
-The selected metrics stack (ADR-003: single-node VictoriaMetrics with built-in `kubernetes_sd`, no Prometheus-operator CRDs) discovers the operator through those annotations — the future `deploy/victoriametrics` scrape config keeps pods with `prometheus.io/scrape=true` and rewrites the address to the annotated port:
+The selected metrics stack (ADR-005: single-node VictoriaMetrics with built-in `kubernetes_sd`, no Prometheus-operator CRDs) discovers the operator through those annotations — the future `deploy/victoriametrics` scrape config keeps pods with `prometheus.io/scrape=true` and rewrites the address to the annotated port:
 
 ```yaml
 - job_name: cnpg-operator
@@ -49,7 +49,7 @@ The selected metrics stack (ADR-003: single-node VictoriaMetrics with built-in `
       target_label: __address__
 ```
 
-`scripts/cnpg-smoke.sh` asserts the annotations and probes `/metrics` live. CNPG's per-Cluster `monitoring.enablePodMonitor` (a `PodMonitor` CRD) stays off: the metrics stack intentionally ships no Prometheus-operator CRDs (ADR-003 D7); scraping the PostgreSQL instances' 9187 endpoints is part of the database-cluster issues, together with the matching `database`-namespace NetworkPolicy allowance.
+`scripts/cnpg-smoke.sh` asserts the annotations and probes `/metrics` live. CNPG's per-Cluster `monitoring.enablePodMonitor` (a `PodMonitor` CRD) stays off: the metrics stack intentionally ships no Prometheus-operator CRDs (ADR-005 D7); scraping the PostgreSQL instances' 9187 endpoints is part of the database-cluster issues, together with the matching `database`-namespace NetworkPolicy allowance.
 
 ## Install / recover (plain kubectl, idempotent, no Flux)
 
@@ -60,7 +60,7 @@ kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
 kubectl -n cnpg-system get pods
 ```
 
-- **Idempotent:** re-running the apply is the recovery path (same contract as `deploy/eso/base`). Nothing here needs Flux — this is a plain kustomize base, so a later Flux `Kustomization` can point at `deploy/cnpg/base` unchanged (ADR-003 defers GitOps; the factory reconciler keeps only `deploy/factory/base` converged).
+- **Idempotent:** re-running the apply is the recovery path (same contract as `deploy/eso/base`). Nothing here needs Flux — this is a plain kustomize base, so a later Flux `Kustomization` can point at `deploy/cnpg/base` unchanged (ADR-006 defers GitOps; the factory reconciler keeps only `deploy/factory/base` converged).
 - **`--server-side` is required:** the CRDs are large enough to exceed the client-side `last-applied-configuration` annotation size limit on upgrade (same reason as the ESO install).
 
 ### CRD ordering

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Factory worker entrypoint (#74).
-# Contract (ADR-002 / factory-v1-github-ledger.md):
+# Contract (ADR-009 / factory-v1-github-ledger.md):
 #   /task/brief.json   input: run_id, repository, issue, profile, verify_command
 #   /work/<repo>       clone, make changes here
 #   /out/patch.diff    git diff of the change

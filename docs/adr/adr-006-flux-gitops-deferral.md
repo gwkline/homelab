@@ -1,4 +1,4 @@
-# ADR-003: GitOps delivery — defer Flux, keep root Kustomize + rebuild script
+# ADR-006: GitOps delivery — defer Flux, keep root Kustomize + rebuild script
 
 **Status:** Accepted (2026-09-02) **Deciders:** Gavin Kline, ox-alpha **Implements:** #37 · **Depends on:** #34 · **Supersedes:** nothing (first CD decision; codifies the "intentionally a CronJob instead of adding Flux" note in `deploy/factory/base/reconciler-cronjob.yaml`)
 

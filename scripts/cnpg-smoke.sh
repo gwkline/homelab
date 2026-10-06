@@ -77,7 +77,7 @@ check_pinned_image() {
   esac
 }
 
-# Metrics discoverability (ADR-003 stack scrapes via these standard
+# Metrics discoverability (ADR-005 stack scrapes via these standard
 # annotations): the pod template must carry them and declare port 8080.
 check_metrics_discoverable() {
   scrape="$(kubectl -n cnpg-system get deploy cnpg-controller-manager \

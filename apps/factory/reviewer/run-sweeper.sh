@@ -4,7 +4,7 @@
 # (#239) — the stale-red path only fires when the medic gave up.
 #
 # Lives in the reviewer app (same image, gh + jq only, no k8s API) and runs
-# as its own hourly CronJob. GitHub is the ledger (ADR-002): all sweep state
+# as its own hourly CronJob. GitHub is the ledger (ADR-009): all sweep state
 # is DERIVED from GitHub (marker comments, review requests, fix-issue search),
 # so repeated ticks never re-file:
 #

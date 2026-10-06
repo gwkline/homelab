@@ -95,7 +95,7 @@ EOF
 
 ## Design reference
 
-`docs/factory-v1-github-ledger.md` = ADR-002 GitHub-as-ledger (no DB). Labels ARE the state machine:
+`docs/factory-v1-github-ledger.md` = ADR-009 GitHub-as-ledger (no DB). Labels ARE the state machine:
 
 | Label                 | Meaning                  |
 | --------------------- | ------------------------ |
