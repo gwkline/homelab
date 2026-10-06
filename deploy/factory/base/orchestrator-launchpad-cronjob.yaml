@@ -53,6 +53,13 @@ spec:
                 - name: OPENCODE_AUTH_B64
                   valueFrom:
                     secretKeyRef: { name: factory-opencode-auth, key: auth-b64 }
+                - name: KNOWLEDGE_SEARCH_URL
+                  # #86 knowledge context: cited retrieval into worker briefs.
+                  value: http://knowledge-retrieval-http.agents.svc.cluster.local:3000/v1/search
+                - name: KNOWLEDGE_TOKEN_FILE
+                  value: /secrets-knowledge/token
+                - name: KNOWLEDGE_NAMESPACE
+                  value: homelab-docs
                 - name: WORKER_CMD
                   value: "opencode run"
                 - name: GH_TOKEN
@@ -67,8 +74,17 @@ spec:
                 capabilities: { drop: ["ALL"] }
                 readOnlyRootFilesystem: true
               volumeMounts:
+                - name: knowledge-token-for-briefs
+                  mountPath: /secrets-knowledge
+                  readOnly: true
                 - { name: tmp, mountPath: /tmp }
                 - { name: home, mountPath: /home/nonroot }
           volumes:
+            - name: knowledge-token-for-briefs
+              secret:
+                secretName: knowledge-api-token
+                items:
+                  - key: token
+                    path: token
             - { name: tmp, emptyDir: {} }
             - { name: home, emptyDir: {} }

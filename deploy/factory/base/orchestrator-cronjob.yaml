@@ -49,6 +49,14 @@ spec:
                 - name: OPENCODE_AUTH_B64
                   valueFrom:
                     secretKeyRef: { name: factory-opencode-auth, key: auth-b64 }
+                - name: KNOWLEDGE_SEARCH_URL
+                  # #86 knowledge context: cited retrieval into worker briefs.
+                  # Fail-open contract — an outage never fails a run.
+                  value: http://knowledge-retrieval-http.agents.svc.cluster.local:3000/v1/search
+                - name: KNOWLEDGE_TOKEN_FILE
+                  value: /secrets-knowledge/token
+                - name: KNOWLEDGE_NAMESPACE
+                  value: homelab-docs
                 - name: WORKER_CMD
                   value: "opencode run"
                 - name: GH_TOKEN
@@ -65,9 +73,18 @@ spec:
               volumeMounts:
                 - { name: tmp, mountPath: /tmp }
                 - { name: home, mountPath: /home/nonroot }
+                - name: knowledge-token-for-briefs
+                  mountPath: /secrets-knowledge
+                  readOnly: true
           volumes:
             - { name: tmp, emptyDir: {} }
             - { name: home, emptyDir: {} }
+            - name: knowledge-token-for-briefs
+              secret:
+                secretName: knowledge-api-token
+                items:
+                  - key: token
+                    path: token
 ---
 # Orchestrator RBAC: create/watch Jobs in sandbox ONLY. No secrets, no other
 # namespaces, no write anywhere else.
@@ -147,3 +164,11 @@ spec:
     - to: # API server node endpoint (KUBERNETES_SERVICE_HOST override)
         - ipBlock: { cidr: 192.168.1.2/32 }
       ports: [{ protocol: TCP, port: 6443 }]
+    - to: # #86 knowledge context: the retrieval service in agents
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agents
+          podSelector:
+            matchLabels:
+              app: knowledge-retrieval
+      ports: [{ protocol: TCP, port: 3000 }]
