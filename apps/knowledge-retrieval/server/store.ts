@@ -1,6 +1,6 @@
 export type RetrievalMode = "bm25" | "vector" | "hybrid";
 
-export type SourceKind = "github" | "file" | "url" | "web";
+export type SourceKind = "github" | "file" | "url" | "web" | "git" | "note";
 
 export type VersionStatus = "current" | "superseded" | "deleted";
 

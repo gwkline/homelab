@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import type { RetrievalMode } from "./store.js";
+import type { RetrievalMode } from "./store.ts";
 
 export interface RetrievalConfig {
   port: number;
@@ -15,6 +15,16 @@ export interface RetrievalConfig {
   channelWindowFactor: number;
   logQueries: boolean;
   seedFile: string | null;
+  /** Postgres connection string; null runs the in-memory store (dev/tests). */
+  databaseUrl: string | null;
+  /** Serve readiness only once the #56 schema + channel indexes are applied. */
+  applySchemaOnBoot: boolean;
+  /** In-cluster ingest API base for the sources/sync passthrough routes. */
+  ingestBaseUrl: string | null;
+  /** Bearer token for the ingest passthrough; defaults to the local token. */
+  ingestToken: string | null;
+  /** Timeout for the ingest passthrough requests. */
+  ingestTimeoutMs: number;
 }
 
 export const CONFIG_DEFAULTS = {
@@ -22,6 +32,7 @@ export const CONFIG_DEFAULTS = {
   defaultMode: "hybrid" as RetrievalMode,
   defaultNamespace: "default",
   defaultTopK: 5,
+  ingestTimeoutMs: 5000,
   logQueries: false,
   maxQueryLength: 2000,
   maxTopK: 50,
@@ -48,38 +59,46 @@ const positiveInt = (
   return value;
 };
 
-const readTokenFile = (path: string): string => {
+const readTokenFile = (path: string, envName: string): string => {
   try {
     return readFileSync(path, "utf-8").trim();
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `KNOWLEDGE_RETRIEVAL_TOKEN_FILE ${path} unreadable: ${reason}`,
-      { cause: error }
-    );
+    throw new Error(`${envName} ${path} unreadable: ${reason}`, {
+      cause: error,
+    });
   }
 };
 
 // The bearer token must come from a secret: an env var injected from a
 // Kubernetes Secret, or a mounted token file. Fail closed when neither is
 // present so the service can never start unauthenticated.
-export const configFromEnv = (
-  env: Record<string, string | undefined>
-): RetrievalConfig => {
-  let token: string;
+const tokenFromEnv = (env: Record<string, string | undefined>): string => {
   if (env.KNOWLEDGE_RETRIEVAL_TOKEN?.trim()) {
-    token = env.KNOWLEDGE_RETRIEVAL_TOKEN.trim();
-  } else if (env.KNOWLEDGE_RETRIEVAL_TOKEN_FILE?.trim()) {
-    token = readTokenFile(env.KNOWLEDGE_RETRIEVAL_TOKEN_FILE.trim());
-  } else {
-    token = "";
+    return env.KNOWLEDGE_RETRIEVAL_TOKEN.trim();
   }
-  if (!token) {
-    throw new Error(
-      "no auth token configured: set KNOWLEDGE_RETRIEVAL_TOKEN or KNOWLEDGE_RETRIEVAL_TOKEN_FILE (secret-backed, required)"
+  if (env.KNOWLEDGE_RETRIEVAL_TOKEN_FILE?.trim()) {
+    return readTokenFile(
+      env.KNOWLEDGE_RETRIEVAL_TOKEN_FILE.trim(),
+      "KNOWLEDGE_RETRIEVAL_TOKEN_FILE"
     );
   }
-  const port = positiveInt(env, "PORT", CONFIG_DEFAULTS.port);
+  throw new Error(
+    "no auth token configured: set KNOWLEDGE_RETRIEVAL_TOKEN or KNOWLEDGE_RETRIEVAL_TOKEN_FILE (secret-backed, required)"
+  );
+};
+
+const modeFromEnv = (
+  env: Record<string, string | undefined>
+): RetrievalMode => {
+  const raw = env.KNOWLEDGE_DEFAULT_MODE?.trim();
+  return raw === "bm25" || raw === "vector" || raw === "hybrid"
+    ? raw
+    : CONFIG_DEFAULTS.defaultMode;
+};
+
+/** Search limits (topK/query length) with their cross-field invariant. */
+const searchLimitsFromEnv = (env: Record<string, string | undefined>) => {
   const maxQueryLength = positiveInt(
     env,
     "KNOWLEDGE_MAX_QUERY_LENGTH",
@@ -100,20 +119,44 @@ export const configFromEnv = (
       `KNOWLEDGE_DEFAULT_TOP_K (${defaultTopK}) must not exceed KNOWLEDGE_MAX_TOP_K (${maxTopK})`
     );
   }
-  const defaultModeRaw = env.KNOWLEDGE_DEFAULT_MODE?.trim();
-  const defaultMode =
-    defaultModeRaw === "bm25" ||
-    defaultModeRaw === "vector" ||
-    defaultModeRaw === "hybrid"
-      ? defaultModeRaw
-      : CONFIG_DEFAULTS.defaultMode;
+  return { defaultTopK, maxQueryLength, maxTopK };
+};
+
+export const configFromEnv = (
+  env: Record<string, string | undefined>
+): RetrievalConfig => {
+  const token = tokenFromEnv(env);
+  const { defaultTopK, maxQueryLength, maxTopK } = searchLimitsFromEnv(env);
+  const defaultMode = modeFromEnv(env);
+  const port = positiveInt(env, "PORT", CONFIG_DEFAULTS.port);
   return {
+    applySchemaOnBoot:
+      env.KNOWLEDGE_APPLY_SCHEMA !== "0" &&
+      env.KNOWLEDGE_APPLY_SCHEMA !== "false",
     channelWindowFactor: CONFIG_DEFAULTS.channelWindowFactor,
+    databaseUrl:
+      env.KNOWLEDGE_RETRIEVAL_DATABASE_URL?.trim() ||
+      env.DATABASE_URL?.trim() ||
+      null,
     defaultMode,
     defaultNamespace:
       env.KNOWLEDGE_DEFAULT_NAMESPACE?.trim() ||
       CONFIG_DEFAULTS.defaultNamespace,
     defaultTopK,
+    ingestBaseUrl: env.KNOWLEDGE_INGEST_BASE_URL?.trim() || null,
+    ingestTimeoutMs: positiveInt(
+      env,
+      "KNOWLEDGE_INGEST_TIMEOUT_MS",
+      CONFIG_DEFAULTS.ingestTimeoutMs
+    ),
+    ingestToken:
+      env.KNOWLEDGE_INGEST_TOKEN?.trim() ||
+      (env.KNOWLEDGE_INGEST_TOKEN_FILE?.trim()
+        ? readTokenFile(
+            env.KNOWLEDGE_INGEST_TOKEN_FILE.trim(),
+            "KNOWLEDGE_INGEST_TOKEN_FILE"
+          )
+        : token),
     logQueries:
       env.KNOWLEDGE_LOG_QUERIES === "1" || env.KNOWLEDGE_LOG_QUERIES === "true",
     maxQueryLength,
@@ -135,10 +178,15 @@ export const baseConfig = (
   token: string,
   overrides: Partial<RetrievalConfig> = {}
 ): RetrievalConfig => ({
+  applySchemaOnBoot: true,
   channelWindowFactor: CONFIG_DEFAULTS.channelWindowFactor,
+  databaseUrl: null,
   defaultMode: CONFIG_DEFAULTS.defaultMode,
   defaultNamespace: CONFIG_DEFAULTS.defaultNamespace,
   defaultTopK: CONFIG_DEFAULTS.defaultTopK,
+  ingestBaseUrl: null,
+  ingestTimeoutMs: CONFIG_DEFAULTS.ingestTimeoutMs,
+  ingestToken: null,
   logQueries: CONFIG_DEFAULTS.logQueries,
   maxQueryLength: CONFIG_DEFAULTS.maxQueryLength,
   maxTopK: CONFIG_DEFAULTS.maxTopK,

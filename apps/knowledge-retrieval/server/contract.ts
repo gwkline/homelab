@@ -1,6 +1,6 @@
 import { z } from "@hono/zod-openapi";
 
-import type { RetrievalConfig } from "./config.js";
+import type { RetrievalConfig } from "./config.ts";
 
 export type ApiErrorCode =
   | "invalid_request"
@@ -91,7 +91,7 @@ const versionSchema = z.object({
 });
 
 const sourceSchema = z.object({
-  kind: z.enum(["github", "file", "url", "web"]),
+  kind: z.enum(["github", "file", "url", "web", "git", "note"]),
   path: z
     .string()
     .nullable()

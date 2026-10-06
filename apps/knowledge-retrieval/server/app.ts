@@ -3,17 +3,17 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { createMiddleware } from "hono/factory";
 
-import type { RetrievalConfig } from "./config.js";
+import type { RetrievalConfig } from "./config.ts";
 import {
   buildContract,
   errorBody,
   errorSchema,
   searchResponseSchema,
-} from "./contract.js";
-import type { Logger } from "./log.js";
-import { reciprocalRankFusion } from "./rank.js";
-import type { FusedCandidate } from "./rank.js";
-import type { RankedCandidate, RetrievalStore } from "./store.js";
+} from "./contract.ts";
+import type { Logger } from "./log.ts";
+import { reciprocalRankFusion } from "./rank.ts";
+import type { FusedCandidate } from "./rank.ts";
+import type { RankedCandidate, RetrievalStore } from "./store.ts";
 
 interface AppEnv {
   Variables: { requestId: string };
@@ -346,10 +346,117 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
     }
   });
 
+  // ── ingest passthrough (#65/#64: one base URL for the panel and MCP) ──
+  //
+  // The panel's knowledge client and the MCP adapter speak ONE knowledge API
+  // base URL — this service. Sources, sync triggers, and sync-job status are
+  // the ingest service's surface; these three routes proxy them verbatim
+  // (status + body) so callers never need the ingest URL or its token. The
+  // proxy authenticates with its own configured ingest token; caller tokens
+  // are not forwarded (they are retrieval tokens, not ingest tokens).
+  const ID_PATTERN = /^[\w.:-]{1,128}$/u;
+
+  const passthrough = async (upstream: {
+    method: "GET" | "POST";
+    path: string;
+  }): Promise<Response> => {
+    if (config.ingestBaseUrl === null) {
+      throw new Error("ingest API not configured");
+    }
+    const response = await withTimeout(
+      fetch(`${config.ingestBaseUrl.replace(/\/+$/u, "")}${upstream.path}`, {
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${config.ingestToken ?? config.token}`,
+        },
+        method: upstream.method,
+      }),
+      config.ingestTimeoutMs
+    );
+    const body: unknown = await response.json().catch(() => null);
+    return Response.json(body, { status: response.status });
+  };
+
+  const passthroughError = (
+    c: {
+      get: (key: "requestId") => string;
+      json: (body: unknown, status: number) => Response;
+    },
+    error: unknown
+  ): Response => {
+    if (error instanceof TimeoutError) {
+      return c.json(
+        errorBody(
+          "timeout",
+          `ingest passthrough exceeded ${config.ingestTimeoutMs}ms`,
+          c.get("requestId")
+        ),
+        504
+      );
+    }
+    logger.warn("ingest passthrough failed", {
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return c.json(
+      errorBody(
+        "store_unavailable",
+        error instanceof Error && error.message === "ingest API not configured"
+          ? "knowledge ingest API is not configured"
+          : "ingest passthrough failed",
+        c.get("requestId")
+      ),
+      503
+    );
+  };
+
+  app.get("/v1/sources", async (c) => {
+    try {
+      return await passthrough({ method: "GET", path: "/v1/sources" });
+    } catch (error) {
+      return passthroughError(c, error);
+    }
+  });
+
+  app.post("/v1/sources/:sourceId/sync", async (c) => {
+    const { sourceId } = c.req.param();
+    if (!ID_PATTERN.test(sourceId)) {
+      return c.json(
+        errorBody("invalid_request", "invalid source id", c.get("requestId")),
+        422
+      );
+    }
+    try {
+      return await passthrough({
+        method: "POST",
+        path: `/v1/sources/${encodeURIComponent(sourceId)}/sync`,
+      });
+    } catch (error) {
+      return passthroughError(c, error);
+    }
+  });
+
+  app.get("/v1/sync-jobs/:jobId", async (c) => {
+    const { jobId } = c.req.param();
+    if (!ID_PATTERN.test(jobId)) {
+      return c.json(
+        errorBody("invalid_request", "invalid job id", c.get("requestId")),
+        422
+      );
+    }
+    try {
+      return await passthrough({
+        method: "GET",
+        path: `/v1/sync-jobs/${encodeURIComponent(jobId)}`,
+      });
+    } catch (error) {
+      return passthroughError(c, error);
+    }
+  });
+
   app.doc31("/openapi.json", {
     info: {
       description:
-        "Cited knowledge retrieval. Returns ranked source chunks with traceable provenance; never prose answers. Authenticated with a secret-backed bearer token and intended for tailnet/internal networks only.",
+        "Cited knowledge retrieval. Returns ranked source chunks with traceable provenance; never prose answers. Sources and sync-job endpoints are passthroughs to the ingest service (same base URL, shared bearer). Authenticated with a secret-backed bearer token and intended for tailnet/internal networks only.",
       title: "Knowledge Retrieval API",
       version: "0.1.0",
     },

@@ -1,17 +1,50 @@
 import { serve } from "@hono/node-server";
 
-import { createApp } from "./app.js";
-import { configFromEnv } from "./config.js";
-import { createJsonLogger } from "./log.js";
-import { MemoryStore, memoryStoreFromSeedFile } from "./memory-store.js";
+import { ensureBm25Schema } from "../../knowledge/src/bm25.ts";
+import { PGVECTOR_MIGRATION_SQL } from "../../knowledge/src/pgvector.ts";
+import { createApp } from "./app.ts";
+import { configFromEnv } from "./config.ts";
+import { createJsonLogger } from "./log.ts";
+import { MemoryStore, memoryStoreFromSeedFile } from "./memory-store.ts";
+import { PgRetrievalStore } from "./pg-store.ts";
 
 const logger = createJsonLogger();
 
 try {
   const config = configFromEnv(process.env);
-  const store = config.seedFile
-    ? memoryStoreFromSeedFile(config.seedFile)
-    : new MemoryStore({ documents: [] });
+  // Postgres (the #56 knowledge schema + both channel indexes) when a
+  // DATABASE_URL is configured; the deterministic in-memory store otherwise
+  // (offline dev/CI-smoke). The store is interchangeable behind RetrievalStore.
+  const { databaseUrl } = config;
+  const pool =
+    databaseUrl === undefined || databaseUrl === null
+      ? null
+      : await (async () => {
+          const pg = await import("pg");
+          return new pg.Pool({ connectionString: databaseUrl });
+        })();
+  let store;
+  if (pool === null) {
+    store = config.seedFile
+      ? memoryStoreFromSeedFile(config.seedFile)
+      : new MemoryStore({ documents: [] });
+    logger.warn(
+      "no database configured; running the in-memory store (results are NOT the durable corpus)",
+      {}
+    );
+  } else {
+    if (config.applySchemaOnBoot) {
+      // Both channel migrations compose the idempotent base #56 schema and
+      // add their own indexes (bm25 + HNSW); the extensions themselves are
+      // installed declaratively by the CNPG Database resource
+      // (deploy/postgres/base/databases.yaml).
+      await ensureBm25Schema(pool);
+      await pool.query(PGVECTOR_MIGRATION_SQL, []);
+      logger.info("knowledge schema + channel indexes applied", {});
+    }
+    store = new PgRetrievalStore(pool, {});
+    logger.info("store ready", { backend: "postgres" });
+  }
   const app = createApp({ config, logger, store });
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     logger.info("listening", { port: info.port });

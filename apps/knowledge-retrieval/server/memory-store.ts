@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { bm25TermScore, cosineSimilarity, tokenize } from "./rank.js";
+import { bm25TermScore, cosineSimilarity, tokenize } from "./rank.ts";
 import type {
   ChannelResults,
   ChunkRecord,
@@ -11,7 +11,7 @@ import type {
   SearchFilters,
   SearchOptions,
   SourceRef,
-} from "./store.js";
+} from "./store.ts";
 
 export interface MemoryChunkInput {
   chunkId: string;
