@@ -71,6 +71,21 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # the caller identity injected by the panel/Executor path — #84).
 . "${SCRIPT_DIR}/marker.sh"
 
+# Update the run marker comment. Defined BEFORE the first failure path that
+# uses it (the worker-image FATAL at the profile resolution) — dash dies with
+# "update_status: not found" (127) when the definition sits below the first
+# call, which crashed the fail path before it could label the issue
+# factory/failed, so the same queued issue was re-picked and re-failed every
+# tick. No-op until the marker comment exists (MARKER_ID is set after the
+# worker dispatch); status text still surfaces via stderr for the pod log.
+MARKER_ID=""
+update_status() {  # $1=status, $2=extra detail markdown
+  if [ -n "${MARKER_ID}" ]; then
+    gh api -X PATCH "repos/${REPO}/issues/comments/${MARKER_ID}" \
+      -F body="$(factory_marker_body "${1}" "${2:-}" "$(timestamp)")" >/dev/null
+  fi
+}
+
 NUM=""
 # shellcheck disable=SC2329  # invoked via `trap cleanup EXIT` below
 # Crash convergence: if we die (set -e, OOM, deadline) while the issue is
@@ -233,11 +248,6 @@ COMMENT_URL=$(gh issue comment "${NUM}" -R "${REPO}" --body "$(factory_marker_bo
 echo "[orch] marker comment: ${COMMENT_URL}"
 
 MARKER_ID=${COMMENT_URL##*issuecomment-}
-
-update_status() {  # $1=status, $2=extra detail markdown
-  gh api -X PATCH "repos/${REPO}/issues/comments/${MARKER_ID}" \
-    -F body="$(factory_marker_body "${1}" "${2:-}" "$(timestamp)")" >/dev/null
-}
 
 # ---- 3. spawn the worker Job ---------------------------------------------
 JOB_NAME="factory-issue-${NUM}-$(date +%s)"

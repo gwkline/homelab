@@ -38,6 +38,14 @@ spec:
               env:
                 - name: FACTORY_REPO
                   value: gwkline/homelab # self-iteration target per operator
+                # The in-cluster kubernetes Service VIP is unreachable from
+                # isolated sandbox pods on the current node (same as the
+                # reconciler): point kubectl at the API server's node endpoint
+                # explicitly — allow-factory-orchestrator (below) permits it.
+                - name: KUBERNETES_SERVICE_HOST
+                  value: 192.168.1.2
+                - name: KUBERNETES_SERVICE_PORT
+                  value: "6443"
                 - name: OPENCODE_AUTH_B64
                   valueFrom:
                     secretKeyRef: { name: factory-opencode-auth, key: auth-b64 }
@@ -102,3 +110,40 @@ roleRef:
   }
 subjects:
   - { kind: ServiceAccount, name: factory-orchestrator, namespace: sandbox }
+---
+# Orchestrator egress: same shape as allow-factory-reconciler. Without a
+# profile label the orchestrator pod fell into sandbox-egress-public-only,
+# which excepts 10.0.0.0/8 — so once netpol enforcement settled on the pod,
+# EVERY kubectl call (worker-image resolution, Job spawn, patch extraction)
+# failed with "connection refused" to the API server, and every tick died
+# after picking an issue (2026-10-06: six queued issues stuck for days).
+# Applies to both orchestrator CronJobs and panel-spawned runs — all carry
+# factory.gwkline.io/component=orchestrator (the panel clones the CronJob
+# pod template, so the label rides along).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-factory-orchestrator
+  namespace: sandbox
+  labels:
+    app.kubernetes.io/part-of: homelab
+spec:
+  podSelector:
+    matchLabels:
+      factory.gwkline.io/component: orchestrator
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to: # GitHub API + git + CDN
+        - ipBlock: { cidr: 140.82.112.0/20 }
+        - ipBlock: { cidr: 185.199.108.0/22 }
+        - ipBlock: { cidr: 104.16.0.0/12 }
+      ports: [{ protocol: TCP, port: 443 }]
+    - ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+    - to: # in-cluster Service VIP (kubectl), belt-and-braces alongside the
+        # node-endpoint env override above
+        - ipBlock: { cidr: 10.43.0.1/32 }
+      ports: [{ protocol: TCP, port: 443 }]
+    - to: # API server node endpoint (KUBERNETES_SERVICE_HOST override)
+        - ipBlock: { cidr: 192.168.1.2/32 }
+      ports: [{ protocol: TCP, port: 6443 }]
