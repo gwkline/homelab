@@ -18,7 +18,7 @@ import {
 } from "../lib/knowledge";
 import type { SearchHit, SourceRow, SyncJob } from "../lib/knowledge";
 import { cn } from "../lib/utils";
-import { Badge, Button, Card, CardHeader, Input } from "./ui";
+import { Badge, Button, Card, CardHeader, Checkbox, Input, Select } from "./ui";
 
 type Phase = "error" | "loading" | "ready" | "unconfigured";
 
@@ -419,27 +419,29 @@ export const KnowledgeExplorer = () => {
               className="w-40"
               aria-label="namespace"
             />
-            <select
+            <Select
+              ariaLabel="retrieval mode"
               value={mode}
-              onChange={(e) => setMode(e.target.value)}
-              className="border-border bg-background rounded-lg border px-2 py-1.5 text-sm"
-              aria-label="retrieval mode"
-            >
-              <option value="hybrid">hybrid</option>
-              <option value="bm25">bm25</option>
-              <option value="vector">vector</option>
-            </select>
-            <select
-              value={topK}
-              onChange={(e) => setTopK(Number(e.target.value))}
-              className="border-border bg-background rounded-lg border px-2 py-1.5 text-sm"
-              aria-label="top-k"
-            >
-              <option value={5}>top 5</option>
-              <option value={10}>top 10</option>
-              <option value={20}>top 20</option>
-              <option value={50}>top 50</option>
-            </select>
+              onChange={setMode}
+              options={[
+                { label: "hybrid", value: "hybrid" },
+                { label: "bm25", value: "bm25" },
+                { label: "vector", value: "vector" },
+              ]}
+            />
+            <Select
+              ariaLabel="top-k"
+              value={String(topK)}
+              onChange={(v) => {
+                setTopK(Number(v));
+              }}
+              options={[
+                { label: "top 5", value: "5" },
+                { label: "top 10", value: "10" },
+                { label: "top 20", value: "20" },
+                { label: "top 50", value: "50" },
+              ]}
+            />
             <Button
               onClick={submitSearch}
               disabled={searching || !query.trim()}
@@ -448,14 +450,21 @@ export const KnowledgeExplorer = () => {
             </Button>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <label className="text-muted-foreground flex items-center gap-1.5 text-xs">
-              <input
-                type="checkbox"
+            <span className="text-muted-foreground flex items-center gap-1.5 text-xs">
+              <Checkbox
+                ariaLabel="include superseded versions"
                 checked={includeSuperseded}
-                onChange={(e) => setIncludeSuperseded(e.target.checked)}
+                onCheckedChange={setIncludeSuperseded}
               />
-              include superseded versions (deleted content is never served)
-            </label>
+              <span
+                className="cursor-pointer select-none"
+                onClick={() => {
+                  setIncludeSuperseded(!includeSuperseded);
+                }}
+              >
+                include superseded versions (deleted content is never served)
+              </span>
+            </span>
             {history.length > 0 && (
               <span className="text-muted-foreground ml-auto flex items-center gap-1.5 text-xs">
                 <History size={11} />
