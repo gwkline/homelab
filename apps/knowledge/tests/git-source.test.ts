@@ -109,7 +109,7 @@ const createFixtureRepository = async (): Promise<{
   );
   await writeFixtureFile(repoDir, ".env", "API_TOKEN=supersecret\n");
   await writeFixtureFile(repoDir, "assets/logo.png", PNG_BYTES);
-  await writeFixtureFile(repoDir, "vendor/dep.js", "module.exports = 1;\n");
+  await writeFixtureFile(repoDir, "vendor/dep.js", "const dep = 1;\n");
   await writeFixtureFile(repoDir, "secrets/key.txt", "k\n");
   commitAll(repoDir, "initial");
   return {
