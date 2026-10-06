@@ -49,7 +49,16 @@ RUN CACHEBUST="${CACHEBUST}" npm install -g \
       "opencode-ai@${OPENCODE_VERSION}" \
   && npm install -g --prefix /opt/opencode-v2 "opencode-ai@${OPENCODE_BETA_VERSION}" \
   && ln -sf /opt/opencode-v2/bin/opencode /usr/local/bin/opencode-beta \
-  && opencode-beta --version
+  && opencode-beta --version \
+  && t3 --version \
+  && codex --version \
+  && claude --version
+# The three --version checks above are load-bearing, not cosmetic: the
+# t3 binary ships as an npm OPTIONAL dependency that lags the main
+# package by minutes during a nightly publish — npm silently skips a
+# 404ing optional dep, and the wrapper alone crash-loops the whole
+# pod at boot ("no T3 Code CLI build is available for this platform").
+# A build in that window must fail HERE, in CI, not on the cluster.
 
 # gh CLI — installed by the shared installer (apps/shared/install-gh.sh):
 # one strategy across t3code/hermes/loop-agent so the pin and its
