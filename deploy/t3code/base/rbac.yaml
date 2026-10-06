@@ -24,7 +24,17 @@ rules:
   # Core state + logs: pods, pod logs, events, nodes, namespaces,
   # services, configmaps (non-secret config visibility), PVCs.
   - apiGroups: [""]
-    resources: ["pods", "pods/log", "events", "nodes", "namespaces", "services", "configmaps", "persistentvolumeclaims"]
+    resources:
+      [
+        "pods",
+        "pods/log",
+        "events",
+        "nodes",
+        "namespaces",
+        "services",
+        "configmaps",
+        "persistentvolumeclaims",
+      ]
     verbs: ["get", "list"]
   # Workload rollouts for deployment/statefulset auditing.
   - apiGroups: ["apps"]
