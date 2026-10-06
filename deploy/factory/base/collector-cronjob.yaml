@@ -41,7 +41,7 @@ spec:
               # Declarative collector config lives in the env block below;
               # the image pin is re-stamped after image rebuilds with
               # scripts/pin-factory-image.sh factory/collector <digest>.
-              image: ghcr.io/gwkline/homelab/factory/collector@sha256:5a81fa42375a15522764a25d79f9fa0a4d9d101db48ea55456704639aec7e1b5
+              image: ghcr.io/gwkline/homelab/factory/collector@sha256:37ebc75207aca82cdb824dd6ee685b0f662ce795499b928b4aa19ac95dcbcd9a
               imagePullPolicy: Always
               env:
                 # ── Declarative work selection (#78) ──────────────────────

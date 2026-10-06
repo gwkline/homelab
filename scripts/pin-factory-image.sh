@@ -49,6 +49,7 @@ locations() {
       ;;
     factory/security)
       printf '%s\n' deploy/factory/base/profile-security.yaml
+      printf '%s\n' deploy/factory/base/security-cronjob.yaml
       ;;
     factory/reviewer)
       printf '%s\n' deploy/factory/base/reviewer-cronjob.yaml
