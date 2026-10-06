@@ -16,7 +16,14 @@ import { JobsTable } from "./components/jobs-table";
 import { KnowledgeCard } from "./components/knowledge-card";
 import { KnowledgeExplorer } from "./components/knowledge-explorer";
 import { ScheduleRow } from "./components/schedule-row";
-import { Card, CardHeader, Badge, Button, Input } from "./components/ui";
+import {
+  Card,
+  CardHeader,
+  Badge,
+  Button,
+  Input,
+  Select,
+} from "./components/ui";
 
 interface Job {
   name: string;
@@ -456,15 +463,15 @@ export default function App() {
                     ? "select an issue above"
                     : `selected ${selectedIssue}`}
                 </span>
-                <select
+                <Select
+                  ariaLabel="profile"
                   value={selectedProfile}
-                  onChange={(e) => setSelectedProfile(e.target.value)}
-                  className="border-border bg-background ml-2 rounded-md border px-2 py-1 text-xs"
-                  aria-label="profile"
-                >
-                  <option value="code-pr">code-pr</option>
-                  <option value="security">security</option>
-                </select>
+                  onChange={setSelectedProfile}
+                  options={[
+                    { label: "code-pr", value: "code-pr" },
+                    { label: "security", value: "security" },
+                  ]}
+                />
                 <div className="ml-auto" />
                 <Button
                   onClick={() => runFactory()}
@@ -486,18 +493,15 @@ export default function App() {
               subtitle={`${factoryRepo} · factory draft PRs — approve & merge without leaving the panel`}
               action={
                 <div className="flex items-center gap-2">
-                  <select
+                  <Select
+                    ariaLabel="review repo"
                     value={factoryRepo}
-                    onChange={(e) => setFactoryRepo(e.target.value)}
-                    className="border-border bg-background rounded-md border px-2 py-1 text-xs"
-                    aria-label="review repo"
-                  >
-                    {allIssues.map(({ repo }) => (
-                      <option key={repo} value={repo}>
-                        {repo}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setFactoryRepo}
+                    options={allIssues.map(({ repo }) => ({
+                      label: repo,
+                      value: repo,
+                    }))}
+                  />
                   <Button
                     onClick={refreshReviewQueue}
                     className="bg-muted text-foreground h-7 px-2 py-1 text-xs hover:opacity-80"
@@ -624,18 +628,15 @@ export default function App() {
                     className="pl-8"
                   />
                 </div>
-                <select
+                <Select
+                  ariaLabel="watcher repo"
                   value={launchRepo}
-                  onChange={(e) => setLaunchRepo(e.target.value)}
-                  className="border-border bg-background rounded-md border px-2 py-1 text-xs"
-                  aria-label="watcher repo"
-                >
-                  {allIssues.map(({ repo }) => (
-                    <option key={repo} value={repo}>
-                      {repo.split("/")[1]}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setLaunchRepo}
+                  options={allIssues.map(({ repo }) => ({
+                    label: repo.split("/")[1] ?? repo,
+                    value: repo,
+                  }))}
+                />
                 <Button
                   onClick={launch}
                   disabled={launching || !command.trim()}

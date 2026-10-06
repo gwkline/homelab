@@ -2,7 +2,7 @@ import { RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 
-import { Badge, Button, Card, CardHeader } from "./ui";
+import { Badge, Button, Card, CardHeader, Select } from "./ui";
 
 interface WeeklyMerge {
   label: string;
@@ -135,18 +135,12 @@ export const FactoryHealthCard = ({
         subtitle={`${repo} · what the factory produced lately — commits/LOC from recent merged PRs, rates from open + closed factory PRs`}
         action={
           <div className="flex items-center gap-2">
-            <select
+            <Select
+              ariaLabel="stats repo"
               value={repo}
-              onChange={(e) => onRepoChange(e.target.value)}
-              className="border-border bg-background rounded-md border px-2 py-1 text-xs"
-              aria-label="stats repo"
-            >
-              {repos.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
+              onChange={onRepoChange}
+              options={repos.map((r) => ({ label: r, value: r }))}
+            />
             <Button
               onClick={load}
               className="bg-muted text-foreground h-7 px-2 py-1 text-xs hover:opacity-80"
