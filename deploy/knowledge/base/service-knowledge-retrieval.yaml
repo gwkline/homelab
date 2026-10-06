@@ -1,0 +1,24 @@
+# Tailnet exposure for the knowledge retrieval API: the https://knowledge.<tailnet>
+# URL the panel devtools card advertises and the one agents (via the MCP
+# adapter's KNOWLEDGE_API_BASE) and humans use. Tailnet identity is the auth
+# layer plus the service's own bearer token — same model as every other
+# service here. In-cluster consumers use knowledge-retrieval-http instead.
+apiVersion: v1
+kind: Service
+metadata:
+  name: knowledge-retrieval
+  namespace: agents
+  annotations:
+    tailscale.com/hostname: knowledge
+    # Required so proxy devices carry tag:k8s-operator regardless of the
+    # operator's default tag (see deploy/tailscale/README.md).
+    tailscale.com/tags: tag:k8s-operator
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app: knowledge-retrieval
+  ports:
+    - name: https
+      port: 443
+      targetPort: http

@@ -1,0 +1,85 @@
+# Knowledge retrieval API (#63/#64): hybrid BM25 (pg_textsearch) + vector
+# (pgvector) retrieval over the #56 knowledge schema with RRF fusion, plus
+# the sources/sync passthrough to the ingest service (one base URL for the
+# panel and MCP). Stateless; single replica is a sizing choice, not a
+# correctness constraint.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knowledge-retrieval
+  namespace: agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: knowledge-retrieval
+  template:
+    metadata:
+      labels:
+        app: knowledge-retrieval
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: knowledge-retrieval
+          # BOOTSTRAP: all-zero placeholder digest — CI publishes the real
+          # image when this lands on main. Pin it with
+          #   scripts/pin-factory-image.sh knowledge/retrieval <digest>
+          # (see deploy/knowledge/README.md, "Bootstrap order").
+          image: ghcr.io/gwkline/homelab/knowledge-retrieval@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          env:
+            - name: KNOWLEDGE_RETRIEVAL_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: knowledge-db
+                  key: databaseUrl
+            # Fail-closed bearer token (config.ts reads the mounted file).
+            - name: KNOWLEDGE_RETRIEVAL_TOKEN_FILE
+              value: /secrets/token
+            # Sources/sync passthrough: the in-cluster ingest API. The
+            # passthrough authenticates with the shared knowledge token.
+            - name: KNOWLEDGE_INGEST_BASE_URL
+              value: http://knowledge-ingest.agents.svc.cluster.local:3100
+            - name: KNOWLEDGE_INGEST_TOKEN_FILE
+              value: /secrets/token
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          ports:
+            - containerPort: 3000
+              name: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: knowledge-token
+              mountPath: /secrets
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /v1/sources
+              port: http
+            # 503 until the ingest passthrough answers — the probe's
+            # failureThreshold absorbs the ingest rollout window.
+            failureThreshold: 30
+            periodSeconds: 5
+      volumes:
+        - name: knowledge-token
+          secret:
+            secretName: knowledge-api-token
+            items:
+              - key: token
+                path: token

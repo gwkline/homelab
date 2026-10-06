@@ -30,6 +30,16 @@ spec:
             # file on the panel-stats PVC, upserted per ISO week.
             - name: FACTORY_STATS_PATH
               value: /data/factory-stats/snapshots.json
+            # Knowledge proxy target (the retrieval service's in-cluster
+            # ClusterIP; /api/knowledge/* proxies /v1/sources, sync, and
+            # search). Token from the optional knowledge-api-token mount —
+            # if the 1Password item is not synced yet the panel still boots
+            # and the knowledge endpoints answer 503/401 (degraded, never
+            # fatal), matching the github-token-writer pattern.
+            - name: KNOWLEDGE_API_BASE
+              value: http://knowledge-retrieval-http.agents.svc.cluster.local:3000
+            - name: KNOWLEDGE_API_TOKEN_FILE
+              value: /secrets-knowledge/token
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -49,6 +59,9 @@ spec:
             - name: github-token
               mountPath: /secrets
               readOnly: true
+            - name: knowledge-token
+              mountPath: /secrets-knowledge
+              readOnly: true
             - name: stats
               mountPath: /data
           startupProbe:
@@ -66,6 +79,15 @@ spec:
         - name: github-token
           secret:
             secretName: github-token
+            items:
+              - key: token
+                path: token
+        - name: knowledge-token
+          secret:
+            # Optional: without the 1Password item the panel still boots and
+            # the knowledge endpoints degrade (see the env comment above).
+            secretName: knowledge-api-token
+            optional: true
             items:
               - key: token
                 path: token
