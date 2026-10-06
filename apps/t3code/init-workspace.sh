@@ -23,8 +23,10 @@ REPOS_DIR="${DATA_DIR}/repos"
 # Agent CLI state (.claude/.codex logins, sessions) is container-local by
 # default. Restore from the PVC snapshot so logins survive rollouts; a
 # background sync writes changes back every 60s (see bottom of file).
+# .config/opencode rides along for the same reason: its permission config
+# is operator state that must survive restarts.
 STATE_SRC="${DATA_DIR}/agent-state"
-for _d in .claude .codex; do
+for _d in .claude .codex .config/opencode; do
   if [ -d "${STATE_SRC}/${_d}" ]; then
     mkdir -p "/home/node/${_d}"
     cp -a "${STATE_SRC}/${_d}/." "/home/node/${_d}/" 2>/dev/null || true
@@ -33,7 +35,7 @@ done
 (
   while :; do
     sleep 60
-    for _d in .claude .codex; do
+    for _d in .claude .codex .config/opencode; do
       if [ -d "/home/node/${_d}" ]; then
         mkdir -p "${STATE_SRC}/${_d}"
         cp -a "/home/node/${_d}/." "${STATE_SRC}/${_d}/" 2>/dev/null || true
@@ -67,6 +69,57 @@ else
 fi
 
 sync_repos
+
+# ---------------------------------------------------------------------------
+# Session-friction defaults (2026-10-05): these runners are driven through
+# t3 by the operator, so per-command permission prompts defeat the point.
+# Seeded at every boot, both idempotent and deferential to restored state:
+#   1. opencode global config — allow edits/bash/webfetch (rm -rf asks,
+#      sudo denied) instead of opencode's ask-everything default. Only
+#      written when missing: the restored/synced operator config wins.
+#   2. claude folder-trust for every synced workspace repo — until
+#      hasTrustDialogAccepted is set, claude IGNORES each repo's own
+#      .claude/settings.json allowlist and prompts for everything
+#      (observed: "Ignoring 9 permissions.allow entries").
+# ---------------------------------------------------------------------------
+OC_CONFIG="/home/node/.config/opencode/opencode.json"
+if [ ! -f "${OC_CONFIG}" ]; then
+  mkdir -p /home/node/.config/opencode
+  cat > "${OC_CONFIG}" <<'__OC__'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "edit": "allow",
+    "bash": {
+      "*": "allow",
+      "rm -rf *": "ask",
+      "sudo *": "deny"
+    },
+    "webfetch": "allow"
+  }
+}
+__OC__
+fi
+if command -v python3 >/dev/null 2>&1 && [ -d "${REPOS_DIR}" ]; then
+  python3 - "${REPOS_DIR}" <<'__PY__' || echo "[t3code] WARN: claude trust seed failed"
+import json, os, sys
+
+repos = sys.argv[1]
+cfg = os.path.expanduser("~/.claude.json")
+try:
+    with open(cfg) as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+projects = d.setdefault("projects", {})
+for name in sorted(os.listdir(repos)):
+    path = os.path.join(repos, name)
+    if os.path.isdir(os.path.join(path, ".git")):
+        projects[path] = {"hasTrustDialogAccepted": True}
+with open(cfg, "w") as f:
+    json.dump(d, f, indent=2)
+__PY__
+fi
 
 register_project() {
   dir="$1"
