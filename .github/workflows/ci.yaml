@@ -546,3 +546,132 @@ jobs:
           if ! gh pr merge "$branch" --auto --squash --delete-branch; then
             echo "auto-merge not enabled for this PR — it awaits an admin merge"
           fi
+
+  # Auto-deploy loop (2026-10-06): merge to main → build publishes fresh
+  # images (the `build` job above) → THIS job pins them into the workload
+  # manifests → the auto-deploy watcher applies the merged manifests on its
+  # next 300s pass. No human step between merge and cluster rollout.
+  # Covers the watchlisted apps repin-t3code-image does not (that job owns
+  # the t3code/work-t3code pair).
+  #
+  # REPIN_TOKEN is a PAT (the same credential the factory bots push/merge
+  # with) because GITHUB_TOKEN pushes do not trigger CI — a PR pushed with
+  # the workflow token never satisfies required checks, so it can never
+  # auto-merge. Without the secret the job exits non-zero as a loud signal
+  # instead of silently reverting to a manual-merge PR.
+  repin-app-images:
+    needs: [build]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.REPIN_TOKEN }}
+    steps:
+      # depth 2: the changed-dirs gate diffs HEAD~1..HEAD; depth 1 would make
+      # HEAD~1 vanish and the gate would silently skip every run.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 2
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Guard — PAT present
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::REPIN_TOKEN secret is not set — the repin PR could not trigger CI without it. Set it to the factory PAT."
+            exit 1
+          fi
+
+      - name: Repin changed app images (no-op when current)
+        id: repin
+        run: |
+          set -eu
+          manifest_for() {
+            case "$1" in
+              panel)              echo deploy/panel/base/deployment.yaml ;;
+              hermes)             echo deploy/hermes/base/statefulset.yaml ;;
+              knowledge-ingest)   echo deploy/knowledge/base/deployment-knowledge-ingest.yaml ;;
+              knowledge-retrieval) echo deploy/knowledge/base/deployment-knowledge-retrieval.yaml ;;
+            esac
+          }
+          REPINNED=""
+          for app in panel hermes knowledge-ingest knowledge-retrieval; do
+            manifest="$(manifest_for "$app")"
+            if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
+              # Deploy-relevant change only: the app's source or its own
+              # manifest dir. Unrelated merges also mint new digests (every
+              # build re-pushes :latest), so without this gate each merge
+              # would spawn a churn PR for every app.
+              src="apps/${app}"
+              mdir="$(dirname "$manifest")"
+              diffs="$(git diff --name-only HEAD~1 HEAD -- "$src" "$mdir" || true)"
+              if [ -z "${diffs}" ]; then
+                echo "${app}: unchanged — skip"
+                continue
+              fi
+            fi
+            digest="$(docker buildx imagetools inspect "ghcr.io/${GITHUB_REPOSITORY}/${app}:latest" --format '{{.Manifest.Digest}}')"
+            if grep -q "/${app}@${digest}" "$manifest"; then
+              echo "${app}: already pinned to ${digest}"
+              continue
+            fi
+            sed -i "s#/${app}@sha256:[a-f0-9]\\{64\\}#/${app}@${digest}#g" "$manifest"
+            REPINNED="${REPINNED} ${app}"
+            echo "${app}: repinned -> ${digest}"
+          done
+          if [ -n "${REPINNED}" ]; then
+            echo "changed=1" >> "$GITHUB_OUTPUT"
+            echo "repinned=${REPINNED# }" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open repin PR and merge when green
+        if: steps.repin.outputs.changed == '1'
+        run: |
+          set -eu
+          open="$(gh pr list -R "$GITHUB_REPOSITORY" --state open --json headRefName --jq '.[].headRefName' | grep -c '^repin/apps' || true)"
+          if [ "$open" != "0" ]; then
+            echo "a repin/apps PR is already open — skipping (it carries the newest digests)"
+            exit 0
+          fi
+          branch="repin/apps-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -am "Re-pin app images: ${{ steps.repin.outputs.repinned }}"
+          # PAT push (template URL — the token never lands in a file):
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
+          gh pr create --head "$branch" --title "chore(deploy): auto re-pin ${{ steps.repin.outputs.repinned }}" \
+            --body "Auto-generated by the repin-app-images job: pins the images CI published for this merge into the workload manifests. The auto-deploy watcher applies them to the cluster within one 300s pass after merge."
+          # Merge when required checks go green (builds take ~15-20 min).
+          # mergeStateStatus is server-side truth; gh pr checks output can be
+          # stale immediately after push. DIRTY leaves the PR for a human.
+          for i in $(seq 1 60); do
+            st="$(gh pr view "$branch" -R "$GITHUB_REPOSITORY" --json mergeStateStatus --jq .mergeStateStatus)"
+            case "$st" in
+              CLEAN)
+                gh pr merge "$branch" -R "$GITHUB_REPOSITORY" --squash --delete-branch
+                echo "merged ${branch}"
+                exit 0
+                ;;
+              DIRTY)
+                echo "PR conflicts with main — leaving open for a human rebase"
+                exit 0
+                ;;
+              BLOCKED)
+                sleep 50
+                ;;
+              *)
+                echo "PR state ${st} — leaving open for follow-up"
+                exit 0
+                ;;
+            esac
+          done
+          echo "checks did not go green within the budget — PR left open"
+
