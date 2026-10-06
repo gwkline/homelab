@@ -50,8 +50,10 @@ kubectl logs job/my-task -n sandbox -f
 <<<<<<< HEAD
 The panel can also launch runs; hermes drives the factory through the governed Executor tools instead of raw Jobs. Fully hands-off runs are the factory's own collector, not the legacy dispatcher: GitHub issues are the primary work generator, and shell commands are never embedded in CronJob configuration (#78).
 =======
+
 The panel and dispatcher can also launch runs; hermes drives the factory through the governed Executor tools instead of raw Jobs. For fully hands-off runs, apply `deploy/dispatcher/base`: any issue labeled `run-agent` in the watched repo spawns a Job every 15 minutes, no human needed. The panel's list-and-launch behavior is proven end to end against a real cluster by `scripts/panel-e2e-smoke.sh` (see `docs/panel-e2e.md`).
->>>>>>> 07afddb (factory: prove panel list-and-launch against a real Kubernetes API (#27))
+
+> > > > > > > 07afddb (factory: prove panel list-and-launch against a real Kubernetes API (#27))
 
 The software factory is fully unattended: `deploy/factory/base` runs a durable issue collector hourly. Apply it once during cluster bring-up; its small reconciler CronJob reapplies the same manifests from `main` every 10 minutes afterward. Every open issue in each repo listed by `FACTORY_REPOS` that has no factory lifecycle label is admitted idempotently (one repository/issue/rule version maps to exactly one Run, keyed per #71; GitHub access uses a short-lived read-scoped GitHub App installation token, #70); the orchestrator then produces a tested draft PR one issue at a time. This means factory code and schedules do not silently drift from the cluster.
 
