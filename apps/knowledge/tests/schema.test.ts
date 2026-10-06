@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 
+import { ensureBm25Schema } from "../src/bm25.ts";
+import { ensurePgvectorSchema, parseAnchors } from "../src/pgvector.ts";
 import {
   buildChunkReactivateCurrent,
   buildChunkSupersede,
@@ -18,8 +20,6 @@ import {
   KNOWLEDGE_SCHEMA_VERSION,
 } from "../src/schema.ts";
 import type { ChunkUpsertInput, SchemaDbClient } from "../src/schema.ts";
-import { ensurePgvectorSchema, parseAnchors } from "../src/pgvector.ts";
-import { ensureBm25Schema } from "../src/bm25.ts";
 
 const sha256 = (text: string): string =>
   createHash("sha256").update(text).digest("hex");
@@ -62,6 +62,16 @@ test("migration defines the full document/version/chunk/provenance model", () =>
     "version_id TEXT NOT NULL REFERENCES document_version(id) ON DELETE CASCADE",
   ]) {
     assert.ok(sql.includes(fk), `missing FK ${fk}`);
+  }
+  // Source identity and citation fields live on the document row (D8):
+  // every chunk result must resolve to a source, title, and url.
+  for (const column of [
+    "source TEXT NOT NULL CHECK (length(source) > 0)",
+    "title TEXT",
+    "url TEXT",
+    "deleted_at TIMESTAMPTZ",
+  ]) {
+    assert.ok(sql.includes(column), `missing document column ${column}`);
   }
   // Namespace scoping is a real, validated collection key.
   assert.ok(
@@ -112,7 +122,12 @@ test("migration DDL carries the advanced indexes", () => {
 
 test("migration upgrades pre-#56 chunk tables and is idempotent by construction", () => {
   const sql = KNOWLEDGE_SCHEMA_MIGRATION_SQL;
-  for (const column of ["idx", "content_hash", "chunker_version", "valid_from"]) {
+  for (const column of [
+    "idx",
+    "content_hash",
+    "chunker_version",
+    "valid_from",
+  ]) {
     assert.ok(
       sql.includes(`ADD COLUMN IF NOT EXISTS ${column}`),
       `stopgap upgrade path missing for ${column}`
@@ -161,7 +176,10 @@ test("namespace registration binds an idempotent upsert", () => {
   const built = buildNamespaceRegistration("homelab-docs", "primary corpus");
   assert.deepEqual(built.params, ["homelab-docs", "primary corpus"]);
   assert.ok(built.text.includes("ON CONFLICT (name) DO NOTHING"));
-  assert.throws(() => buildNamespaceRegistration("bad namespace!"), /invalid namespace/u);
+  assert.throws(
+    () => buildNamespaceRegistration("bad namespace!"),
+    /invalid namespace/u
+  );
   assert.throws(() => buildNamespaceRegistration(""), /invalid namespace/u);
   assert.ok(KNOWLEDGE_NAMESPACE_PATTERN.test("a.b-c_d"));
 });
@@ -230,7 +248,10 @@ test("document upsert validates identity fields and hashes", () => {
     () => buildDocumentUpsert({ ...valid, namespace: "nope nope" }),
     /invalid namespace/u
   );
-  assert.throws(() => buildDocumentUpsert({ ...valid, id: "" }), /invalid document id/u);
+  assert.throws(
+    () => buildDocumentUpsert({ ...valid, id: "" }),
+    /invalid document id/u
+  );
   assert.throws(
     () => buildDocumentUpsert({ ...valid, title: 5 as unknown as string }),
     /title must be a string/u
@@ -245,7 +266,9 @@ test("document version insert appends history idempotently", () => {
     version: 2,
   });
   assert.deepEqual(built.params, ["doc-1:v2", "doc-1", 2, sha256("v2")]);
-  assert.ok(built.text.includes("ON CONFLICT (document_id, version) DO NOTHING"));
+  assert.ok(
+    built.text.includes("ON CONFLICT (document_id, version) DO NOTHING")
+  );
   assert.throws(
     () =>
       buildDocumentVersionInsert({
@@ -278,7 +301,7 @@ test("chunk supersede hides live chunks via the channels' own predicate", () => 
 
 test("chunk upsert is content-addressed and never rewrites embeddings", () => {
   const chunk: ChunkUpsertInput = {
-    anchors: [{ type: "offset", start: 0, end: 9 }],
+    anchors: [{ end: 9, start: 0, type: "offset" }],
     chunk_id: "c-1",
     chunker_version: "k56-v1",
     content_hash: sha256("alpha text"),
@@ -297,7 +320,7 @@ test("chunk upsert is content-addressed and never rewrites embeddings", () => {
     0,
     "alpha text",
     sha256("alpha text"),
-    JSON.stringify([{ type: "offset", start: 0, end: 9 }]),
+    JSON.stringify([{ end: 9, start: 0, type: "offset" }]),
     "k56-v1",
   ]);
   assert.ok(
@@ -434,7 +457,13 @@ test(
       );
       assert.deepEqual(
         tables.rows.map((row) => String(row["table_name"])),
-        ["chunks", "document", "document_version", "ingest_job", "knowledge_namespace"],
+        [
+          "chunks",
+          "document",
+          "document_version",
+          "ingest_job",
+          "knowledge_namespace",
+        ],
         "migration from empty must create the full #56 model"
       );
 
@@ -626,7 +655,11 @@ test(
         title: "K56 doc",
       });
       const noop = await pool.query(noopUpsert.text, noopUpsert.params);
-      assert.equal(noop.rows.length, 0, "unchanged content must return no rows");
+      assert.equal(
+        noop.rows.length,
+        0,
+        "unchanged content must return no rows"
+      );
       const docAfter = await pool.query(
         "SELECT version, content_hash, updated_at FROM document WHERE id = $1",
         ["k56-doc"]
@@ -645,7 +678,9 @@ test(
          WHERE chunk_id = 'k56-c1'`,
         [unitVector384(0)]
       );
-      const reUpsert = buildChunkUpsert(chunksV1[0]!);
+      const [unchangedChunk] = chunksV1;
+      assert.ok(unchangedChunk, "fixture must define its first chunk");
+      const reUpsert = buildChunkUpsert(unchangedChunk);
       await pool.query(reUpsert.text, reUpsert.params);
       const preserved = await pool.query(
         "SELECT embedding::text AS embedding, embedding_model FROM chunks WHERE chunk_id = $1",
@@ -687,7 +722,7 @@ test(
       // New version carries one unchanged chunk (reactivated, same content
       // hash) and one new chunk; the dropped chunk stays superseded.
       const reactivatedUpsert = buildChunkUpsert({
-        ...chunksV1[0]!,
+        ...unchangedChunk,
         chunk_id: "k56-c1-new",
         version_id: "k56-doc:v2",
       });
@@ -758,7 +793,9 @@ test(
         "a tombstoned document must be invisible to live-chunk retrieval"
       );
       await pool.query(buildDocumentRestore("k56-doc").text, ["k56-doc"]);
-      await pool.query(buildChunkReactivateCurrent("k56-doc").text, ["k56-doc"]);
+      await pool.query(buildChunkReactivateCurrent("k56-doc").text, [
+        "k56-doc",
+      ]);
       const restored = await pool.query(
         `SELECT c.chunk_id, v.version FROM chunks c
          JOIN document_version v ON v.id = c.version_id
@@ -770,6 +807,21 @@ test(
         ["k56-c1", "k56-c4"],
         "restore must bring back exactly the current version's chunks"
       );
+
+      // D8 citation guarantee: every live chunk resolves to a live document
+      // carrying its source, title, and url — no result without a citation.
+      const citations = await pool.query(
+        `SELECT c.chunk_id, d.source, d.title, d.url
+         FROM chunks c JOIN document d ON d.id = c.document_id
+         WHERE c.document_id = $1
+           AND c.valid_to IS NULL AND d.deleted_at IS NULL
+         ORDER BY c.chunk_id`,
+        ["k56-doc"]
+      );
+      assert.deepEqual(citations.rows, [
+        { chunk_id: "k56-c1", source: "file", title: "K56 doc", url: null },
+        { chunk_id: "k56-c4", source: "file", title: "K56 doc", url: null },
+      ]);
 
       // --- Hard delete cascades (the GC path) -----------------------------
       await pool.query("DELETE FROM document WHERE id = $1", ["k56-doc"]);

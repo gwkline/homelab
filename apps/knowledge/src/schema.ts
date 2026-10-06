@@ -357,7 +357,7 @@ export const buildChunkUpsert = (chunk: ChunkUpsertInput): SchemaQuery => {
     "chunker_version"
   );
   if (!Array.isArray(chunk.anchors)) {
-    throw new Error("schema: anchors must be an array");
+    throw new TypeError("schema: anchors must be an array");
   }
   return {
     params: [
