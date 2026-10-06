@@ -18,11 +18,11 @@
 #      operator namespaces carry the same baseline PSA as external-secrets,
 #      deploy/eso/base/namespace.yaml).
 #   3. the standard prometheus.io/* pod annotations: the discovery contract
-#      the ADR-003 metrics stack (single-node VictoriaMetrics, kubernetes_sd)
+#      the ADR-005 metrics stack (single-node VictoriaMetrics, kubernetes_sd)
 #      scrapes — see ../README.md "Metrics".
 #   4. explicit resource bounds on the manager, matching upstream's own
 #      values, so a future upstream.yaml refresh cannot silently change the
-#      reviewed footprint (ADR-003 D1 budget).
+#      reviewed footprint (ADR-005 D1 budget).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -74,7 +74,7 @@ patches:
         template:
           metadata:
             annotations:
-              # Metrics discovery (ADR-003): the controller-manager serves
+              # Metrics discovery (ADR-005): the controller-manager serves
               # Prometheus text on the container's "metrics" port (8080).
               prometheus.io/scrape: "true"
               prometheus.io/port: "8080"
@@ -87,7 +87,7 @@ patches:
                 # Upstream v1.30.0's own bounds, re-asserted so bundle
                 # refreshes keep the reviewed footprint: 100m/100Mi
                 # requested, 100m/200Mi capped — a rounding error against
-                # the machine's ~4.2Gi request headroom (ADR-003 D1).
+                # the machine's ~4.2Gi request headroom (ADR-005 D1).
                 resources:
                   requests:
                     cpu: 100m

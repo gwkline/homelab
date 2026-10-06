@@ -6,7 +6,7 @@
 
 CI already signs every homelab image keylessly with cosign on push to `main` (`.github/workflows/ci.yaml`, `id-token: write` + `cosign sign`). Until now, verifying that signature was a manual `cosign verify` command — a control that exists on paper only. #35 pinned every deployed homelab image to an immutable `@sha256` digest, so the remaining gap is enforcement: nothing stops a pod from being admitted with an unsigned or foreign-signed `ghcr.io/gwkline/homelab/**` image.
 
-Constraints: two old k3s nodes (8 GB+ RAM, shared with dind/Chromium/agent workspaces), hand-applied root Kustomize with no GitOps controller (ADR-003), and a documented reluctance to add controllers and CRDs (ADR-003 D3/D7). GHCR packages may be private.
+Constraints: two old k3s nodes (8 GB+ RAM, shared with dind/Chromium/agent workspaces), hand-applied root Kustomize with no GitOps controller (ADR-006), and a documented reluctance to add controllers and CRDs (ADR-006 D3/D7). GHCR packages may be private.
 
 ## Options
 
@@ -20,7 +20,7 @@ The admission controller purpose-built for cosign: a single webhook deployment i
 
 ### C. Kyverno verifyImages
 
-Also maintained and capable of cosign keyless verification, but it is a general policy engine: more CRDs, more controllers, and a rule language this repo has no other use for — a worse cost on the same hardware for one job. Rejected per the ADR-003 D3 reasoning (smallest sufficient control plane).
+Also maintained and capable of cosign keyless verification, but it is a general policy engine: more CRDs, more controllers, and a rule language this repo has no other use for — a worse cost on the same hardware for one job. Rejected per the ADR-006 D3 reasoning (smallest sufficient control plane).
 
 ## Decisions
 
@@ -59,7 +59,7 @@ The policy must be in force before workloads are applied, so the drill stage `im
 
 ## Consequences
 
-- New namespace `cosign-system`, two CRDs, one webhook pod (~128 Mi) — accepted under ADR-003 D7's "third helm-managed operator" trigger: this is the third helm install, recorded here.
+- New namespace `cosign-system`, two CRDs, one webhook pod (~128 Mi) — accepted under ADR-006 D7's "third helm-managed operator" trigger: this is the third helm install, recorded here.
 - A fresh rebuild now depends on sigstore public infrastructure (Fulcio/Rekor) reachability during workload admission; a prolonged outage requires the documented break-glass, which is a drill finding per the runbook rules.
 - k3s compatibility is expected-low-risk (plain admission webhook), but the chart's tested matrix lists ≤ 1.29 while this cluster runs newer k3s — confirm webhook readiness in the drill stage; if the controller proves incompatible, this ADR is reopened and CI-only verification (option A) becomes the documented interim.
 - Rollback: `helm uninstall policy-controller -n cosign-system` returns admission to the pre-#91 state; manifests in git are unaffected.

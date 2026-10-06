@@ -1,6 +1,6 @@
 # VictoriaMetrics — the metrics backend
 
-Single-node **VictoriaMetrics** collects node, pod/container (cAdvisor), Kubernetes-object (kube-state-metrics) and PVC metrics for the whole cluster and serves them to Grafana. The metrics half of the observability ADR from #36 ([ADR-003](../../docs/adr/adr-003-metrics-logging-stack.md), D7/D8): plain kustomize, no Helm, no CRDs, no operators, one replica of everything. Grafana itself lives in [`deploy/grafana/base`](../grafana/base) (tailnet-only, `https://grafana.<tailnet>`); logs/events go to Loki via Alloy ([`deploy/loki`](../loki)).
+Single-node **VictoriaMetrics** collects node, pod/container (cAdvisor), Kubernetes-object (kube-state-metrics) and PVC metrics for the whole cluster and serves them to Grafana. The metrics half of the observability ADR from #36 ([ADR-005](../../docs/adr/adr-005-metrics-logging-stack.md), D7/D8): plain kustomize, no Helm, no CRDs, no operators, one replica of everything. Grafana itself lives in [`deploy/grafana/base`](../grafana/base) (tailnet-only, `https://grafana.<tailnet>`); logs/events go to Loki via Alloy ([`deploy/loki`](../loki)).
 
 ## Deploy
 

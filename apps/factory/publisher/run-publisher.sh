@@ -2,7 +2,7 @@
 # Factory publisher (#79): trusted artifact → clean checkout → branch → draft PR.
 #
 # This is the ONLY component in the factory that pushes branches or opens PRs
-# (ADR-001 D6 / ADR-002). It runs as a per-run publisher Job or is invoked by
+# (ADR-001 D6 / ADR-009). It runs as a per-run publisher Job or is invoked by
 # the orchestrator after a successful worker. Coding workers never receive the
 # publisher credential: the write token is a short-lived GitHub App
 # installation token minted by the #70 token service and injected here (env
@@ -108,7 +108,7 @@ fail() { # $1=exit code, rest=reason (no GitHub event)
 }
 
 # Actionable Run event: append-only comment on the issue, then fail.
-# GitHub-as-ledger (ADR-002): events are marker comments; the status comment
+# GitHub-as-ledger (ADR-009): events are marker comments; the status comment
 # stays owned by the orchestrator/controller.
 record_event() { # $1=kind, $2=markdown detail
   EVENT_KIND=$1
@@ -377,7 +377,7 @@ PR_URL=$(gh pr create -R "${REPO}" --draft \
   --title "${ISSUE_TITLE}" \
   --body-file "${PR_BODY_FILE}")
 
-# Link the issue to its PR (one PR-link comment per run; ADR-002 "published").
+# Link the issue to its PR (one PR-link comment per run; ADR-009 "published").
 EVENT_TS=$(timestamp)
 EVENT_FILE="${WORK}/pr-ready.md"
 {

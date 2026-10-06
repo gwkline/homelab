@@ -1,4 +1,4 @@
-# ADR-003: Knowledge graph expansion — gated on failing-retrieval evidence
+# ADR-008: Knowledge graph expansion — gated on failing-retrieval evidence
 
 **Status:** Proposed — gate open, not started (2026-09-02) **Deciders:** Gavin Kline **Implements:** #66 · **Depends on:** #59 (versioned eval harness + labeled multi-hop subset), #63 (RRF hybrid baseline)
 

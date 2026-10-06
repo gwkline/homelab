@@ -1,4 +1,4 @@
-# Durable approval gates for sensitive factory transitions (#83, ADR-002 ledger).
+# Durable approval gates for sensitive factory transitions (#83, ADR-009 ledger).
 # Sourced by run.sh. State lives on the GitHub issue: label
 # factory/pending-approval + one <!-- factory:approval:<issue>:<action> -->
 # comment holding the JSON record, so gates survive pod/tick restarts.

@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/part-of: homelab
     factory.gwkline.io/component: orchestrator
 spec:
-  # Single-instance by construction: overlapping ticks are skipped (ADR-002).
+  # Single-instance by construction: overlapping ticks are skipped (ADR-009).
   concurrencyPolicy: Forbid
   schedule: "*/10 * * * *" # every 10 min: near-zero-latency pickup (empty tick ≈ 5s);
     # one issue per tick, so frequent ticks drain the queue without overlap (Forbid)

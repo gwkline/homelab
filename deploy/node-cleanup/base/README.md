@@ -33,4 +33,4 @@ To re-arm, patch it back to `"true"` (or re-apply this directory). The node-side
 - Evicted-pod count back to 0 and staying there: the CronJob + the `ttlSecondsAfterFinished` values now present on every factory CronJob (the two launchpad instances were missing it).
 - Root fs below 75% after cleanup: run `scripts/node-cleanup.sh` on the node once for the immediate result (`--dry-run` first).
 - Documented, scheduled cleanup: this file + the script header.
-- Disk-usage **alerting** is tracked under #44 — it needs the ADR-003 metrics stack (kubelet/cAdvisor filesystem metrics via VictoriaMetrics; today only Grafana-over-Loki exists, which already captures the eviction events but has no numeric disk series to alarm on).
+- Disk-usage **alerting** is tracked under #44 — it needs the ADR-005 metrics stack (kubelet/cAdvisor filesystem metrics via VictoriaMetrics; today only Grafana-over-Loki exists, which already captures the eviction events but has no numeric disk series to alarm on).

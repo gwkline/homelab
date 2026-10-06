@@ -1,6 +1,6 @@
 #!/bin/sh
 # check-personal-skills.sh — CI contract check for the personal-skills design
-# (ADR-003, homelab#69). Validates the local fixture against the canonical
+# (ADR-007, homelab#69). Validates the local fixture against the canonical
 # skill contract, then proves the harmless sample skill loads into three
 # harness adapters (claude, hermes, codex) in throwaway sandboxes:
 #   1. manifest <-> directory consistency (nothing unlisted, nothing missing)

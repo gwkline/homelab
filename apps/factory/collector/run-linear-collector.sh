@@ -19,7 +19,7 @@
 #      to Linear, deduped by a sync marker so repeated polls never produce
 #      duplicate comments.
 #
-# Idempotency by construction (ADR-002 discipline, no factory database):
+# Idempotency by construction (ADR-009 discipline, no factory database):
 #   - repeated polls: create only when no mirror exists; edit only when the
 #     composed title/body actually differs; close only when open;
 #   - cursor persistence: LINEAR_CURSOR_FILE stores the highest observed
