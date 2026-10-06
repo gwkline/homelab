@@ -35,6 +35,13 @@ spec:
                 secretKeyRef:
                   name: knowledge-db
                   key: databaseUrl
+            # Private git sources (e.g. gwkline/personal-knowledge): the
+            # read-only GitHub PAT the rest of the homelab already uses.
+            # git-source.ts reads the token file for clone/fetch auth only —
+            # the token is never persisted into the corpus or the source
+            # config (public repos need no token at all).
+            - name: GIT_SOURCE_TOKEN_FILE
+              value: /secrets-github/token
             # Fail-closed bearer token (config.ts reads the mounted file).
             - name: KNOWLEDGE_INGEST_TOKEN_FILE
               value: /secrets/token
@@ -61,6 +68,9 @@ spec:
             - name: knowledge-token
               mountPath: /secrets
               readOnly: true
+            - name: github-token
+              mountPath: /secrets-github
+              readOnly: true
             - name: git-cache
               mountPath: /tmp/git-cache
           readinessProbe:
@@ -77,6 +87,14 @@ spec:
         - name: knowledge-token
           secret:
             secretName: knowledge-api-token
+            items:
+              - key: token
+                path: token
+        # GitHub PAT for private-repo git sources (read-only clone/fetch;
+        # same secret the auto-deploy watcher and factory use).
+        - name: github-token
+          secret:
+            secretName: github-token
             items:
               - key: token
                 path: token
