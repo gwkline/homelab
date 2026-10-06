@@ -107,7 +107,7 @@ end_stage
 
 # ---------------------------------------------------------------------------
 stage namespaces
-kubectl apply -f deploy/namespaces.yaml
+kubectl apply -k deploy/namespaces
 kubectl apply -k deploy/policies/base
 end_stage
 
@@ -163,29 +163,41 @@ kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager \
 end_stage
 
 # ---------------------------------------------------------------------------
+# The stages below mirror the root cluster entry point (clusters/home,
+# issue #20) in its documented dependency order, decomposed per-stage so
+# the drill can time each one; the runbook's one-command equivalent is
+# `kubectl apply -k clusters/home` (docs/rebuild-runbook.md §4).
+
+# ---------------------------------------------------------------------------
 stage secrets
-kubectl -n agents create secret generic onepassword-service-account \
-  --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"
-kubectl -n sandbox create secret generic onepassword-service-account \
-  --from-file=token="$OP_SERVICE_ACCOUNT_TOKEN"
+./scripts/create-onepassword-service-account.sh
+# Secret onepassword-service-account -> agents, sandbox, work, tailscale;
+# the github-tokens ExternalSecrets then sync through the ESO instance
+# guaranteed Ready by the eso stage above (same set the root Kustomization
+# composes). A failed wait means the 1Password item does not exist or the
+# vault is unreachable.
 kubectl apply -k deploy/github-tokens/base
-# ESO is guaranteed Ready by the eso stage above (a failed stage exits the
-# drill), so a missing CRD here cannot happen — the wait failing means the
-# 1Password item does not exist or the vault is unreachable.
 kubectl -n agents wait --for=condition=Ready externalsecret/github-token --timeout=120s ||
   echo "WARN: github-token not synced yet (1Password item github-readonly present?)" >&2
 end_stage
 
 # ---------------------------------------------------------------------------
 stage workloads
+kubectl apply -k deploy/postgres/base   # pg-primary: cnpg CRDs Established in the cnpg stage above
 kubectl apply -k deploy/tailscale
 kubectl apply -k deploy/t3code/base
 kubectl apply -k deploy/hermes/base
 kubectl apply -k deploy/loop-agent/base
 kubectl apply -k deploy/homepage/base
 kubectl apply -k deploy/panel/base
+kubectl apply -k deploy/headlamp/base
 kubectl apply -k deploy/dispatcher/base
 kubectl apply -k deploy/factory/base
+kubectl apply -k deploy/work-t3code/base
+# operational CronJobs last (same order as the root): their first run
+# must not race the bring-up
+kubectl apply -k deploy/chaos/base
+kubectl apply -k deploy/node-cleanup/base
 end_stage
 
 # ---------------------------------------------------------------------------

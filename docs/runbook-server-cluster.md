@@ -153,9 +153,11 @@ If the StatefulSet pods sit in `ImagePullBackoff`, this is why.
 
 ## 8. Deploy everything
 
+The root cluster entry point (issue #20) composes the normal set in one command — `kubectl apply -k clusters/home`, after the ESO + cnpg server-side pre-applies (dependency contract: [clusters/home/README.md](../clusters/home/README.md)). The per-component list below is the manual equivalent and also carries the opt-in components (cloudbeaver, loki, …) the root deliberately leaves out.
+
 ```sh
-kubectl apply -k deploy/eso/base   # section 4b — idempotent re-apply of the pinned operator
-kubectl apply -f deploy/namespaces.yaml
+kubectl apply --server-side -k deploy/eso/base   # section 4b — idempotent re-apply of the pinned operator (server-side: two of its CRDs exceed the client-side annotation size limit)
+kubectl apply -k deploy/namespaces
 kubectl apply -k deploy/policies/base
 kubectl apply -k deploy/t3code/base
 kubectl apply -k deploy/hermes/base
