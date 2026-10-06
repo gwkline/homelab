@@ -70,6 +70,29 @@ export default {
       },
     },
     {
+      // Retrieval service tests stub node:http servers and drive request
+      // sequences where sequential awaits are the behavior under test; the
+      // Promise executor is the idiomatic listen() wrapper.
+      files: ["apps/knowledge-retrieval/tests/**"],
+      rules: {
+        "no-await-in-loop": "off",
+        "no-promise-executor-return": "off",
+        "promise/avoid-new": "off",
+        "unicorn/no-await-expression-member": "off",
+      },
+    },
+    {
+      // MCP adapter tests spin up in-memory transports and stub the upstream
+      // API; sequential setup/teardown is the point.
+      files: ["apps/knowledge-mcp/tests/**"],
+      rules: {
+        "no-await-in-loop": "off",
+        "no-promise-executor-return": "off",
+        "promise/avoid-new": "off",
+        "unicorn/no-await-expression-member": "off",
+      },
+    },
+    {
       // The ingest worker (#58) processes a claimed batch sequentially on
       // purpose: each job holds a lease, so concurrent handler execution
       // would reorder publishes across documents for zero throughput gain

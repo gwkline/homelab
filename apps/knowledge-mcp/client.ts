@@ -9,14 +9,14 @@ import type {
   SearchResponse,
   SearchToolInput,
   SourceDetail,
-} from "./contract.js";
+} from "./contract.ts";
 import {
   SEARCH_ENDPOINT,
   SOURCE_ENDPOINT,
   SearchResponseSchema,
   SourceDetailSchema,
-} from "./contract.js";
-import { KnowledgeApiError } from "./errors.js";
+} from "./contract.ts";
+import { KnowledgeApiError } from "./errors.ts";
 
 const ERROR_SNIPPET_MAX = 200;
 

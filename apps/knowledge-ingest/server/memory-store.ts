@@ -1,7 +1,9 @@
 import {
   STALE_RECOVERY_MESSAGE,
+  deriveDocumentVersionKey,
   deriveIngestIdempotencyKey,
   documentIdFor,
+  documentVersionJobId,
   newJobId,
   newSyncIdempotencyKey,
 } from "./queue.ts";
@@ -9,6 +11,7 @@ import type {
   ClaimedJob,
   ClaimRequest,
   DocumentPayload,
+  DocumentVersionPayload,
   EnqueueResult,
   IngestJobRecord,
   IngestRequestInput,
@@ -30,7 +33,7 @@ interface JobRow {
   heartbeatAt: Date | null;
   idempotencyKey: string;
   jobId: string;
-  kind: "document" | "source_sync";
+  kind: "document" | "document-version" | "source_sync";
   maxAttempts: number;
   namespace: string;
   payload: JobPayload;
@@ -196,6 +199,8 @@ export const createMemoryIngestStore = (
 
   const insertJob = (input: {
     idempotencyKey: string;
+    /** Explicit job id (idempotent re-emits reuse it); default is fresh. */
+    jobId?: string;
     kind: JobPayload["kind"];
     maxAttempts: number;
     namespace: string;
@@ -203,7 +208,7 @@ export const createMemoryIngestStore = (
     sourceId: string;
   }): JobRow => {
     const nowDate = now();
-    const jobId = newJobId();
+    const jobId = input.jobId ?? newJobId();
     const row: JobRow = {
       attempts: 0,
       availableAt: nowDate,
@@ -278,6 +283,48 @@ export const createMemoryIngestStore = (
       row.finishedAt = now();
       row.workerId = null;
       return Promise.resolve(true);
+    },
+
+    enqueueDocumentVersion(
+      payload: DocumentVersionPayload,
+      sourceId: string
+    ): Promise<EnqueueResult> {
+      const idempotencyKey = deriveDocumentVersionKey(payload);
+      for (const row of jobs.values()) {
+        if (row.idempotencyKey === idempotencyKey) {
+          return Promise.resolve({ duplicate: true, job: toRecord(row) });
+        }
+      }
+      // Register a minimal source row when absent (never overwrites a
+      // richer registration) so the source list carries the ledger counts.
+      if (!sources.has(sourceId)) {
+        sources.set(sourceId, {
+          kind: payload.source === "git" ? "github" : "url",
+          namespace: payload.namespace,
+          path: null,
+          ref:
+            payload.provenance !== null &&
+            typeof payload.provenance["ref"] === "string"
+              ? (payload.provenance["ref"] as string)
+              : null,
+          repo: null,
+          sourceId,
+          url: payload.url ?? null,
+        });
+      }
+      const row = insertJob({
+        idempotencyKey,
+        jobId: documentVersionJobId(payload),
+        kind: "document-version",
+        maxAttempts: defaultMaxAttempts,
+        namespace: payload.namespace,
+        payload: () => ({
+          documentVersion: { ...payload },
+          kind: "document-version",
+        }),
+        sourceId,
+      });
+      return Promise.resolve({ duplicate: false, job: toRecord(row) });
     },
 
     enqueueIngest(request: IngestRequestInput): Promise<EnqueueResult> {

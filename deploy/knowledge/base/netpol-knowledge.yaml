@@ -1,0 +1,143 @@
+# Knowledge service isolation. The agents namespace default-denies ingress
+# (deploy/policies/base); these workload-owned rules declare the paths in.
+# Egress: both services opt INTO egress isolation (tighter than the agents
+# baseline, which keeps egress open for t3code/hermes) — the knowledge pair
+# is a fixed-function service with a small, known destination set:
+#
+#   both       → DNS (kube-dns), the knowledge database (5432)
+#   ingest     → public internet 443 (GitHub clones/fetches for git-source
+#                pulls; the OpenAI-compatible embedding provider when
+#                configured) with every private/special range carved out
+#   retrieval  → the ingest service (3100) for the sources/sync passthrough
+#
+# Ingress: the panel (server-side knowledge proxy) reaches both; Tailscale
+# operator proxies reach the retrieval API (the https://knowledge.<tailnet>
+# entrypoint); the ingest API stays cluster-internal.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-to-knowledge-retrieval
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: knowledge-retrieval
+  policyTypes: [Ingress]
+  ingress:
+    - from: # Tailscale operator proxies (https://knowledge.<tailnet>)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tailscale
+      ports:
+        - protocol: TCP
+          port: 3000
+    - from: # Panel server-side knowledge proxy (pod-scoped)
+        - podSelector:
+            matchLabels:
+              app: panel
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-to-knowledge-ingest
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: knowledge-ingest
+  policyTypes: [Ingress]
+  ingress:
+    - from: # Panel sync triggers + the retrieval passthrough (pod-scoped)
+        - podSelector:
+            matchLabels:
+              app: panel
+        - podSelector:
+            matchLabels:
+              app: knowledge-retrieval
+      ports:
+        - protocol: TCP
+          port: 3100
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: knowledge-retrieval-egress
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: knowledge-retrieval
+  policyTypes: [Egress]
+  egress:
+    - to: # DNS: kube-dns pods only (k3s coredns carries this label)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to: # The knowledge database (CNPG primary, deploy/postgres)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: database
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: pg-primary
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to: # Ingest passthrough (same namespace, pod-scoped)
+        - podSelector:
+            matchLabels:
+              app: knowledge-ingest
+      ports:
+        - { protocol: TCP, port: 3100 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: knowledge-ingest-egress
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: knowledge-ingest
+  policyTypes: [Egress]
+  egress:
+    - to: # DNS: kube-dns pods only
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to: # The knowledge database (CNPG primary, deploy/postgres)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: database
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: pg-primary
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to: # Public internet 443 — git-source clones/fetches (GitHub) and the
+        # OpenAI-compatible embedding provider when configured — with every
+        # private/special range carved out (same list as deploy/policies/base).
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+              - 100.64.0.0/10
+      ports:
+        - { protocol: TCP, port: 443 }

@@ -1,0 +1,84 @@
+# Knowledge ingest API + worker (#58 + the retrieval issues): hono queue API
+# (idempotent enqueue, SKIP LOCKED claims, leases) and the real
+# extract → chunk → embed → upsert pipeline over the #56 knowledge schema.
+# One replica: the queue is multi-worker safe, but nothing here needs more
+# throughput yet. State (Postgres) lives in the database namespace.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knowledge-ingest
+  namespace: agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: knowledge-ingest
+  template:
+    metadata:
+      labels:
+        app: knowledge-ingest
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: knowledge-ingest
+          # BOOTSTRAP: all-zero placeholder digest — CI publishes the real
+          # image when this lands on main. Pin it with
+          #   scripts/pin-factory-image.sh knowledge/ingest <digest>
+          # (see deploy/knowledge/README.md, "Bootstrap order").
+          image: ghcr.io/gwkline/homelab/knowledge-ingest@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          env:
+            - name: KNOWLEDGE_INGEST_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: knowledge-db
+                  key: databaseUrl
+            # Fail-closed bearer token (config.ts reads the mounted file).
+            - name: KNOWLEDGE_INGEST_TOKEN_FILE
+              value: /secrets/token
+            # git-source clone cache: per-pod, survives container restarts
+            # within the pod lifetime; a fresh pod re-clones.
+            - name: TMPDIR
+              value: /tmp/git-cache
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          ports:
+            - containerPort: 3100
+              name: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: knowledge-token
+              mountPath: /secrets
+              readOnly: true
+            - name: git-cache
+              mountPath: /tmp/git-cache
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+      volumes:
+        - name: knowledge-token
+          secret:
+            secretName: knowledge-api-token
+            items:
+              - key: token
+                path: token
+        - name: git-cache
+          emptyDir: {}

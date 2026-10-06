@@ -32,6 +32,7 @@ Losing a Secret means rotating it: recreate the Secret with a new password and t
 - Two databases (`factory`, `knowledge`), each owned by a dedicated non-superuser login role (`factory_owner`, `knowledge_owner`), declared in `base/databases.yaml` + `managed.roles`. No cross-grants: an app can only touch its own database.
 - Superuser access is disabled (`enableSuperuserAccess: false`) — no `pg-primary-superuser` Secret exists; the operator manages the postgres role internally. Extension DDL runs declaratively through the `Database` resources instead of requiring app-side superuser.
 - The operator's default `app` database exists but is unused by applications.
+- The `knowledge` database's consumers are the two `agents`-namespace services from `deploy/knowledge/base`: `knowledge-ingest` (queue tables `ingest_job`/`ingest_source`/`ingest_document`/`git_source_manifest` + the ADR-002 `document`/`document_version`/`chunks` model) and `knowledge-retrieval` (read-only over the same corpus). In-service migrations are idempotent (`CREATE TABLE IF NOT EXISTS`); the extensions themselves come from this `Database` resource, never from the services.
 - Network: the `database` namespace is default-deny both directions; only the CNPG operator (8000/9187) and SQL clients from `agents`/`sandbox` (5432) are allowed in. Sandbox egress is still governed by `deploy/policies/base` — factory pods need their own egress allowance when they adopt this cluster.
 
 ## Bring-up

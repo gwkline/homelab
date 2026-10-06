@@ -6,19 +6,20 @@
 // deliberately out of scope until write semantics, trust, and dedup are
 // designed (#67).
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { KnowledgeClient } from "./client.js";
+import { KnowledgeClient } from "./client.ts";
 import {
   GetSourceToolInputSchema,
   QUERY_MAX_LENGTH,
   SearchToolInputSchema,
   TOP_K_DEFAULT,
   TOP_K_MAX,
-} from "./contract.js";
-import { KnowledgeApiError } from "./errors.js";
+} from "./contract.ts";
+import { KnowledgeApiError } from "./errors.ts";
 
 const TIMEOUT_DEFAULT_MS = 10_000;
 const TIMEOUT_MAX_MS = 120_000;
@@ -101,13 +102,14 @@ const toolError = (
   return { content: [{ text, type: "text" }], isError: true };
 };
 
-const run = async (): Promise<void> => {
-  const client = new KnowledgeClient({
-    baseUrl: readBaseUrl(),
-    timeoutMs: readTimeoutMs(),
-    token: readToken(),
-  });
-
+/**
+ * Build the MCP server with both tools registered. Exported for offline
+ * tests (tool registration + passthrough) so the stdio wiring stays the
+ * only untested seam.
+ */
+export const createKnowledgeMcpServer = (
+  client: KnowledgeClient
+): McpServer => {
   const server = new McpServer({ name: "knowledge-mcp", version: "0.1.0" });
 
   server.registerTool(
@@ -176,15 +178,41 @@ const run = async (): Promise<void> => {
     }
   );
 
+  return server;
+};
+
+const run = async (): Promise<void> => {
+  const client = new KnowledgeClient({
+    baseUrl: readBaseUrl(),
+    timeoutMs: readTimeoutMs(),
+    token: readToken(),
+  });
+  const server = createKnowledgeMcpServer(client);
   await server.connect(new StdioServerTransport());
   log(
     `listening on stdio; tools: search_knowledge (top_k default ${TOP_K_DEFAULT}), get_source`
   );
 };
 
-try {
-  await run();
-} catch (error: unknown) {
-  log(`fatal: ${error instanceof Error ? error.message : String(error)}`);
-  process.exit(1);
+// Entry guard: the module exports `createKnowledgeMcpServer` for offline
+// tests; the stdio bootstrap below runs only when this file is the process
+// entrypoint (node dist/server.js), never when a test imports it.
+const isMain = (() => {
+  try {
+    return (
+      process.argv[1] !== undefined &&
+      import.meta.url === pathToFileURL(process.argv[1]).href
+    );
+  } catch {
+    return false;
+  }
+})();
+
+if (isMain) {
+  try {
+    await run();
+  } catch (error: unknown) {
+    log(`fatal: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
 }

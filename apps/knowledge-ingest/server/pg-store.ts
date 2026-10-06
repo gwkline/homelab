@@ -24,11 +24,14 @@ import {
   PUBLISH_DOCUMENT_SQL,
   RECOVER_STALE_SQL,
   SOURCE_BY_ID_SQL,
+  SOURCE_INSERT_IF_MISSING_SQL,
   SOURCE_LIST_SQL,
   SOURCE_UPSERT_SQL,
   STALE_RECOVERY_MESSAGE,
+  deriveDocumentVersionKey,
   deriveIngestIdempotencyKey,
   documentIdFor,
+  documentVersionJobId,
   newJobId,
   newSyncIdempotencyKey,
 } from "./queue.ts";
@@ -36,6 +39,7 @@ import type {
   ClaimedJob,
   ClaimRequest,
   DocumentPayload,
+  DocumentVersionPayload,
   EnqueueResult,
   IngestJobRecord,
   IngestRequestInput,
@@ -65,10 +69,23 @@ const JOB_STATES_SET = new Set([
 ]);
 
 const asJobKind = (value: unknown, context: string): JobKind => {
-  if (value === "document" || value === "source_sync") {
+  if (
+    value === "document" ||
+    value === "document-version" ||
+    value === "source_sync"
+  ) {
     return value;
   }
   throw new TypeError(`pg-store: ${context} has invalid kind ${String(value)}`);
+};
+
+/** String field of a document-version provenance object; null when absent. */
+const provenanceString = (
+  provenance: Record<string, unknown> | null,
+  key: string
+): string | null => {
+  const value = provenance === null ? undefined : provenance[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
 };
 
 const asCount = (value: unknown): number | null => {
@@ -299,14 +316,44 @@ export class PgIngestStore implements IngestStore {
     ]);
   }
 
+  async enqueueDocumentVersion(
+    payload: DocumentVersionPayload,
+    sourceId: string
+  ): Promise<EnqueueResult> {
+    // Register a minimal source row when absent so the panel-facing source
+    // list includes the ledger counts; an existing (richer) row wins.
+    await this.client.query(SOURCE_INSERT_IF_MISSING_SQL, [
+      sourceId,
+      payload.source === "git" ? "github" : "url",
+      payload.namespace,
+      null,
+      provenanceString(payload.provenance, "ref"),
+      payload.url ?? null,
+      payload.externalId,
+    ]);
+    return await this.enqueueJob({
+      idempotencyKey: deriveDocumentVersionKey(payload),
+      jobId: documentVersionJobId(payload),
+      kind: "document-version",
+      namespace: payload.namespace,
+      payload: () => ({
+        documentVersion: { ...payload },
+        kind: "document-version",
+      }),
+      sourceId,
+    });
+  }
+
   private async enqueueJob(input: {
     idempotencyKey: string;
+    /** Explicit job id (idempotent re-emits reuse it); default is fresh. */
+    jobId?: string;
     kind: JobKind;
     namespace: string;
     payload: (jobId: string) => JobPayload;
     sourceId: string;
   }): Promise<EnqueueResult> {
-    const jobId = newJobId();
+    const jobId = input.jobId ?? newJobId();
     const { rows } = await this.client.query(ENQUEUE_JOB_SQL, [
       jobId,
       input.kind,

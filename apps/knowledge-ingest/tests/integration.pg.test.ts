@@ -54,7 +54,7 @@ const cleanupRun = async (pool: Pool, run: string): Promise<void> => {
   await pool.query("DELETE FROM ingest_job WHERE source_id LIKE $1", [
     `${prefix}%`,
   ]);
-  await pool.query("DELETE FROM document WHERE source_id LIKE $1", [
+  await pool.query("DELETE FROM ingest_document WHERE source_id LIKE $1", [
     `${prefix}%`,
   ]);
   await pool.query("DELETE FROM ingest_source WHERE source_id LIKE $1", [

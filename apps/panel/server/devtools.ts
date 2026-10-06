@@ -124,11 +124,16 @@ export const DEV_TOOLS: ToolDef[] = [
   },
   {
     category: "knowledge",
-    dependsOn: "knowledge interface deployment (tracked separately)",
-    description: "Knowledge interface — enabled when its deploy lands.",
-    // flip on together with its Service; schema test requires health then
-    enabled: false,
-    health: null,
+    dependsOn: "deploy/knowledge/base",
+    description:
+      "Knowledge base — cited hybrid search over the homelab corpus.",
+    enabled: true,
+    health: {
+      namespace: "agents",
+      path: "/healthz",
+      port: 3000,
+      service: "knowledge-retrieval-http",
+    },
     icon: "BookOpen",
     name: "Knowledge",
     noEmbed: true,

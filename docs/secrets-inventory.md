@@ -166,6 +166,32 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 | Rotation owner | Operator updates the 1Password item, then `kubectl -n work rollout restart statefulset work-t3code` |
 | Status | Per-workload (work runner only) |
 
+### B7. `knowledge-db` — knowledge database credentials
+
+| Attribute | Value |
+| --- | --- |
+| Namespace | `agents` only |
+| Secret name / key | `knowledge-db` / `username`, `password`, `databaseUrl` (composed) |
+| 1Password ref | item `knowledge-db`, fields `username`, `password` |
+| Delivery | ExternalSecret `deploy/knowledge/base/externalsecret.yaml`, `refreshInterval: 1h`, `creationPolicy: Owner`; the template composes `databaseUrl` (`postgresql://…@pg-primary-rw.database.svc:5432/knowledge`) and trims fields |
+| Required permissions | The `knowledge_owner` role's credentials — **must match** the basic-auth Secret `pg-primary-knowledge-owner` in `database` (CNPG applies the role password from that Secret; `deploy/postgres/README.md`). No superuser, no cross-database grants |
+| Consumers | knowledge-ingest Deployment (`KNOWLEDGE_INGEST_DATABASE_URL`), knowledge-retrieval Deployment (`KNOWLEDGE_RETRIEVAL_DATABASE_URL`) |
+| Rotation owner | Operator: generate a new password, update the 1Password item **and** recreate the `database`-namespace Secret, then `kubectl -n agents rollout restart deploy/knowledge-ingest deploy/knowledge-retrieval` |
+| Status | Per-workload (knowledge services only) |
+
+### B8. `knowledge-api-token` — knowledge API bearer (internal)
+
+| Attribute | Value |
+| --- | --- |
+| Namespace | `agents` only |
+| Secret name / key | `knowledge-api-token` / `token` |
+| 1Password ref | item `knowledge-api-token`, field `token` |
+| Delivery | ExternalSecret `deploy/knowledge/base/externalsecret.yaml`, `refreshInterval: 1h`, `creationPolicy: Owner` |
+| Required permissions | None (any high-entropy random string; `openssl rand -base64 32`) — it is the shared internal bearer the two knowledge services verify and the retrieval service uses to authenticate its ingest passthrough |
+| Consumers | knowledge-ingest Deployment (token file `/secrets/token`), knowledge-retrieval Deployment (token file `/secrets/token` + passthrough auth), panel Deployment (**optional** file `/secrets-knowledge/token` → `KNOWLEDGE_API_TOKEN_FILE`; without it the panel boots and the knowledge endpoints degrade). Local consumers: `apps/knowledge-mcp` (env `KNOWLEDGE_API_TOKEN`) |
+| Rotation owner | Operator updates the 1Password item, then `kubectl -n agents rollout restart deploy/knowledge-ingest deploy/knowledge-retrieval deploy/panel` |
+| Status | Per-workload (knowledge services + panel proxy) |
+
 ## C. Bootstrap-only secrets
 
 Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret would be circular) and not part of steady-state GitOps.
@@ -182,7 +208,7 @@ Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret w
 | Workload | Status | Expected contract |
 | --- | --- | --- |
 | **Executor** (ns `agents`) | Referenced by the panel devtools catalog (`apps/panel/server/devtools.ts`, `dependsOn: deploy/executor/base`) but `deploy/executor/base` is not in git yet | Agentic task executor, "generic runs stay upstream" — expected to consume the **shared** `github-token` (A1) via the existing `agents` SecretStore; no dedicated item until a concrete permission need appears. Update this section when the deployment lands |
-| **CNPG databases** (factory Postgres per ADR-001, knowledge cluster per ADR-002) | ADR-only; nothing deployed | CNPG self-generates its bootstrap/superuser Secrets inside its own namespace — no 1Password item required ("CNPG/bootstrap secrets self-generate", `docs/rebuild-runbook.md`). Add an item (proposed naming: `cnpg-<cluster>-<role>`) only if an app needs a **fixed** password that must survive cluster rebuilds. Rotation owner: operator |
+| **CNPG databases** (factory Postgres per ADR-001, knowledge cluster per ADR-002) | Knowledge side **deployed** (ADR-002 implemented): the `knowledge_owner` role has a 1Password item (`knowledge-db`, B7) because the services need a fixed password that travels to the `agents` namespace. Factory side: ADR-only; CNPG self-generates its bootstrap/superuser Secrets inside its own namespace — add an item only if a factory app needs a **fixed** password that must survive cluster rebuilds. Rotation owner: operator |
 | **Factory Postgres (ADR-001)** | Design-phase decision, may be dropped for the GitHub-ledger model | Same policy as CNPG above |
 
 ## E. Out of scope (non-runtime / Kubernetes-managed)
@@ -204,8 +230,8 @@ Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret w
 
 Every runtime secret reference in the repo maps to an entry above:
 
-- `secretKeyRef` / `envFrom.secretRef`: hermes (A1), t3code (A1, optional), work-t3code (B4 repos env; B5 claude env; A1-equivalent token via optional file), panel (A1, optional file), factory orchestrator (A1 + B1), factory security/reviewer/reconciler (A1), factory collector (A5 primary + A1 transitional fallback), loop-agent (A1 + A2, optional), dispatch-watcher (A1 + A2 via examples/jobs.ts patterns, legacy), chaos-monkey (A1, optional), backup restic CronJob (B2), orchestrator-generated worker Jobs (A1, B1).
-- Secret volumes: hermes, t3code, panel, loop-agent, dispatcher, chaos-monkey, panel Jobs — all `github-token`/`github-token-writer` (A1/A2); work-t3code — `work-github-token` (B4); factory collector — `github-app` (A5, read-only).
+- `secretKeyRef` / `envFrom.secretRef`: hermes (A1), t3code (A1, optional), work-t3code (B4 repos env; B5 claude env; A1-equivalent token via optional file), panel (A1, optional file), factory orchestrator (A1 + B1), factory security/reviewer/reconciler (A1), factory collector (A5 primary + A1 transitional fallback), loop-agent (A1 + A2, optional), dispatch-watcher (A1 + A2 via examples/jobs.ts patterns, legacy), chaos-monkey (A1, optional), backup restic CronJob (B2), orchestrator-generated worker Jobs (A1, B1), knowledge-ingest + knowledge-retrieval (B7 db, B8 token file).
+- Secret volumes: hermes, t3code, panel, loop-agent, dispatcher, chaos-monkey, panel Jobs — all `github-token`/`github-token-writer` (A1/A2); work-t3code — `work-github-token` (B4); factory collector — `github-app` (A5, read-only); knowledge-ingest + knowledge-retrieval — `knowledge-api-token` (B8); panel — `knowledge-api-token` optional (B8).
 - `kubectl create secret`: `onepassword-service-account` (C1), `backup-target` emergency script (B2), `ghcr-pull` (A3/C4), `github-app` (A5).
 - Non-Secret credential flows: Tailscale OAuth (C2), K3s token (C3), t3code `auth.json` (B3).
 

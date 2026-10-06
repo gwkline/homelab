@@ -419,9 +419,11 @@ test("GET /api/devtools discovers the tailnet and reports catalog states", async
     // The in-cluster probe cannot resolve the service DNS in this mock —
     // a network-level failure must NOT flip the card to unhealthy.
     assert.ok(card("Homepage").detail.includes("not probed"));
-    // Not-yet-deployed tools are unconfigured, disabled one stays disabled.
+    // Not-yet-deployed tools are unconfigured; the knowledge card is enabled
+    // but its Service is absent from this mock, so it reports unconfigured
+    // (deployed), not disabled.
     assert.equal(card("Grafana").status, "unconfigured");
-    assert.equal(card("Knowledge").status, "disabled");
+    assert.equal(card("Knowledge").status, "unconfigured");
     // Cards carry the full declarative metadata.
     assert.equal(card("Grafana").category, "observability");
     assert.equal(card("Grafana").dependsOn, "deploy/grafana/base");

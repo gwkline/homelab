@@ -1,6 +1,8 @@
 # ADR-002: Knowledge architecture — Postgres-native hybrid retrieval
 
-**Status:** Accepted (2026-09-02) **Deciders:** Gavin Kline, ox-alpha **Implements:** #51 · **Blocks:** #60, #62
+**Status:** Implemented (2026-10-06; Accepted 2026-09-02) **Deciders:** Gavin Kline, ox-alpha **Implements:** #51 · **Blocks:** #60, #62
+
+**What shipped (D14 map):** 1 — schema (`src/schema.ts`, #56); 2 — ingest worker (`src/ingest.ts`, #57); 3a/3b — BM25 (`src/bm25.ts`, #60) and pgvector (`src/pgvector.ts`, #62) channels; 4 — HTTP surface (`apps/knowledge-retrieval`); 5 — eval harness against both channels. The service layer landed with the vertical completion: `apps/knowledge-ingest` runs the real pipeline (queue contracts + git-source sync + `processDocumentVersion`) and `apps/knowledge-retrieval` runs the Postgres store + RRF fusion with the sources/sync passthrough; both deploy from `deploy/knowledge/base` (see its README for the image-pin bootstrap), and `apps/knowledge-mcp` is the local stdio adapter. Still deferred by design: 6 — lifecycle (tombstone API surfaced; the GC job and re-embed backfill runner are follow-ups), 7 — graph (gated on D12's multi-hop eval gap).
 
 ## Context
 
