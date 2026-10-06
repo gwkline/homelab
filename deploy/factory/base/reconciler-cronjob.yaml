@@ -102,6 +102,12 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["create", "get", "list", "patch", "update"]
+  # The knowledge-context token ExternalSecret (knowledge-context-secret.yaml):
+  # apply-only grant, scoped to the ExternalSecret CR — the operator (not this
+  # role) materializes the backing Secret.
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets"]
+    verbs: ["create", "get", "list", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
