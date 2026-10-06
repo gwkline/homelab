@@ -69,11 +69,13 @@ spec:
               port: http
             periodSeconds: 30
           readinessProbe:
+            # Plain-liveness route only: /v1/sources requires the bearer token
+            # and kubelet httpGet probes cannot carry secret refs
+            # (httpHeaders values are literal strings), so the authed route
+            # returns 401 to the probe forever and the pod never reports ready.
             httpGet:
-              path: /v1/sources
+              path: /healthz
               port: http
-            # 503 until the ingest passthrough answers — the probe's
-            # failureThreshold absorbs the ingest rollout window.
             failureThreshold: 30
             periodSeconds: 5
       volumes:
