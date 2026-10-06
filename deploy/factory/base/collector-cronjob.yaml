@@ -7,8 +7,12 @@ metadata:
     app.kubernetes.io/part-of: homelab
     factory.gwkline.io/component: collector
 spec:
-  # Every open issue in the allowlisted repos enters the factory unless it is
-  # already in a terminal or active factory state.
+  # Durable GitHub issue collector (#78): polls the allowlisted repos and
+  # admits eligible issues into the factory by adding factory/queued — the
+  # label IS the Run's ledger record (one issue + one label event = one Run,
+  # ADR-002). Idempotent: repeated polls and Job TTL deletion cannot
+  # duplicate work, because eligibility reads the live GitHub ledger, not
+  # Kubernetes objects.
   schedule: "5 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
@@ -34,19 +38,49 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: collector
+              # Declarative collector config lives in the env block below;
+              # the image pin is re-stamped after image rebuilds with
+              # scripts/pin-factory-image.sh factory/collector <digest>.
               image: ghcr.io/gwkline/homelab/factory/collector@sha256:5a81fa42375a15522764a25d79f9fa0a4d9d101db48ea55456704639aec7e1b5
               imagePullPolicy: Always
               env:
+                # ── Declarative work selection (#78) ──────────────────────
                 - name: FACTORY_REPOS
                   value: gwkline/homelab,gwkline/launchpad
-                - name: GH_CONFIG_DIR
-                  value: /tmp/gh
+                # Optional label gate; empty = every open, non-PR issue
+                # without a factory lifecycle label is eligible.
+                - name: FACTORY_ELIGIBILITY_LABEL
+                  value: ""
+                # RunProfile recorded on collected Runs (orchestrator default).
+                - name: FACTORY_DEFAULT_PROFILE
+                  value: code-pr
+                # Eligibility-rule version; part of the Run idempotency key.
+                # Bump only when the eligibility semantics change (see
+                # apps/factory/collector/README.md).
+                - name: FACTORY_RULE_VERSION
+                  value: v1
+                # Polling cursor (ISO-8601). Empty = full scan; the collector
+                # prints the next cursor in its summary line every tick.
+                - name: FACTORY_SINCE
+                  value: ""
                 - name: FACTORY_COLLECTOR_DRY_RUN
                   value: "false"
+                # ── GitHub access: short-lived App installation token (#70)
+                # with a transitional PAT fallback (see docs/github-app.md).
+                - name: GITHUB_APP_ID
+                  valueFrom:
+                    secretKeyRef:
+                      { name: github-app, key: app-id, optional: true }
+                - name: GITHUB_APP_INSTALLATION_ID
+                  valueFrom:
+                    secretKeyRef:
+                      { name: github-app, key: installation-id, optional: true }
+                - name: GITHUB_APP_PRIVATE_KEY_FILE
+                  value: /secrets/github-app/private-key
                 - name: GH_TOKEN
                   valueFrom:
                     secretKeyRef:
-                      { name: github-token, key: token, optional: false }
+                      { name: github-token, key: token, optional: true }
               resources:
                 requests: { cpu: 100m, memory: 128Mi }
                 limits: { cpu: 500m, memory: 512Mi }
@@ -56,8 +90,17 @@ spec:
                 readOnlyRootFilesystem: true
               volumeMounts:
                 - { name: tmp, mountPath: /tmp }
+                - {
+                    name: github-app,
+                    mountPath: /secrets/github-app,
+                    readOnly: true,
+                  }
           volumes:
             - { name: tmp, emptyDir: {} }
+            - name: github-app
+              secret:
+                secretName: github-app
+                optional: true
 ---
 apiVersion: v1
 kind: ServiceAccount

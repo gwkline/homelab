@@ -257,10 +257,10 @@ kubectl get svc cloudbeaver -n agents           # tailnet hostname
 # with the role from Secret cloudbeaver-db (see deploy/cloudbeaver/base/README.md)
 ```
 
-**dispatcher** (optional, issue-driven runs): self-contained since #26 — its least-privilege RBAC ships with `deploy/dispatcher/base` (no hermes dependency). Requires a PAT in secret `github-token` for API reads. Edit the repo and command in `deploy/dispatcher/base/cronjob.yaml`, then:
+**dispatcher** (legacy, demoted by #78): superseded by the factory collector (`deploy/factory/base`), which turns eligible issues into idempotent factory Runs with a short-lived App installation token — no shell commands in CronJob configuration. The dispatcher is kept only as the #30 behavioral smoke baseline (`scripts/dispatch-flow-smoke.sh`); it is self-contained since #26 (its least-privilege RBAC ships with `deploy/dispatcher/base`, no hermes dependency) and requires a PAT in secret `github-token` for API reads. Edit the repo and command in `deploy/dispatcher/base/cronjob.yaml`, then:
 
 ```sh
-kubectl apply -k deploy/dispatcher/base
+kubectl apply -k deploy/dispatcher/base   # not recommended for new automation
 # label any issue `run-agent` in the watched repo -> Job appears in sandbox
 ```
 
