@@ -78,7 +78,9 @@
         "^library/",
         "^restic/",
         "^gethomepage/",
-        "^nousresearch/"
+        "^nousresearch/",
+        "^victoriametrics/",
+        "^registry\\.k8s\\.io/"
       ],
       "matchUpdateTypes": ["digest", "pin", "patch", "minor"],
       "automerge": true,
