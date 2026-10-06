@@ -207,6 +207,12 @@ jobs:
       - name: Install retrieval deps
         working-directory: apps/knowledge-retrieval
         run: npm ci --no-audit --no-fund
+      # The retrieval tsconfig compiles the shared knowledge lib's channel
+      # modules too; their `pg` imports resolve from the knowledge app's
+      # node_modules (same pattern as the ingest job).
+      - name: Install knowledge lib deps (typecheck @types)
+        working-directory: apps/knowledge
+        run: npm ci --no-audit --no-fund
       - name: Typecheck
         working-directory: apps/knowledge-retrieval
         run: npm run typecheck
