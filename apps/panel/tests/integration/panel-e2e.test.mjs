@@ -32,6 +32,9 @@ const seedJob = process.env.PANEL_E2E_SEED_JOB ?? "panel-e2e-seed";
 const seedCronJob = process.env.PANEL_E2E_CRONJOB ?? "panel-e2e-seed-cronjob";
 const seedSchedule = process.env.PANEL_E2E_SCHEDULE ?? "0 9 * * *";
 const command = process.env.PANEL_E2E_COMMAND ?? "echo panel-e2e-launch-ok";
+// The Job's pod logs carry the command's OUTPUT (the marker), not the shell
+// text itself — the default command echoes this marker.
+const commandOutput = process.env.PANEL_E2E_COMMAND_OUTPUT ?? "panel-e2e-launch-ok";
 const issue = process.env.PANEL_E2E_ISSUE ?? "27";
 const jobWaitMs = Number(process.env.PANEL_E2E_JOB_WAIT ?? "300") * 1000;
 // The smoke script reads the created Job's name from here for its preserved
@@ -155,7 +158,7 @@ test("the created Job reaches a terminal state", { skip }, async () => {
     if (complete) {
       const logs = kubectl("logs", `job/${created}`, "-n", ns);
       assert.ok(
-        logs.includes(command),
+        logs.includes(commandOutput),
         `Job pod logs missing the command output: ${logs}`
       );
       // The live API state must reflect the terminal status through the panel.
