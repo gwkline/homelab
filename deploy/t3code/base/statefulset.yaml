@@ -26,7 +26,7 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: t3code
-          image: ghcr.io/gwkline/homelab/t3code@sha256:3baea9216bef6c8a985f9f52add02904574b6ca51ddb70eda101083840eca71a
+          image: ghcr.io/gwkline/homelab/t3code@sha256:351540318f48c6cc4cc02abba536514affcf3072decd6d154bf2143956f5c480
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -123,7 +123,7 @@ spec:
           # Same digest as the main container above (issue #91): admission
           # verification binds to digests, and skills-lib.sh must match the
           # server that links the skills it syncs.
-          image: ghcr.io/gwkline/homelab/t3code@sha256:3baea9216bef6c8a985f9f52add02904574b6ca51ddb70eda101083840eca71a
+          image: ghcr.io/gwkline/homelab/t3code@sha256:351540318f48c6cc4cc02abba536514affcf3072decd6d154bf2143956f5c480
           imagePullPolicy: Always
           command:
             - sh
