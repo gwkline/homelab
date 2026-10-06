@@ -70,7 +70,7 @@ if ! command -v jq >/dev/null 2>&1; then
 # Minimal jq subset for the medic sweep fixtures:
 #   -r '<filter>'            with filters used by run-medic.sh + medic-lib.sh
 #   -c '.[]'
-#   '[.[][] | select(...)]' style is handled by the gh shim pre-filtering.
+#   '[.. | objects | select(...)]' flattening filters (any nesting shape)
 import json, sys
 
 args = sys.argv[1:]
@@ -105,7 +105,17 @@ if slurp and isinstance(doc, list) and doc and isinstance(doc[0], list):
     doc = [x for page in doc for x in page]
 
 filt = next((a for k, a, _v in fl if k is None), ".")
-argv = {k: v for k, a, v in fl if k == "--arg"}
+argv = {a: v for k, a, v in fl if k == "--arg"}
+
+
+def walk(x):
+    # python equivalent of jq's `.. | objects`: every object node at any
+    # depth — makes flat, page-wrapped, and slurped inputs interchangeable.
+    if isinstance(x, dict):
+        yield x
+    elif isinstance(x, list):
+        for y in x:
+            yield from walk(y)
 
 
 def out(v):
@@ -121,13 +131,18 @@ def out(v):
 if filt == ".[]":
     for x in doc:
         out(x)
+elif filt == ".[].number":
+    for x in (doc if isinstance(doc, list) else [doc]):
+        if isinstance(x, dict):
+            out(x.get("number"))
 elif filt.startswith("[") and "select" in filt and "startswith" in filt:
-    # PR listing filter: keep factory/issue-* heads
-    res = [p for p in doc if (p.get("head") or {}).get("ref", "").startswith("factory/issue-")]
+    # PR listing filter: keep factory/issue-* heads (any input nesting)
+    res = [p for p in walk(doc) if (p.get("head") or {}).get("ref", "").startswith("factory/issue-")]
     out(res)
 elif filt.startswith("[") and "contains" in filt and "$m" in filt:
+    # marker counting (failed/queued): one hit per comment at any nesting
     marker = argv.get("m", "")
-    res = [c for c in doc if marker in (c.get("body") or "")]
+    res = [c for c in walk(doc) if marker in (c.get("body") or "")]
     out(len(res))
 elif ".check_runs" in filt:
     crs = (doc.get("check_runs") if isinstance(doc, dict) else None) or []
@@ -154,10 +169,11 @@ elif filt == ".head.ref":
 elif filt == ".head.sha":
     out((doc.get("head") or {}).get("sha"))
 elif "labels" in filt and "join" in filt:
-    out(",".join(l.get("name", "") for l in doc.get("labels") or []))
+    lbls = doc.get("labels") if isinstance(doc, dict) else None
+    out(",".join(l.get("name", "") for l in lbls or []))
 elif "contains($m)" in filt and "id" in filt:
     marker = argv.get("m", "")
-    hits = [c for c in doc if marker in (c.get("body") or "")]
+    hits = [c for c in walk(doc) if marker in (c.get("body") or "")]
     out(hits[0].get("id") if hits else "")
 elif filt == "length":
     out(len(doc))
@@ -166,69 +182,97 @@ else:
 JQ
   chmod +x "${WORK}/shim/jq"
 fi
-cat > "${WORK}/shim/gh" <<'SHIM'
+  cat > "${WORK}/shim/gh" <<'SHIM'
 #!/bin/bash
 # Fixture gh. State files under $GH_STATE:
-#   prs.json                  open PR list
+#   prs.json                  open PR list (a JSON array: one API page)
 #   checks-green              existence ⇒ PR #123 checks are green
 #   briefs                    appended: every comment body posted to PR #123
 #   issue-comments            appended: every comment posted to issue #6
 #   pr-123-comments.json      served as PR #123's comment list
 #   stuck-log                 appended: escalation writes
+#
+# Bodies the case statement produces are piped through the shimmed jq when
+# --jq is present (real gh applies --jq to the API response), with the call's
+# own --slurp/--paginate flags riding along — never force-added.
 set -u
 
-# Real gh applies --jq on the API response. The mock returns canned bodies, so
-# split --jq (and its filter) out of "$*", serve the canned body, then apply
-# the filter with the shimmed jq — otherwise callers relying on --jq see raw
-# JSON and label guards never match.
 JQ_FILTER=""
 JQ_FLAGS=""
-ARGS=""
+NEWARGS=()
 prev=""
 for a in "$@"; do
   if [ "$prev" = "--jq" ]; then
     JQ_FILTER="$a"
-  else
-    case "$a" in
-      --jq) ;;
-      --slurp|--paginate) JQ_FLAGS="$JQ_FLAGS $a"; ARGS="$ARGS $a" ;;
-      *) ARGS="$ARGS $a" ;;
-    esac
+    prev=""
+    continue
   fi
+  case "$a" in
+    --jq) ;;
+    --slurp|--paginate) JQ_FLAGS="${JQ_FLAGS} $a"; NEWARGS+=("$a") ;;
+    *) NEWARGS+=("$a") ;;
+  esac
   prev="$a"
 done
-set -- $ARGS
+# Bash arrays keep multi-line bodies verbatim (word-splitting mangled them).
+set -- ${NEWARGS[@]+"${NEWARGS[@]}"}
 
+BODY=""
 case "$*" in
   *"pulls?state=open"*)
-    printf '[%s]' "$(cat "$GH_STATE/prs.json")" ;;
+    # one API page: a bare JSON array, exactly like the real pulls endpoint
+    BODY="$(cat "$GH_STATE/prs.json")" ;;
   *"commits/${SHA_123}/check-runs"*)
     if [ -f "$GH_STATE/checks-green" ]; then
-      echo '{"check_runs":[{"name":"lint","status":"completed","conclusion":"success"}]}'
+      BODY='{"check_runs":[{"name":"lint","status":"completed","conclusion":"success"}]}'
     else
-      echo '{"check_runs":[{"name":"lint","status":"completed","conclusion":"failure","output":{"summary":"src/broken.sh: syntax error"}}]}'
+      BODY='{"check_runs":[{"name":"lint","status":"completed","conclusion":"failure","output":{"summary":"src/broken.sh: syntax error"}}]}'
     fi ;;
   */check-runs)
-    echo '{"check_runs":[]}' ;;
+    BODY='{"check_runs":[]}' ;;
   *"pulls/123.diff"*)
-    printf 'diff --git a/src/broken.sh b/src/broken.sh\n--- a/src/broken.sh\n+++ b/src/broken.sh\n@@ -1 +1 @@\n-echo (ok\n+echo ok\n' ;;
+    BODY='diff --git a/src/broken.sh b/src/broken.sh
+--- a/src/broken.sh
++++ b/src/broken.sh
+@@ -1 +1 @@
+-echo (ok
++echo ok
+' ;;
   *"issues/123/comments"*)
     if [ "${2:-}" = "-X" ] && [ "${3:-}" = "POST" ]; then
       for a in "$@"; do
-        case "$a" in body=*) printf '%s\n' "${a#body=}" >> "$GH_STATE/briefs" ;; esac
+        case "$a" in body=*)
+          printf '%s\n' "${a#body=}" >> "$GH_STATE/briefs"
+          # Real GitHub makes POSTed comments readable back through the API:
+          # grow the served comment list so ledger recounts (attempt counts)
+          # see what was just posted.
+          COMMENT_BODY="${a#body=}" python3 - "$GH_STATE" <<'PY'
+import json, os, sys
+path = os.path.join(sys.argv[1], "pr-123-comments.json")
+try:
+    comments = json.load(open(path))
+except Exception:
+    comments = []
+if not isinstance(comments, list):
+    comments = []
+comments.append({"body": os.environ["COMMENT_BODY"]})
+json.dump(comments, open(path, "w"))
+PY
+          ;;
+        esac
       done
-      echo '{"id": 1}'
+      BODY='{"id": 1}'
     else
-      cat "$GH_STATE/pr-123-comments.json"
+      BODY="$(cat "$GH_STATE/pr-123-comments.json")"
     fi ;;
   *"issues/6/comments"*)
     if [ "${2:-}" = "-X" ] && [ "${3:-}" = "POST" ]; then
       for a in "$@"; do
         case "$a" in body=*) printf '%s\n' "${a#body=}" >> "$GH_STATE/issue-comments" ;; esac
       done
-      echo '{"id": 2}'
+      BODY='{"id": 2}'
     else
-      printf '[%s]' "$(cat "$GH_STATE/issue-comments.json" 2>/dev/null || echo '[]')"
+      BODY="$(cat "$GH_STATE/issue-comments.json" 2>/dev/null || echo '[]')"
     fi ;;
   *"issues/"*"/labels"*)
     # label add/remove: track in the labels dir; the issue number is in the URL
@@ -238,15 +282,17 @@ case "$*" in
         case "$a" in labels[]=*) mkdir -p "$GH_STATE/labels/${NUM}"; touch "$GH_STATE/labels/${NUM}/${a#labels[]=}" ;; esac
       done
     fi
-    echo '{}' ;;
+    BODY='{}' ;;
   *"issues/6"*)
-    # issue 6 view: labels
+    # issue 6 view. Label names are paths relative to labels/6 — the ledger
+    # uses full factory/* names, not the file basename.
     LBL=""
     for f in "$GH_STATE/labels/6"/*/* "$GH_STATE/labels/6"/*; do
       [ -f "$f" ] || continue
-      LBL="$LBL{\"name\":\"$(basename "$f")\"},"
+      NAME="${f##*/labels/6/}"
+      LBL="$LBL{\"name\":\"$NAME\"},"
     done
-    echo "{\"number\":6,\"title\":\"fixture issue\",\"labels\":[$(printf '%s' "${LBL%,}")]}" ;;
+    BODY="{\"number\":6,\"title\":\"fixture issue\",\"labels\":[$(printf '%s' "${LBL%,}")]}" ;;
   *"issues/"*|*"issue edit"*)
     # --add-label / --remove-label form. The issue number arrives either in
     # a URL (.../issues/6) or as the bare operand of `gh issue edit 6`.
@@ -264,31 +310,40 @@ case "$*" in
           case "$a" in factory/*) rm -f "$GH_STATE/labels/${NUM}/$a" ;; esac
         done ;;
     esac
-    echo '{}' ;;
+    BODY='{}' ;;
   *"issues?labels="*)
-    # list issue numbers carrying a label (orchestrator-style WIP query)
+    # list issues carrying a label (orchestrator-style WIP query): emit a
+    # real issues array — the trailing jq applies --jq like real gh does.
     LBL="$(printf '%s' "$*" | sed -n 's|.*labels=\([^&]*\).*|\1|p')"
-    ls "$GH_STATE/labels" 2>/dev/null | while IFS= read -r d; do
-      [ -f "$GH_STATE/labels/$d/$LBL" ] && echo "$d"
-    done ;;
+    BODY="["
+    FIRST=1
+    for d in "$GH_STATE"/labels/*; do
+      [ -f "$d/$LBL" ] || continue
+      [ "$FIRST" = 1 ] || BODY="$BODY,"
+      BODY="$BODY{\"number\":$(basename "$d")}"
+      FIRST=0
+    done
+    BODY="$BODY]" ;;
   *"issue comment"*)
     for a in "$@"; do
-      case "$a" in -b*|--body*) BODY="${a#-b}"; BODY="${BODY#--body}"; printf '%s\n' "$BODY" >> "$GH_STATE/issue-comments" ;; esac
+      case "$a" in -b*|--body*) BODY2="${a#-b}"; BODY2="${BODY2#--body}"; printf '%s\n' "$BODY2" >> "$GH_STATE/issue-comments" ;; esac
     done
-    echo '{"id": 3}' ;;
+    BODY='{"id": 3}' ;;
   *"pr merge"*|*"pr ready"*|*"pr create"*)
     echo "FAIL: forbidden medic write: gh $*" >&2
     exit 99 ;;
-  auth\ status) ;;
+  auth\ status)
+    BODY="" ;;
   *)
-    echo '{}' ;;
+    BODY='{}' ;;
 esac
 
 if [ -n "$JQ_FILTER" ]; then
-  # gh applies --jq per page; --slurp changes the input shape (each page
-  # becomes one array element), so the flags must ride along or filters
-  # written for slurped input see the wrong shape.
-  jq $JQ_FLAGS --slurp "$JQ_FILTER" 2>/dev/null || true
+  # Real gh applies --jq to the response (to the slurped array with --slurp):
+  # pipe the canned body through the shimmed jq with the call's own flags.
+  printf '%s\n' "$BODY" | jq ${JQ_FLAGS} "$JQ_FILTER" 2>/dev/null || true
+else
+  [ -n "$BODY" ] && printf '%s\n' "$BODY"
 fi
 SHIM
 chmod +x "${WORK}/shim/gh"
@@ -298,8 +353,9 @@ run_sweep() {
 }
 
 # PR fixture: open draft PR #123, head factory/issue-6/code-pr, red checks.
+# prs.json is one bare API page — a JSON array of PR objects.
 cat > "${GH_STATE}/prs.json" <<EOF
-{"number":123,"title":"factory PR (ci-red)","head":{"ref":"factory/issue-6/code-pr","sha":"${SHA_123}"},"draft":true,"labels":[],"body":""}
+[{"number":123,"title":"factory PR (ci-red)","head":{"ref":"factory/issue-6/code-pr","sha":"${SHA_123}"},"draft":true,"labels":[],"body":""}]
 EOF
 echo '[]' > "${GH_STATE}/pr-123-comments.json"
 : > "${GH_STATE}/briefs"
@@ -314,6 +370,10 @@ grep -q "Medic brief" "${GH_STATE}/briefs" || fail "no medic brief posted"
 grep -q "Never open a PR, never push to main, never force-push" "${GH_STATE}/briefs" \
   || fail "brief does not carry the push constraints"
 grep -q "factory/issue-6/code-pr" "${GH_STATE}/briefs" || fail "brief missing the branch (push target)"
+# the brief embeds the queued-marker for the head SHA — the ledger hook the
+# re-detection path (proof 3a) counts failed attempts against.
+grep -q "<!-- factory:medic:${SHA_123}:queued -->" "${GH_STATE}/briefs" \
+  || fail "brief missing the head-SHA queued marker"
 BRIEFS=$(grep -c "Medic brief" "${GH_STATE}/briefs" || true)
 [ "${BRIEFS}" = "1" ] || fail "expected 1 brief, got ${BRIEFS}"
 echo "${OUT}" | grep -q "attempt 1/3" || fail "sweep did not report the attempt counter"
@@ -393,7 +453,12 @@ CUR_HEAD="$(git -C "${FIXDIR}" ls-remote origin refs/heads/factory/issue-6/code-
 [ "${CUR_HEAD}" = "${NEW_HEAD}" ] || fail "guard: branch mutated despite refusal"
 
 # ---- proof 3: stuck path --------------------------------------------------------
-# Re-break the branch (new head, red again), record 3 failed attempts on it.
+# Re-break the branch (new head, red again) and prove the ledger ladder:
+#   3a. a repair queued for this head that left it red IS recorded as a
+#       failed attempt, then the next repair is queued (attempt 2/3);
+#   3b. 3 recorded failures on the same head → escalation (factory/stuck +
+#       give-up log), and retries stop;
+#   3c. a further sweep is a no-op (stuck issue carries the label).
 (
   cd "${FIXDIR}"
   git checkout -q factory/issue-6/code-pr
@@ -408,30 +473,50 @@ git -C "${FIXDIR}" commit -qm "factory(medic): repair attempt (fails again)"
 BAD_HEAD="$(git -C "${FIXDIR}" rev-parse HEAD)"
 git -C "${FIXDIR}" push -q origin HEAD:refs/heads/factory/issue-6/code-pr
 rm -f "${GH_STATE}/checks-green"
-# update the PR fixture to the new head
+# update the PR fixture to the new head (one bare API page)
 cat > "${GH_STATE}/prs.json" <<EOF
-{"number":123,"title":"factory PR (ci-red again)","head":{"ref":"factory/issue-6/code-pr","sha":"${BAD_HEAD}"},"draft":true,"labels":[],"body":""}
+[{"number":123,"title":"factory PR (ci-red again)","head":{"ref":"factory/issue-6/code-pr","sha":"${BAD_HEAD}"},"draft":true,"labels":[],"body":""}]
 EOF
 # export for the shim's check-runs case
 export SHA_123="${BAD_HEAD}"
 
+# ---- 3a. re-detection of the same red head records the failed attempt ---------
+# Seed the ledger with the medic's own queued marker for BAD_HEAD (a repair
+# was dispatched for this exact head) and zero failure markers.
+python3 - > "${GH_STATE}/pr-123-comments.json" <<PY
+import json
+marker = "<!-- factory:medic:${BAD_HEAD}:queued -->"
+print(json.dumps([{"body": marker}]))
+PY
+OUT3A="$(run_sweep)" || fail "re-detection sweep exited non-zero: ${OUT3A}"
+echo "${OUT3A}" | grep -q "recording failed attempt" || fail "re-detection did not record the failed attempt: ${OUT3A}"
+grep -q "<!-- factory:medic:${BAD_HEAD}:failed -->" "${GH_STATE}/briefs" \
+  || fail "failed-attempt marker was not posted to the PR ledger"
+echo "${OUT3A}" | grep -q "repair queued" || fail "re-detection did not queue the next repair: ${OUT3A}"
+echo "${OUT3A}" | grep -q "attempt 2/3" || fail "re-detection lost the attempt counter: ${OUT3A}"
+BRIEFS=$(grep -c "Medic brief" "${GH_STATE}/briefs" || true)
+[ "${BRIEFS}" = "2" ] || fail "expected 2 briefs after the second repair dispatch, got ${BRIEFS}"
+# the dispatch re-added factory/queued to the issue — clear it so the next
+# sweep reaches the ledger gate (the orchestrator "finished" the attempt).
+rm -f "${GH_STATE}/labels/6/factory/queued"
+
+# ---- 3b. 3 recorded failures on one head → escalation, retries stop -----------
 python3 - > "${GH_STATE}/pr-123-comments.json" <<PY
 import json
 marker = "<!-- factory:medic:${BAD_HEAD}:failed -->"
 print(json.dumps([{"body": marker} for _ in range(3)]))
 PY
-
+BRIEFS_BEFORE=$(grep -c "Medic brief" "${GH_STATE}/briefs" || true)
 OUT3="$(run_sweep)" || fail "stuck-path sweep exited non-zero: ${OUT3}"
 echo "${OUT3}" | grep -q "escalating" || fail "sweep did not escalate at budget: ${OUT3}"
-if echo "${OUT3}" | grep -q "Medic brief"; then
-  grep -q "Medic brief" "${GH_STATE}/briefs" || true
-  N=$(grep -c "Medic brief" "${GH_STATE}/briefs" || true)
-  [ "${N}" = "1" ] || fail "sweep queued a 4th repair after budget exhausted (${N} briefs)"
-fi
-grep -q "gave up" "${OUT3}" || fail "escalation did not log the give-up line"
-# a further sweep is a no-op (stuck issue carries the label):
-touch "${GH_STATE}/labels/6/factory/stuck"
+printf '%s\n' "${OUT3}" | grep -q "gave up" || fail "escalation did not log the give-up line"
+echo "${OUT3}" | grep -q "repair queued" && fail "sweep queued a 4th repair after budget exhausted"
+BRIEFS=$(grep -c "Medic brief" "${GH_STATE}/briefs" || true)
+[ "${BRIEFS}" = "${BRIEFS_BEFORE}" ] || fail "escalation posted a new brief (${BRIEFS_BEFORE} → ${BRIEFS})"
+[ -f "${GH_STATE}/labels/6/factory/stuck" ] || fail "escalation did not label the linked issue factory/stuck"
+
+# ---- 3c. a further sweep is a no-op (stuck issue carries the label) -----------
 OUT4="$(run_sweep)"
 echo "${OUT4}" | grep -q "nothing new queued" || fail "sweep retried after escalation: ${OUT4}"
 
-echo "PASS: medic red→green, write guards, and stuck escalation all behave"
+echo "PASS: medic red→green, write guards, failed-attempt recording, and stuck escalation all behave"

@@ -23,7 +23,11 @@ spec:
       template:
         metadata:
           labels:
+            # Carries the reviewer profile label on purpose: the medic lives
+            # in the reviewer image and inherits allow-factory-reviewer egress
+            # (GitHub API + DNS only), same as the sweeper.
             factory.gwkline.io/component: medic
+            factory.gwkline.io/profile: reviewer
         spec:
           restartPolicy: Never
           serviceAccountName: factory-reviewer # same least-privilege SA: gh API only, no k8s
@@ -36,9 +40,14 @@ spec:
             - name: medic
               image: ghcr.io/gwkline/homelab/factory/reviewer@sha256:35e1d611b974d4a141583ebee005c3aaa908eac931fe837df314314b3e7d0edb
               imagePullPolicy: Always
+              # The image ENTRYPOINT is the reviewer poller; the medic must
+              # override it with its own sweep script (same as the sweeper).
+              command: ["/reviewer/run-medic.sh"]
               env:
                 - name: FACTORY_REPO
                   value: gwkline/homelab
+                - name: GH_CONFIG_DIR
+                  value: /tmp/gh
                 - name: GH_TOKEN
                   valueFrom:
                     secretKeyRef:

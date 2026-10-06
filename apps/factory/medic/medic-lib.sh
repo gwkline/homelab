@@ -94,12 +94,34 @@ medic_failed_marker() { # $1 = head sha
   printf '<!-- factory:medic:%s:failed -->' "${1:?sha}"
 }
 
+# Marker for a repair the medic queued against a PR head SHA (embedded in the
+# brief). Seeing the SAME head red again after this marker means that repair
+# failed — the sweep records a failed marker for it.
+medic_queued_marker() { # $1 = head sha
+  printf '<!-- factory:medic:%s:queued -->' "${1:?sha}"
+}
+
+# Count comments on a PR carrying a marker for a head SHA. The jq filter
+# flattens defensively (`.. | objects`): the comment list arrives as one
+# page array under gh's --slurp, but flat / page-wrapped / slurped shapes
+# all yield the same count, so no response nesting can corrupt the budget
+# (issue #249's slurp-nesting class of bug).
+medic_count_marker() { # $1 = repo, $2 = PR number, $3 = marker text
+  gh api --paginate --slurp "repos/${1:?repo}/issues/${2:?pr}/comments" 2>/dev/null |
+    jq -r --arg m "${3:?marker}" \
+      '[.. | objects | select(.body | contains($m))] | length'
+}
+
 # Count failed attempts recorded for a PR head SHA.
 #   $1 = repo, $2 = PR number, $3 = head sha
 medic_count_failures() {
-  gh api --paginate --slurp "repos/${1:?repo}/issues/${2:?pr}/comments" 2>/dev/null |
-    jq -r --arg m "$(medic_failed_marker "${3:?sha}")" \
-      '[.[][] | select(.body | contains($m))] | length'
+  medic_count_marker "${1:?repo}" "${2:?pr}" "$(medic_failed_marker "${3:?sha}")"
+}
+
+# Count repairs the medic queued against a PR head SHA.
+#   $1 = repo, $2 = PR number, $3 = head sha
+medic_count_queued() {
+  medic_count_marker "${1:?repo}" "${2:?pr}" "$(medic_queued_marker "${3:?sha}")"
 }
 
 # Record one failed attempt on the PR.

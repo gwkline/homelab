@@ -6,10 +6,12 @@
 #
 # One sweep tick:
 #   1. List open factory-authored PRs whose checks are red.
-#   2. Skip PRs whose head-SHA failure budget (3) is exhausted → escalate
+#   2. Ledger: a repair already queued for the same red head = a failed
+#      attempt — record it (the budget accrues from the PR's own markers).
+#   3. Skip PRs whose head-SHA failure budget (3) is exhausted → escalate
 #      the linked issue to factory/stuck + comment, retries stop.
-#   3. Cap concurrency: at most 1 in-flight medic repair.
-#   4. Queue ONE repair: relabel the linked issue factory/queued (pinning the
+#   4. Cap concurrency: at most 1 in-flight medic repair.
+#   5. Queue ONE repair: relabel the linked issue factory/queued (pinning the
 #      run to the PR branch via the medic branch guard) and post the medic
 #      brief (failing checks + logs, PR diff, verify command) on the PR.
 #
@@ -55,8 +57,11 @@ verify_for() {
 
 # ---- 1. find ci-red factory PRs ---------------------------------------------
 [ -n "${MEDIC_TRACE:-}" ] && set -x
+# `.. | objects` flattens defensively: gh --slurp hands jq an array of page
+# arrays, but any response shape (flat / page-wrapped / slurped) yields the
+# same PR list — issue #249's slurp-nesting bug cannot recur here.
 PRS_JSON="$(gh api --paginate --slurp "repos/${REPO}/pulls?state=open&per_page=100" \
-  | jq '[.[][] | select((.head.ref // "") | startswith("factory/issue-"))]')"
+  | jq '[.. | objects | select((.head.ref // "") | startswith("factory/issue-"))]')"
 
 # ---- 2. concurrency cap ------------------------------------------------------
 # A repair run is in flight when its linked issue carries factory/in-progress
@@ -120,9 +125,24 @@ while IFS= read -r PR; do
 
   # Escalation gate: failures are recorded per head SHA. Same head + budget
   # exhausted → stuck. A pushed fix changes the head, resetting the budget.
+  # A repair already queued for this exact head that left it red again is a
+  # FAILED attempt — record it so the budget actually accrues (the ledger
+  # self-records; no other component writes medic markers).
+  QUEUED_FOR_SHA="$(medic_count_queued "${REPO}" "${NUM}" "${HEAD_SHA}")"
+  if [ "${QUEUED_FOR_SHA}" -gt 0 ]; then
+    echo "[medic] PR #${NUM}: head ${HEAD_SHA} still red after a queued repair — recording failed attempt"
+    if [ "${DRY}" != "true" ]; then
+      if ! medic_record_failure "${REPO}" "${NUM}" "${HEAD_SHA}" \
+        "The repair dispatched for head \`${HEAD_SHA}\` did not turn it green (branch head unchanged, checks still red)."; then
+        echo "[medic] WARN: could not record the failed attempt on PR #${NUM} — skipping this tick" >&2
+        continue
+      fi
+    fi
+  fi
   ATTEMPTS="$(medic_count_failures "${REPO}" "${NUM}" "${HEAD_SHA}")"
   if [ "${ATTEMPTS}" -ge "${MAX_ATTEMPTS}" ]; then
     echo "[medic] PR #${NUM}: ${ATTEMPTS} failed attempts at head ${HEAD_SHA} (budget ${MAX_ATTEMPTS}) — escalating"
+    echo "[medic] PR #${NUM}: gave up — handing issue #${LINKED_ISSUE} to a human as ${STUCK_LABEL}"
     [ "${DRY}" = "true" ] || medic_mark_stuck "${REPO}" "${LINKED_ISSUE}" "${NUM}" "${HEAD_SHA}" "${ATTEMPTS}"
     continue
   fi
@@ -136,7 +156,8 @@ while IFS= read -r PR; do
   PR_DIFF="$(gh api "repos/${REPO}/pulls/${NUM}.diff" 2>/dev/null | head -c 20000)" || PR_DIFF=""
   VERIFY_CMD="$(verify_for "${REPO}")"
 
-  BRIEF_MD="## 🩺 Factory Medic brief — repair this ci-red PR
+  BRIEF_MD="$(medic_queued_marker "${HEAD_SHA}")
+## 🩺 Factory Medic brief — repair this ci-red PR
 
 PR #${NUM} is ci-red at head \`${HEAD_SHA}\`. Fix the failing checks **on this branch only**.
 
