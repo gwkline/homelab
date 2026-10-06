@@ -2,6 +2,14 @@
 
 Hybrid retrieval for the homelab knowledge base: fuse keyword (BM25, #60) and semantic (pgvector, #62) candidate lists into one deterministic ranking of cited chunks. No LLM answer generation, no graph expansion — this package ends at ranked chunks with citation-ready metadata. Upstream of retrieval sit the ingest workers (#57): deterministic chunking and embedding over the #56 `ingest_job` queue (ADR-002 D5/D14).
 
+## Deployed services built on this library
+
+The library is wired into two services (ADR-002 D14 map, status: implemented — see `deploy/knowledge/README.md` for the deployment contract and the image-pin bootstrap):
+
+- **`apps/knowledge-ingest`** — the durable queue (#58: idempotent enqueue, `FOR UPDATE SKIP LOCKED` claims, leases/backoff/dead-letter) plus the real pipeline handler: `source_sync` jobs run `src/git-source.ts` against the durable manifest (changed documents enqueue `document-version` jobs, deletions tombstone through the schema builders), `document-version` jobs and fetched `document` jobs run `processDocumentVersion` (this package) against the same database.
+- **`apps/knowledge-retrieval`** — `POST /v1/search` over a Postgres store: the pinned BM25 + pgvector channel queries from this package, fusion via `src/fusion.ts` semantics (RRF k=60), citations resolved by the live document/version join (D8), and a sources/sync passthrough to the ingest service so panel and MCP use one base URL. Falls back to the in-memory store without `DATABASE_URL` (dev/CI-smoke).
+- **`apps/knowledge-mcp`** — local stdio MCP adapter over the retrieval API (not deployed; a CLI).
+
 ## Ingest: deterministic chunking + embedding workers (#57)
 
 Normalized document versions (the #56 document identity — `namespace`, `source`, `externalId` — plus document/version ids and the extracted text) flow through `src/ingest.ts`: chunk → embed → persist, retryable at every step. `processDocumentVersion` writes the document model in FK order inside one transaction: register the namespace, upsert the `document` row (the full-content sha256 decides the version bump; unchanged content is a no-op), append the `document_version` row the chunks cite, upsert the chunks, and supersede the live chunks whose content hash left the version (`valid_to = now()`).

@@ -15,6 +15,7 @@ Two-node k3s cluster built from old servers that could die at any second. Everyt
 - **victoriametrics**: the metrics backend (`deploy/victoriametrics/base`) — single-node VM scrapes kubelet/cAdvisor metrics through the API-server proxy plus kube-state-metrics for object state (nodes, pods, jobs, deployments/statefulsets, PVCs), keeps 30 days at a 30s scrape on a 15Gi-capped PVC, and never touches the tailnet; ClusterIP-only, Grafana is its sole reader. Read-only scrape RBAC, plain kustomize, no CRDs. See `deploy/victoriametrics/README.md`.
 - **grafana**: the observability UI at `https://grafana.<tailnet>.ts.net` (`deploy/grafana/base`) — anonymous read-only Viewer behind the tailnet (login form on for the admin credential from the `grafana-admin` Secret). Loki and VictoriaMetrics datasources, seven Homelab dashboards (logs, factory jobs, postgres, tailscale, chaos, nodes, workloads), and the issue-#44 alert rules (disk pressure, PVC nearly full, failed backups, unavailable core workloads, repeated Job failures) are all provisioned from git. See `deploy/grafana/base/README.md`.
 - **dispatcher**: _(legacy, demoted by #78)_ watches a repo for issues labeled `run-agent` and turns each one into a sandbox Job with a shell command from CronJob config. Superseded by the factory's durable issue collector (issues → Runs, no commands in manifests); kept only as the #30 behavioral smoke baseline — do not apply `deploy/dispatcher/base` for new automation.
+- **knowledge**: the personal knowledge base (ADR-002) — two services in `agents` over the `knowledge` PostgreSQL database: `knowledge-ingest` (queue API + the extract → chunk → embed → upsert worker, git repos as first-class sources) and `knowledge-retrieval` (cited hybrid BM25 + vector search with RRF fusion at `https://knowledge.<tailnet>`, plus the panel/MCP-facing sources + sync passthrough). The panel's Knowledge card and the `apps/knowledge-mcp` stdio adapter (a local CLI, not deployed) are its front doors; deployment contract in `deploy/knowledge/README.md`.
 
 All share `apps/shared/workspace-lib.sh` (git auth + repo sync).
 
@@ -75,6 +76,7 @@ deploy/
   homepage/base/    tailnet dashboard (config-driven, zero code)
   headlamp/base/    tailnet-only Kubernetes web UI (read-only inspection)
   panel/            factory control panel (Vite + React, this repo's code)
+  knowledge/base/   knowledge retrieval + ingest services (ADR-002; see its README for the image-pin bootstrap)
   dispatcher/base/  (legacy, demoted #78) label-driven issue -> Job demo
   factory/base/      durable issue collector -> coding worker -> draft PR
   github-tokens/base/ ExternalSecrets syncing GitHub tokens from 1Password
