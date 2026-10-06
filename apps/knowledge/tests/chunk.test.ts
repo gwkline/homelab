@@ -231,6 +231,12 @@ test("text format chunks paragraphs without heading anchors", () => {
 test("empty and whitespace-only content produce no chunks", () => {
   assert.deepEqual(chunkDocumentVersion(doc({ content: "" })), []);
   assert.deepEqual(chunkDocumentVersion(doc({ content: "  \n\t\n " })), []);
+  // The code format chunks raw lines, so this is the path where a
+  // whitespace-only line could otherwise survive trimming as a chunk.
+  assert.deepEqual(
+    chunkDocumentVersion(doc({ content: "  \n\t\n ", format: "code" })),
+    []
+  );
 });
 
 test("invalid documents and options fail loudly before chunking", () => {

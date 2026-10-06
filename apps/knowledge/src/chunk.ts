@@ -34,6 +34,9 @@
  * callers can cite source-line positions without re-deriving them. Chunk
  * texts are exact slices: `text === content.slice(startOffset, endOffset)`
  * always holds, so offsets can be replayed against the normalized version.
+ * Chunks whose text trims to nothing (whitespace-only source lines, blank
+ * pieces of an oversized fence) are dropped before ids are assigned, so
+ * empty or blank-only content yields zero chunks and `idx` stays gapless.
  */
 
 import { createHash } from "node:crypto";
@@ -469,46 +472,55 @@ export const chunkDocumentVersion = (
     );
   }
 
-  return assembleChunks(segments, maxChars).map((raw, idx) => {
-    let { end, start } = raw;
-    while (start < end && isSpaceChar(content[start])) {
-      start += 1;
-    }
-    while (end > start && isSpaceChar(content[end - 1])) {
-      end -= 1;
-    }
-    const text = content.slice(start, end);
-    const contentHash = sha256Hex(text);
-    const startLine = lineAtOffset(lineStarts, start);
-    const endLine = lineAtOffset(lineStarts, Math.max(start, end - 1));
-    const anchors: CitationAnchor[] = [];
-    if (format === "code") {
-      anchors.push({
-        end: endLine,
-        start: startLine,
-        type: "offset",
-        value: `L${startLine}-L${endLine}`,
-      });
-    } else {
-      if (raw.headingPath !== "") {
-        anchors.push({ type: "heading", value: raw.headingPath });
+  return assembleChunks(segments, maxChars)
+    .map((raw) => {
+      let { end, start } = raw;
+      while (start < end && isSpaceChar(content[start])) {
+        start += 1;
       }
-      anchors.push({ end, start, type: "offset" });
-    }
-    return {
-      anchors,
-      chunkId: deriveChunkId({ contentHash, documentId: doc.documentId, idx }),
+      while (end > start && isSpaceChar(content[end - 1])) {
+        end -= 1;
+      }
+      const text = content.slice(start, end);
+      const startLine = lineAtOffset(lineStarts, start);
+      const endLine = lineAtOffset(lineStarts, Math.max(start, end - 1));
+      const anchors: CitationAnchor[] = [];
+      if (format === "code") {
+        anchors.push({
+          end: endLine,
+          start: startLine,
+          type: "offset",
+          value: `L${startLine}-L${endLine}`,
+        });
+      } else {
+        if (raw.headingPath !== "") {
+          anchors.push({ type: "heading", value: raw.headingPath });
+        }
+        anchors.push({ end, start, type: "offset" });
+      }
+      return {
+        anchors,
+        contentHash: sha256Hex(text),
+        endLine,
+        endOffset: end,
+        startLine,
+        startOffset: start,
+        text,
+      };
+    })
+    .filter((chunk) => chunk.text.length > 0)
+    .map((chunk, idx) => ({
+      ...chunk,
+      anchors: chunk.anchors,
+      chunkId: deriveChunkId({
+        contentHash: chunk.contentHash,
+        documentId: doc.documentId,
+        idx,
+      }),
       chunkerVersion: CHUNKER_VERSION,
-      contentHash,
       documentId: doc.documentId,
-      endLine,
-      endOffset: end,
       idx,
       namespace: doc.namespace,
-      startLine,
-      startOffset: start,
-      text,
       versionId: doc.versionId,
-    };
-  });
+    }));
 };
