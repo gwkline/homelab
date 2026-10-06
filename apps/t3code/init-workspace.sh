@@ -89,13 +89,19 @@ if [ ! -f "${OC_CONFIG}" ]; then
 {
   "$schema": "https://opencode.ai/config.json",
   "permission": {
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
     "edit": "allow",
+    "external_directory": "allow",
+    "webfetch": "allow",
+    "websearch": "allow",
     "bash": {
       "*": "allow",
       "rm -rf *": "ask",
       "sudo *": "deny"
-    },
-    "webfetch": "allow"
+    }
   }
 }
 __OC__

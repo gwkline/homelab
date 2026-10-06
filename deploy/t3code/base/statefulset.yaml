@@ -18,7 +18,13 @@ spec:
       labels:
         app: t3code
     spec:
-      automountServiceAccountToken: false
+      # Read-only cluster view (rbac.yaml): get/list on pods, logs,
+      # events, workloads, metrics — no secrets, no exec, no writes.
+      # The work runner keeps automountServiceAccountToken: false and
+      # no serviceAccountName: work agent sessions must never see the
+      # personal cluster.
+      serviceAccountName: t3code-readonly
+      automountServiceAccountToken: true
       securityContext:
         seccompProfile:
           type: RuntimeDefault
