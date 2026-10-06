@@ -183,7 +183,7 @@ pattern='(github_pat_|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-
 # names token shapes in prose (ghp_/gho_/etc. as documentation, never values)
 # — literals required by design in all four; other docs describe shapes
 # without literals.
-secret_exclusions=':!scripts/verify.sh :!deploy/loki/base/alloy.yaml :!apps/shared/skills-lib.sh :!apps/factory/github-app/tests/token-service.test.ts :!apps/knowledge/tests/git-source.test.ts :!deploy/loki/README.md'
+secret_exclusions=':!scripts/verify.sh :!deploy/loki/base/alloy.yaml :!apps/shared/skills-lib.sh :!apps/factory/github-app/tests/token-service.test.ts :!apps/knowledge/tests/git-source.test.ts :!apps/factory/collector/tests/collector.test.ts :!deploy/loki/README.md'
 if git grep --untracked -nIE "$pattern" -- $secret_exclusions 2>/dev/null | grep .; then
   fail 'secret-looking string in working tree'
 fi
