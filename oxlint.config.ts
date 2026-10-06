@@ -42,6 +42,14 @@ export default {
       rules: { "no-bitwise": "off" },
     },
     {
+      // Panel e2e driver (#27): the terminal-state poller watches one Job
+      // until it reaches Complete — each iteration re-reads live cluster
+      // state, so the awaits ARE the poll — and the rejection checks run
+      // sequentially so the created-Job count assertion stays deterministic.
+      files: ["apps/panel/tests/integration/panel-e2e.test.mjs"],
+      rules: { "no-await-in-loop": "off" },
+    },
+    {
       // The ingest/embedding workers (#57) are sequential by design: retries
       // back off between attempts, the bounded pool drains a cursor, and
       // chunk upserts must preserve order inside one transaction.
