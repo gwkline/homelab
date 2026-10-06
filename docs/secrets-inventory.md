@@ -127,6 +127,19 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 | Rotation owner | Operator mints a new `claude setup-token`, updates the 1Password field, then `kubectl -n work rollout restart statefulset work-t3code` (env never updates in a running pod) |
 | Status | Per-workload (work runner only) |
 
+### B6. `work-depot-token` — Depot builds on the work runner (OPTIONAL)
+
+| Attribute | Value |
+| --- | --- |
+| Namespace | `work` only |
+| Secret name / key | `work-depot-token` / `token` |
+| 1Password ref | item `work-depot-token`, field `token` |
+| Delivery | ExternalSecret `deploy/work-t3code/base/depot-token.yaml`, `refreshInterval: 1h`, `creationPolicy: Owner`. **Optional by design:** absent item ⇒ ExternalSecret `Ready=False` + retrying, the documented expected state (same pattern as A2); the StatefulSet references it with `optional: true`, so the runner boots and the depot CLI (in the image) stays inert |
+| Required permissions | Depot org/build token, scoped to read/reproduce the work repos' `depot bake` builds |
+| Consumers | work-t3code StatefulSet (`work`, env `DEPOT_TOKEN` — the depot CLI reads it directly) |
+| Rotation owner | Operator updates the 1Password item, then `kubectl -n work rollout restart statefulset work-t3code` |
+| Status | Per-workload (work runner only) |
+
 ## C. Bootstrap-only secrets
 
 Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret would be circular) and not part of steady-state GitOps.

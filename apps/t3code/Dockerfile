@@ -85,6 +85,42 @@ RUN ARCH="$(uname -m)" \
   && ln -s /opt/cursor-agent/dist-package/cursor-agent /usr/local/bin/cursor-agent \
   && rm /tmp/cursor-agent.tar.gz
 
+# uv — work-repo pnpm installs hook into Python packaging
+# (apps/document-processor's install script is `uv sync`), so `pnpm
+# install` on a work clone fails without it. Pinned + checksum-verified
+# per the pinned-build-tools convention (Renovate proposes bumps).
+# renovate: datasource=github-releases depName=astral-sh/uv
+ARG UV_VERSION=0.12.23
+# Depot CLI — work CI builds images with `depot bake` on Depot-hosted
+# runners; the CLI lets runner agents reproduce/inspect those builds.
+# Inert without DEPOT_TOKEN (ExternalSecret on the work runner; absent
+# item is the documented expected state).
+# renovate: datasource=github-releases depName=depot/cli extractVersion=^v(?<version>.+)$
+ARG DEPOT_VERSION=2.102.16
+RUN ARCH="$(uname -m)" \
+  && case "$ARCH" in \
+       x86_64|amd64) UARCH=x86_64; DARCH=amd64 ;; \
+       arm64|aarch64) UARCH=aarch64; DARCH=arm64 ;; \
+       *) echo "unsupported arch ${ARCH}" >&2; exit 1 ;; \
+     esac \
+  && uv_asset="uv-${UARCH}-unknown-linux-gnu.tar.gz" \
+  && curl -fsSL "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${uv_asset}" -o "/tmp/${uv_asset}" \
+  && curl -fsSL "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${uv_asset}.sha256" -o "/tmp/${uv_asset}.sha256" \
+  && (cd /tmp && sha256sum -c "${uv_asset}.sha256") \
+  && tar -xzf "/tmp/${uv_asset}" -C /tmp \
+  && cp "/tmp/uv-${UARCH}-unknown-linux-gnu/uv" "/tmp/uv-${UARCH}-unknown-linux-gnu/uvx" /usr/local/bin/ \
+  && uv --version \
+  && depot_asset="depot_${DEPOT_VERSION}_linux_${DARCH}.tar.gz" \
+  && curl -fsSL "https://github.com/depot/cli/releases/download/v${DEPOT_VERSION}/${depot_asset}" -o "/tmp/${depot_asset}" \
+  && curl -fsSL "https://github.com/depot/cli/releases/download/v${DEPOT_VERSION}/depot_${DEPOT_VERSION}_checksums.txt" -o /tmp/depot_checksums.txt \
+  && grep -F "${depot_asset}" /tmp/depot_checksums.txt > /tmp/depot-one.sha256 \
+  && (cd /tmp && sha256sum -c depot-one.sha256) \
+  && mkdir -p /tmp/depot-cli \
+  && tar -xzf "/tmp/${depot_asset}" -C /tmp/depot-cli \
+  && cp /tmp/depot-cli/bin/depot /usr/local/bin/depot \
+  && depot --version \
+  && rm -rf /tmp/uv* /tmp/depot*
+
 COPY apps/shared/workspace-lib.sh /usr/local/lib/workspace-lib.sh
 COPY apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
 COPY apps/t3code/init-workspace.sh /usr/local/bin/init-workspace

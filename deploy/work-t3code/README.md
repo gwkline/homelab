@@ -86,6 +86,10 @@ Claude's interactive paste-prompt does not consume non-TTY stdin, so the in-pod 
 
 Rotate by minting a new token, updating the item, and `kubectl -n work rollout restart statefulset work-t3code` (env vars never update in a running pod).
 
+## Depot builds (optional)
+
+Work CI builds images with `depot bake`; the depot CLI ships in the image so runner agents can reproduce/inspect builds. It stays inert without `DEPOT_TOKEN`: store a Depot org token in 1Password (vault `homelab`, item `work-depot-token`, field `token`) and it syncs via `base/depot-token.yaml` — the env lands on the next rollout restart. Absent item = ExternalSecret `Ready=False` + runner unaffected.
+
 ## Codex auth
 
 `codex login` (default browser OAuth) works headless via a callback tunnel: start `codex login` in the pod (it listens on localhost:1455), then `kubectl -n work port-forward work-t3code-0 1455:1455` from the operator machine and open the printed URL in a browser — the localhost redirect lands in the pod and the login completes itself. Tokens persist via the entrypoint's agent-state sync (`~/.codex/auth.json` → PVC).
