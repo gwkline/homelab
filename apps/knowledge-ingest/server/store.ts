@@ -14,7 +14,7 @@ export type JobState =
   | "retryable"
   | "dead";
 
-export type JobKind = "document" | "source_sync";
+export type JobKind = "document" | "document-version" | "source_sync";
 
 export type SourceKind = "github" | "file" | "url" | "web";
 
@@ -59,8 +59,31 @@ export interface SourceSyncPayload {
   source: IngestSourceInput;
 }
 
+/**
+ * One normalized document version carrying its own content — the git-source
+ * bridge shape (`apps/knowledge/src/git-source.ts` `toIngestJobPayload`):
+ * `parseDocumentPayload` in `src/ingest.ts` consumes exactly these fields
+ * (plus the provenance object kept for auditability, never logged).
+ */
+export interface DocumentVersionPayload {
+  content: string;
+  documentId: string;
+  externalId: string;
+  /** Chunker format: `"markdown" | "code" | "text"` (`format` upstream). */
+  format?: string;
+  namespace: string;
+  /** Source provenance (repository, commit, blob hashes, path, lineage). */
+  provenance: Record<string, unknown> | null;
+  /** Source kind label persisted on the document row, e.g. `"git"`. */
+  source: string;
+  title?: string | null;
+  url?: string | null;
+  versionId: string;
+}
+
 export type JobPayload =
   | { document: DocumentPayload; kind: "document" }
+  | { documentVersion: DocumentVersionPayload; kind: "document-version" }
   | { kind: "source_sync"; sync: SourceSyncPayload };
 
 export interface IngestJobRecord {
@@ -167,6 +190,16 @@ export interface IngestStore {
   enqueueIngest: (request: IngestRequestInput) => Promise<EnqueueResult>;
   /** Enqueue a source resync; throws SourceNotFoundError for unknown sources. */
   enqueueSourceSync: (sourceId: string) => Promise<EnqueueResult>;
+  /**
+   * Enqueue one normalized document version (content-inlined, the git-source
+   * bridge shape). Idempotent on the version identity: the same
+   * (documentId, versionId, content) re-emitted by a retried sync collides
+   * on the derived key and returns the original job.
+   */
+  enqueueDocumentVersion: (
+    payload: DocumentVersionPayload,
+    sourceId: string
+  ) => Promise<EnqueueResult>;
   getJob: (jobId: string) => Promise<IngestJobRecord | null>;
   listSources: () => Promise<SourceStatus[]>;
   /**

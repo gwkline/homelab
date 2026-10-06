@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild server/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
+    "build": "esbuild server/index.ts --bundle --platform=node --format=esm --external:pg --outfile=dist/index.js",
     "test": "npm run build && node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc -p . --noEmit"
   },

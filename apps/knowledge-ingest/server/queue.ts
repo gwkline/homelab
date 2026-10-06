@@ -1,22 +1,37 @@
 /**
  * Durable work queue core (#58) — ADR-002 D5 without a broker service.
  *
- * Everything durable lives in three Postgres tables, created idempotently by
+ * Everything durable lives in four Postgres tables, created idempotently by
  * `INGEST_SCHEMA_SQL`:
  *
- *   ingest_job    — the work queue. Claimed with `FOR UPDATE SKIP LOCKED`
- *                   (single-statement claim, Probe's ingestion_queue pattern),
- *                   retried with exponential backoff, dead-lettered after
- *                   `max_attempts`, recovered from stale claims via the
- *                   `heartbeat_at` lease.
- *   ingest_source — registered sources (identity + namespace + origin), the
- *                   panel-facing source list (#58/#65 contract).
- *   document      — published document versions, unique on
- *                   (namespace, source_id, external_id, version_id). This
- *                   UNIQUE constraint is what makes stale-claim recovery safe:
- *                   a re-run after recovery re-publishes the same version
- *                   identity and lands on the same row, so a crashed worker
- *                   can never produce a second copy of a document version.
+ *   ingest_job         — the work queue. Claimed with `FOR UPDATE SKIP LOCKED`
+ *                        (single-statement claim, Probe's ingestion_queue
+ *                        pattern), retried with exponential backoff,
+ *                        dead-lettered after `max_attempts`, recovered from
+ *                        stale claims via the `heartbeat_at` lease. Job kinds:
+ *                        `document` (an ingest-API event; the worker fetches
+ *                        the content by source kind), `document-version` (a
+ *                        normalized document version carrying its own content
+ *                        — the git-source bridge shape), and `source_sync`
+ *                        (re-pull a registered source).
+ *   ingest_source      — registered sources (identity + namespace + origin), the
+ *                        panel-facing source list (#58/#65 contract).
+ *   ingest_document    — the queue's published-version ledger: one row per
+ *                        ingested (namespace, source_id, external_id,
+ *                        version_id), unique on that identity. This UNIQUE
+ *                        constraint is what makes stale-claim recovery safe:
+ *                        a re-run after recovery re-publishes the same version
+ *                        identity and lands on the same row, so a crashed
+ *                        worker can never produce a second copy of a document
+ *                        version. Named `ingest_document` (not `document`)
+ *                        because the retrieval corpus table in
+ *                        apps/knowledge/src/schema.ts is already `document` —
+ *                        the two schemas share one database, so the queue's
+ *                        ledger must not collide with it.
+ *   git_source_manifest — per-source sync state for git sources: the last
+ *                        synced commit and the path → blob-hash map that makes
+ *                        incremental syncs read only changed blobs
+ *                        (apps/knowledge/src/git-source.ts's manifest).
  *
  * This module is pure: SQL text, state constants, idempotency-key derivation
  * and backoff math only — no I/O, no clocks. `PgIngestStore` executes the
@@ -30,11 +45,12 @@ import { createHash, randomUUID } from "node:crypto";
 
 import type { IngestRequestInput, JobKind, JobState } from "./store.ts";
 
-export const INGEST_SCHEMA_VERSION = "1-ingest-queue";
+export const INGEST_SCHEMA_VERSION = "2-ingest-queue-pipeline";
 
 export const INGEST_TABLE = "ingest_job";
 export const SOURCE_TABLE = "ingest_source";
-export const DOCUMENT_TABLE = "document";
+export const DOCUMENT_TABLE = "ingest_document";
+export const MANIFEST_TABLE = "git_source_manifest";
 
 export const JOB_STATES = [
   "pending",
@@ -46,6 +62,7 @@ export const JOB_STATES = [
 
 export const JOB_KINDS = [
   "document",
+  "document-version",
   "source_sync",
 ] as const satisfies readonly JobKind[];
 
@@ -62,12 +79,16 @@ export const STALE_RECOVERY_MESSAGE =
  * derives it deterministically from the source event identity (see
  * `deriveIngestIdempotencyKey`) so duplicate delivery of the same
  * source/version event collides on the constraint instead of enqueueing a
- * second job. The claimable partial index serves the SKIP LOCKED scan.
+ * second job. The claimable partial index serves the SKIP LOCKED scan. The
+ * `document-version` kind carries normalized content from the git-source
+ * bridge (`apps/knowledge/src/git-source.ts` `buildIngestJob`) — it routes
+ * straight into chunk → embed → upsert; `document` jobs carry identity only
+ * and the worker fetches content by source kind.
  */
 export const INGEST_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS ingest_job (
   id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('document', 'source_sync')),
+  kind TEXT NOT NULL CHECK (kind IN ('document', 'document-version', 'source_sync')),
   idempotency_key TEXT NOT NULL UNIQUE,
   source_id TEXT NOT NULL,
   namespace TEXT NOT NULL,
@@ -104,7 +125,7 @@ CREATE TABLE IF NOT EXISTS ingest_source (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS document (
+CREATE TABLE IF NOT EXISTS ingest_document (
   document_id TEXT PRIMARY KEY,
   namespace TEXT NOT NULL,
   source_id TEXT NOT NULL,
@@ -119,7 +140,14 @@ CREATE TABLE IF NOT EXISTS document (
   UNIQUE (namespace, source_id, external_id, version_id)
 );
 CREATE INDEX IF NOT EXISTS document_source
-  ON document (source_id);
+  ON ingest_document (source_id);
+
+CREATE TABLE IF NOT EXISTS git_source_manifest (
+  source_key TEXT PRIMARY KEY,
+  commit_sha TEXT,
+  entries JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;
 
 /** New job ids are app-generated so every store produces the same shape. */
@@ -164,6 +192,53 @@ export const deriveIngestIdempotencyKey = (
 /** Key for source resync jobs (unique per enqueue; dedupe is state-based). */
 export const newSyncIdempotencyKey = (sourceId: string): string =>
   `sync_${sourceId}_${randomUUID()}`;
+
+/**
+ * Deterministic job id for one normalized document version: the same
+ * (document, version, content) re-emitted by a retried sync or a rebuilt
+ * manifest maps to the same job id, so the enqueue's idempotency key
+ * collides and the duplicate is a no-op instead of a second job. Content
+ * participates in the digest because this queue treats a changed-content
+ * event under the same version id as a NEW event (its idempotency key
+ * differs), so its job id must differ too.
+ */
+export const documentVersionJobId = (payload: {
+  content: string;
+  documentId: string;
+  versionId: string;
+}): string => {
+  const digest = createHash("sha256")
+    .update(
+      `${payload.documentId}|${payload.versionId}|${hashHex(payload.content)}`,
+      "utf-8"
+    )
+    .digest("hex")
+    .slice(0, 40);
+  return `dv_${digest}`;
+};
+
+/**
+ * Idempotency key for one document-version event: the full identity —
+ * document, version, namespace, external id, content hash — so a re-emitted
+ * identical version dedupes, while changed content or a new version is a new
+ * event.
+ */
+export const deriveDocumentVersionKey = (payload: {
+  content: string;
+  documentId: string;
+  externalId: string;
+  namespace: string;
+  versionId: string;
+}): string =>
+  `dvv_${hashHex(
+    [
+      payload.documentId,
+      payload.namespace,
+      payload.externalId,
+      payload.versionId,
+      hashHex(payload.content),
+    ].join("|")
+  )}`;
 
 /**
  * Exponential backoff for the Nth failed attempt (attempts is 1-based at
@@ -277,6 +352,12 @@ export const SOURCE_BY_ID_SQL = `SELECT source_id, kind, namespace, repo, ref, u
 FROM ${SOURCE_TABLE}
 WHERE source_id = $1`;
 
+/** Register a source row only when absent (never overwrites a richer row). */
+export const SOURCE_INSERT_IF_MISSING_SQL = `INSERT INTO ${SOURCE_TABLE}
+  (source_id, kind, namespace, repo, ref, url, path)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (source_id) DO NOTHING`;
+
 export const JOB_SELECT_COLUMNS = `id, kind, status, source_id, namespace,
   idempotency_key, attempts, max_attempts, priority, error, result, payload,
   enqueued_at, started_at, finished_at`;
@@ -335,5 +416,17 @@ export const PUBLISH_DOCUMENT_SQL = `INSERT INTO ${DOCUMENT_TABLE}
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
 ON CONFLICT (namespace, source_id, external_id, version_id) DO NOTHING
 RETURNING document_id`;
+
+export const LOAD_MANIFEST_SQL = `SELECT commit_sha, entries
+FROM ${MANIFEST_TABLE}
+WHERE source_key = $1`;
+
+export const SAVE_MANIFEST_SQL = `INSERT INTO ${MANIFEST_TABLE}
+  (source_key, commit_sha, entries)
+VALUES ($1, $2, $3::jsonb)
+ON CONFLICT (source_key) DO UPDATE SET
+  commit_sha = EXCLUDED.commit_sha,
+  entries = EXCLUDED.entries,
+  updated_at = now()`;
 
 export const PING_SQL = "SELECT 1 AS ok";
