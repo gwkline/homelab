@@ -70,6 +70,7 @@ All authenticate with Secret `onepassword-service-account` (key `token`) — the
    ```
 
    It creates/updates Secret `onepassword-service-account` in `agents`, `sandbox`, `work`, and `tailscale` — every namespace with a committed `onepassword` store.
+
 3. Apply the consumers: `kubectl apply -k deploy/github-tokens/base` (also brings the `onepassword-smoke` ExternalSecret below) and `kubectl apply -k deploy/tailscale`.
 
 ### Health / smoke verification
