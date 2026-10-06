@@ -14,7 +14,7 @@
 #   homelab-backup-failed            a restic-backup Job failed in 24h
 #   homelab-deployment-unavailable   an agents Deployment under-replicated
 #   homelab-statefulset-unavailable  an agents StatefulSet not fully ready
-#   homelab-jobs-repeatedly-failing  >=3 failed Job pods per namespace/24h
+#   homelab-jobs-repeatedly-failing  >=3 failed Jobs per namespace/24h
 #
 # States are visible in Grafana's Alerting UI and on the Homelab dashboards.
 # Notification routing is deliberately not configured: nothing in this
@@ -303,7 +303,7 @@ data:
             noDataState: OK
             execErrState: Error
             annotations:
-              summary: 'Namespace {{ $labels.namespace }} has >=3 failed Job pods in 24h — a loop/factory flow may be stuck. Group failed runs by job_name on the Homelab Workloads dashboard and open their logs from Explore.'
+              summary: 'Namespace {{ $labels.namespace }} has >=3 failed Jobs in 24h — a loop/factory flow may be stuck. Group failed runs by job_name on the Homelab Workloads dashboard and open their logs from Explore.'
             labels:
               severity: warning
             data:

@@ -310,7 +310,7 @@ data:
         },
         {
           "datasource": { "type": "prometheus", "uid": "victoriametrics" },
-          "description": "Failed Job pods over the last 24h (fires homelab-jobs-repeatedly-failing at >=3 per namespace).",
+          "description": "Failed Jobs over the last 24h (fires homelab-jobs-repeatedly-failing at >=3 per namespace).",
           "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
           "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
           "id": 2,
@@ -323,12 +323,12 @@ data:
               "refId": "A"
             }
           ],
-          "title": "Failed Job pods by namespace (24h)",
+          "title": "Failed Jobs by namespace (24h)",
           "type": "timeseries"
         },
         {
           "datasource": { "type": "prometheus", "uid": "victoriametrics" },
-          "description": "Total failed Job pods in the last 24h.",
+          "description": "Total failed Jobs in the last 24h.",
           "fieldConfig": {
             "defaults": {
               "thresholds": {
@@ -351,12 +351,12 @@ data:
               "refId": "A"
             }
           ],
-          "title": "Failed Job pods (24h)",
+          "title": "Failed Jobs (24h)",
           "type": "stat"
         },
         {
           "datasource": { "type": "prometheus", "uid": "victoriametrics" },
-          "description": "Job pods currently running (kube_job_status_active).",
+          "description": "Jobs with pods currently running (kube_job_status_active).",
           "fieldConfig": { "defaults": {}, "overrides": [] },
           "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
           "id": 4,

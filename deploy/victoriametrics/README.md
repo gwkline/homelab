@@ -52,7 +52,7 @@ Alert rules (provisioned from `deploy/grafana/base/alerting.yaml`, evaluated by 
 | `homelab-backup-failed` | a `restic-backup` Job failed in the last 24h |
 | `homelab-deployment-unavailable` | an agents Deployment is under-replicated 5m |
 | `homelab-statefulset-unavailable` | an agents StatefulSet is not fully ready 5m |
-| `homelab-jobs-repeatedly-failing` | ≥3 failed Job pods per namespace in 24h |
+| `homelab-jobs-repeatedly-failing` | ≥3 failed Jobs per namespace in 24h |
 
 States are visible in Grafana's Alerting UI; notification routing is deliberately not configured yet (nothing here pages at 2 a.m., ADR D7) — wire a contact point in Grafana when that changes.
 
@@ -62,7 +62,7 @@ States are visible in Grafana's Alerting UI; notification routing is deliberatel
 scripts/metrics-smoke.sh
 ```
 
-creates a controlled failing Job (`backoffLimit: 3`) and a 500m CPU-load pod in `sandbox`, then proves via the VM query API that `kube_job_status_failed`, the load pod's `container_cpu_usage_seconds_total`, `kubelet_volume_stats_*`, and the kube-state-metrics target all appear. Expected alert/dashboard effects: "Failed Job pods (24h)" ≥ 3, the load pod's core on the Nodes dashboard's CPU panel, and `homelab-jobs-repeatedly-failing` going Pending → Firing in Grafana's Alerting UI within ~2 evaluation intervals. Clean up is automatic (`--keep` leaves the fixtures).
+creates three controlled failing Jobs and a 500m CPU-load pod in `sandbox`, then proves via the VM query API that `kube_job_status_failed`, the load pod's `container_cpu_usage_seconds_total`, `kubelet_volume_stats_*`, and the kube-state-metrics target all appear — and that the failed-Job count crosses the alert threshold (`kube_job_status_failed` is a per-Job 0/1 gauge, so the count comes from Jobs, not pod attempts). Expected alert/dashboard effects: "Failed Jobs (24h)" ≥ 3, the load pod's core on the Nodes dashboard's CPU panel, and `homelab-jobs-repeatedly-failing` going Pending → Firing in Grafana's Alerting UI within ~2 evaluation intervals. Clean up is automatic (`--keep` leaves the fixtures).
 
 ## Recovery
 
@@ -70,4 +70,4 @@ Everything that matters is declarative and in git: scrape config, dashboards, da
 
 ## Version pins
 
-`victoriametrics/victoria-metrics:v1.110.0` and `registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0` are exact-tag pins (the repo's `:latest` gate rejects anything looser); Renovate's `pinDigests` hardens both to `tag@sha256` bumps. VM's flag surface moves between versions — bump deliberately.
+`victoriametrics/victoria-metrics:v1.110.0`, `registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0`, and the `busybox:1.36` init container are all pinned tag+digest (the repo supply-chain rule: third-party images are digest-pinned and Renovate-bumped — `renovate.json` automerges digest/patch/minor updates for them). VM's flag surface moves between versions — bump deliberately.
