@@ -28,9 +28,13 @@ Together with Grafana/Loki/Alloy this keeps the observability stack under the AD
 
 `victoriametrics.yaml` carries the promscrape config (ConfigMap `victoriametrics-scrape`):
 
-- **kubelet `/metrics`** and **cAdvisor `/metrics/cadvisor`** for every node, reached *through the API-server proxy* (`kubernetes_sd` role `node`, `https://kubernetes.default.svc/api/v1/nodes/<node>/proxy/...`) — the pod only ever talks to the apiserver, never to node IPs.
+- **kubelet `/metrics`** and **cAdvisor `/metrics/cadvisor`** for every node, reached _through the API-server proxy_ (`kubernetes_sd` role `node`, `https://kubernetes.default.svc/api/v1/nodes/<node>/proxy/...`) — the pod only ever talks to the apiserver, never to node IPs.
 - **kube-state-metrics** (static target) for Kubernetes object state: nodes, pods, jobs/cronjobs, deployments/statefulsets, PVCs (its `--resources` allowlist in `kube-state-metrics.yaml`).
 - **self-scrape** for VM's own health.
+
+k3s's packaged **metrics-server** (`kube-system`) is deliberately **not** scraped: no dashboard or alert consumes its series, and its self-signed HTTPS endpoint would need extra RBAC plus `insecure_skip_verify` for nothing but target health — every acceptance-criteria series comes from kubelet/cAdvisor/kube-state-metrics above. Revisit only if a consumer for its series appears.
+
+Egress needs no allowlist of its own: the `agents` namespace baseline keeps egress open (`deploy/policies/base`), and this stack adds no Egress policies — the scraper must reach the apiserver (`kubernetes.default.svc:443`) and nothing else has cause to talk to the internet.
 
 The scrape identity is the read-only `victoriametrics` ServiceAccount (`rbac.yaml`): `nodes/metrics` + `nodes/proxy` get, plus get/list/watch on `nodes`, `pods`, `services`, `endpoints` for discovery. It is the documented security-model exception in the main README — no secrets, no writes, no CRDs.
 
@@ -38,7 +42,7 @@ VictoriaMetrics and kube-state-metrics are ClusterIP-only and never touch the ta
 
 ## Dashboards and alerts (in git, provisioned)
 
-Grafana provisions two dashboards (folder **Homelab**, source JSON in `deploy/grafana/base/dashboards/`):
+Grafana provisions the `Homelab` folder (source JSON in `deploy/grafana/base/dashboards/`; see its README for the full catalog — logs, factory jobs, postgres, tailscale, and chaos came from earlier PRs). This stack adds:
 
 - **Homelab Nodes** — node saturation: CPU and memory vs allocatable, Ready / DiskPressure / MemoryPressure counts, pods per node.
 - **Homelab Workloads** — pod restarts (24h), pending/failed Jobs, PVC usage %, Deployment availability (agents), StatefulSet readiness (agents).

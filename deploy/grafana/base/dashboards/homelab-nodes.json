@@ -22,7 +22,16 @@
       },
       "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
       "id": 1,
-      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "victoriametrics" },
@@ -50,7 +59,16 @@
       },
       "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
       "id": 2,
-      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "victoriametrics" },
@@ -78,7 +96,16 @@
       },
       "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
       "id": 3,
-      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "victoriametrics" },
@@ -95,7 +122,14 @@
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "gridPos": { "h": 10, "w": 12, "x": 0, "y": 4 },
       "id": 4,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "victoriametrics" },
@@ -119,7 +153,14 @@
       "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
       "gridPos": { "h": 10, "w": 12, "x": 12, "y": 4 },
       "id": 5,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "victoriametrics" },
@@ -143,7 +184,14 @@
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
       "id": 6,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "victoriametrics" },
