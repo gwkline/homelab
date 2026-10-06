@@ -44,8 +44,19 @@ echo "ok: orchestrator Role scopes profile ConfigMap reads"
 FIX="$(mktemp -d)"
 trap 'rm -rf "$FIX"' EXIT
 mkdir -p "$FIX/deploy/factory/base"
-for f in reviewer-cronjob.yaml reviewer-launchpad-cronjob.yaml sweeper-cronjob.yaml profile-reviewer.yaml; do
+# stage every file the helper's location tables reference, with a plausible
+# digest of the owning component (so "location missing" rot gets caught):
+# factory/reviewer consumers …
+for f in reviewer-cronjob.yaml reviewer-launchpad-cronjob.yaml sweeper-cronjob.yaml profile-reviewer.yaml medic-cronjob.yaml; do
   printf 'image: ghcr.io/gwkline/homelab/factory/reviewer@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' \
+    > "$FIX/deploy/factory/base/$f"
+done
+# … and factory/worker consumers (profile-medic.yaml joined the table in #239).
+# NB: "worker-image" (not "image") keeps the fixture line out of
+# scripts/check-image-pins.sh's ref regex while still carrying the digest
+# the pin helper stamps.
+for f in profile-code-pr.yaml profile-medic.yaml; do
+  printf 'worker-image: ghcr.io/gwkline/homelab/factory/worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n' \
     > "$FIX/deploy/factory/base/$f"
 done
 NEW_DIGEST="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -55,9 +66,16 @@ NEW_DIGEST="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   # copy the helper and rewrite its location table prefix to the fixture dir
   sed 's|deploy/factory/base/|'"$FIX"'/deploy/factory/base/|g' "$REPO_ROOT/$PIN_HELPER" > "$FIX/pin.sh"
   sh "$FIX/pin.sh" factory/reviewer "$NEW_DIGEST" >/dev/null
+  sh "$FIX/pin.sh" factory/worker "$NEW_DIGEST" >/dev/null
 )
-for f in reviewer-cronjob.yaml reviewer-launchpad-cronjob.yaml sweeper-cronjob.yaml profile-reviewer.yaml; do
+for f in reviewer-cronjob.yaml reviewer-launchpad-cronjob.yaml sweeper-cronjob.yaml profile-reviewer.yaml medic-cronjob.yaml; do
   grep -q "factory/reviewer@sha256:${NEW_DIGEST}" "$FIX/deploy/factory/base/$f" || {
+    echo "FAIL: pin helper did not stamp $f"
+    exit 1
+  }
+done
+for f in profile-code-pr.yaml profile-medic.yaml; do
+  grep -q "factory/worker@sha256:${NEW_DIGEST}" "$FIX/deploy/factory/base/$f" || {
     echo "FAIL: pin helper did not stamp $f"
     exit 1
   }

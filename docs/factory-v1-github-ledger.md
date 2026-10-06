@@ -88,6 +88,17 @@ CI red or CHANGES_REQUESTED                 → stays, failure-style nudge
 
 All state mutations are `PATCH /repos/{owner}/{repo}/issues/comments` on the marker comment. Rate limit is a non-issue at our volume (<30 calls per run).
 
+### Medic (#239)
+
+The `factory-medic` CronJob (hourly at :41, lives in the reviewer image) takes freshly ci-red factory PRs from red to green — the sweeper's stale-red path only sees PRs the medic already gave up on. Per red PR it posts a repair brief (failing checks + truncated logs, PR diff, verify command) carrying the head-pinned markers, and hands the linked issue back to the orchestrator queue. All retry state is derived from marker comments on the PR:
+
+- `<!-- factory:medic:<head-sha>:queued -->` — embedded in the repair brief; evidence a repair was dispatched for that exact head.
+- `<!-- factory:medic:<head-sha>:failed -->` — one per failed attempt. Seeing the same head red again after a `:queued` marker IS the failed attempt (the sweep records it; no other component writes medic markers).
+- Budget: `FACTORY_MEDIC_MAX_ATTEMPTS` (3) failures per head SHA; a pushed fix moves the head and resets the budget.
+- Budget exhausted → linked issue relabeled `factory/stuck` + a give-up comment; retries stop (the sweeper's stale-red path and the reclaimer's `factory/failed` handling take it from there — see below).
+
+Bounds: one repair per tick, at most one in flight (counted live from `factory/in-progress` labels), 20-min worker deadline (profile `factory-profile-medic`), and the only git write path is `medic_publish_patch`: a fast-forward-only push to the PR's existing `factory/issue-<N>/<profile>` branch — no force, no branch creation, no main, verified by the fixture test.
+
 ### Stalled-PR sweeper (#242)
 
 The `factory-sweeper` CronJob (hourly, lives in the reviewer image) keeps factory PRs from stranding in ci-red. It never closes or merges — the human stays the merge gate. Decision per open factory PR (head branch `factory/issue-<N>/…`, drafts skipped):
@@ -108,7 +119,7 @@ The fix issue references the stalled PR, carries the failing-check summary and b
 
 - `<!-- factory:sweep:filed:<pr> -->` marker comment on the PR + a `search/issues` backstop on the fix-issue body → no duplicate filings on re-sweeps.
 - `<!-- factory:sweep:drift:<pr> -->` comment is edited in place, never duplicated.
-- `<!-- factory:medic:retry:<i> -->` comments (the medic's contract, #239) are counted; the stale-red path only fires when they are exhausted or absent.
+- `<!-- factory:medic:retry:<i> -->` comments (the sweeper's exhaustion signal; the medic's own per-head budget uses the `:queued`/`:failed` markers above and parks the issue on `factory/stuck`, which this stale-red path keys on first) are counted; the stale-red path only fires when they are exhausted or absent.
 
 Re-arm a sweep by deleting the `factory:sweep:filed` comment on the PR. Knobs: `SWEEP_PING_AFTER_H` (168), `SWEEP_PING_REVIEWER` (gwkline), `SWEEP_RED_GRACE_H` (24), `SWEEP_MEDIC_MAX_RETRIES` (4), `SWEEP_DRIFT_COMMITS` (50), `FACTORY_SWEEP_DRY_RUN`.
 
