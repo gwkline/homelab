@@ -1,8 +1,8 @@
 /**
  * BM25 keyword retrieval via pg_textsearch (#60).
  *
- * The keyword channel ranks the shared knowledge `chunks` table (ADR-002 D3;
- * the base schema/migration lives in `src/pgvector.ts`) with a partial
+ * The keyword channel ranks the shared knowledge `chunks` table (ADR-002
+ * D3; the base schema/migration lives in `src/schema.ts`) with a partial
  * single-column BM25 index — the "final index shape" from ADR-002 D7:
  *
  *   CREATE INDEX chunks_text_bm25 ON chunks USING bm25 (text)
@@ -62,6 +62,7 @@
 
 import { parseAnchors } from "./pgvector.ts";
 import type { CitationAnchor } from "./pgvector.ts";
+import { KNOWLEDGE_SCHEMA_MIGRATION_SQL } from "./schema.ts";
 
 export const BM25_TABLE = "chunks";
 export const BM25_COLUMN = "text";
@@ -77,15 +78,16 @@ export const DEFAULT_BM25_LIMIT = 10;
 export const BM25_SCHEMA_VERSION = "1-bm25-chunks";
 
 /**
- * Idempotent migration: extension, the namespace B-tree supporting the
- * collection filter, and the partial BM25 index this module queries.
- *
- * The `chunks` table itself is the shared knowledge schema (ADR-002 D3/#56,
- * applied by `ensurePgvectorSchema` in src/pgvector.ts) — run this migration
- * after it. Both indexes are `IF NOT EXISTS` with definitions matching the
- * base schema, so re-applying against a fully migrated cluster is a no-op.
+ * Idempotent migration: the durable knowledge base schema (ADR-002 D3/#56,
+ * defined in `src/schema.ts`) plus this channel's pg_textsearch extension,
+ * the namespace B-tree supporting the collection filter, and the partial BM25
+ * index this module queries. Composing the base schema makes this migration
+ * self-sufficient against an empty database, and every statement is
+ * `IF NOT EXISTS`, so re-applying against a fully migrated cluster (or after
+ * `ensurePgvectorSchema`) is a no-op.
  */
-export const BM25_MIGRATION_SQL = `CREATE EXTENSION IF NOT EXISTS pg_textsearch;
+export const BM25_MIGRATION_SQL = `${KNOWLEDGE_SCHEMA_MIGRATION_SQL}
+CREATE EXTENSION IF NOT EXISTS pg_textsearch;
 CREATE INDEX IF NOT EXISTS chunks_namespace_active
   ON chunks (namespace) WHERE valid_to IS NULL;
 CREATE INDEX IF NOT EXISTS chunks_text_bm25
