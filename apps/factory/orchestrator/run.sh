@@ -404,6 +404,7 @@ git config user.name "factory-bot"; git config user.email "factory@homelab.local
 git checkout -qb "${BRANCH}"
 if gitt apply --whitespace=nowarn "/tmp/patch-${NUM}.diff" 2>/tmp/apply-err; then
   echo "[orch] publish: patch applied ($(git diff --cached --stat | tail -1))"
+  # shellcheck disable=SC3057 # ${WORKER_MODEL:+...} spans a newline; not indexing
   git add -A && git commit -qm "factory: resolve #${NUM}
 
 Produced by homelab software factory (${PROFILE} profile).${WORKER_MODEL:+
