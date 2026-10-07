@@ -15,6 +15,7 @@ import type { SearchOptions } from "../server/store.ts";
 const fakePool = (rows: {
   bm25?: Record<string, unknown>[];
   metadata?: Record<string, unknown>[];
+  models?: Record<string, unknown>[];
   schemaVersion?: number;
   vector?: Record<string, unknown>[];
 }) => {
@@ -44,6 +45,9 @@ const fakePool = (rows: {
       }
       if (text.includes("JOIN document")) {
         return Promise.resolve({ rows: rows.metadata ?? [] });
+      }
+      if (text.includes('GROUP BY "embedding_model"')) {
+        return Promise.resolve({ rows: rows.models ?? [] });
       }
       return Promise.resolve({ rows: [] });
     },
@@ -317,4 +321,39 @@ test("search is unavailable until ingest has migrated, and retrieval issues no D
     checksAfterReady,
     "a current schema is not re-read"
   );
+});
+
+test("only a real embedding provider enables the vector channel", () => {
+  const { store: fake } = rig({});
+  assert.equal(fake.vectorSearch, false);
+  const real = new PgRetrievalStore({} as never, {
+    provider: {
+      dimensions: 384,
+      embed: () => Promise.resolve([]),
+      model: "BAAI/bge-small-en-v1.5",
+      name: "openai-compatible",
+    },
+  });
+  assert.equal(real.vectorSearch, true);
+});
+
+test("the embedding report counts live embedded chunks per stored model", async () => {
+  const pool = rig({
+    models: [
+      { chunks: "12", model: "BAAI/bge-small-en-v1.5" },
+      { chunks: 4, model: "fake/384" },
+    ],
+  });
+  assert.deepEqual(await pool.store.embeddingReport(), {
+    configuredModel: "fake/deterministic-v1",
+    storedModels: [
+      { chunks: 12, model: "BAAI/bge-small-en-v1.5" },
+      { chunks: 4, model: "fake/384" },
+    ],
+  });
+  const query = pool.queries.at(-1)?.text ?? "";
+  assert.match(query, /"embedding" IS NOT NULL AND "valid_to" IS NULL/u);
+
+  const behind = rig({ schemaVersion: 0 });
+  await assert.rejects(behind.store.embeddingReport(), StoreUnavailableError);
 });

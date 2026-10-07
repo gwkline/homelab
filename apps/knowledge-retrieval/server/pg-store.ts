@@ -23,10 +23,13 @@ import type { EmbeddingProvider } from "../../knowledge/src/embedder.ts";
 import {
   embeddingProviderFromEnv,
   embeddingVectorProblem,
+  isFakeEmbeddingProvider,
 } from "../../knowledge/src/embedder.ts";
 import type { CitationAnchor } from "../../knowledge/src/pgvector.ts";
 import {
+  EMBEDDING_MODEL_COUNT_SQL,
   parseAnchors,
+  parseEmbeddingModelCounts,
   buildPgvectorSearchQuery,
   parsePgvectorRows,
 } from "../../knowledge/src/pgvector.ts";
@@ -38,6 +41,7 @@ import type {
   ChannelResults,
   ChunkRecord,
   DocumentVersion,
+  EmbeddingReport,
   RankedCandidate,
   RetrievalStore,
   SearchOptions,
@@ -107,11 +111,14 @@ export class PgRetrievalStore implements RetrievalStore {
   private readonly pool: Pool;
   private readonly provider: EmbeddingProvider;
   private schemaReady = false;
+  readonly vectorSearch: boolean;
 
   constructor(pool: Pool, options: PgStoreOptions = {}) {
     this.pool = pool;
     this.provider =
       options.provider ?? embeddingProviderFromEnv(options.env ?? process.env);
+    // Fake vectors carry no meaning; ranking by them only adds noise.
+    this.vectorSearch = !isFakeEmbeddingProvider(this.provider);
   }
 
   /** Embed the query; a provider failure disables the vector channel instead of failing the search. */
@@ -264,6 +271,26 @@ export class PgRetrievalStore implements RetrievalStore {
           (candidate): candidate is RankedCandidate => candidate !== null
         );
       return { bm25: bm25Candidates, vector: vectorCandidates };
+    } catch (error) {
+      throw new StoreUnavailableError(
+        `retrieval store unavailable: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error }
+      );
+    }
+  }
+
+  async embeddingReport(): Promise<EmbeddingReport> {
+    try {
+      await this.assertSchemaReady();
+      const { rows } = await this.pool.query(EMBEDDING_MODEL_COUNT_SQL);
+      return {
+        configuredModel: this.provider.model,
+        storedModels: parseEmbeddingModelCounts(
+          rows as Record<string, unknown>[]
+        ),
+      };
     } catch (error) {
       throw new StoreUnavailableError(
         `retrieval store unavailable: ${

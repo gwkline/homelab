@@ -138,7 +138,9 @@ const searchResultSchema = z.object({
 });
 
 export const searchResponseSchema = z.object({
-  mode: retrievalModeSchema,
+  mode: retrievalModeSchema.describe(
+    "Mode actually served: bm25 whenever no embedding model is configured, whatever was requested."
+  ),
   namespace: z.string(),
   results: z.array(searchResultSchema).describe("Ranked results, best first."),
   runId: z
