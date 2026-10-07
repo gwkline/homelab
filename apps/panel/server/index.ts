@@ -1,9 +1,12 @@
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 
+import { requireCaller } from "./auth.js";
+import type { AuthEnv } from "./auth.js";
 import { DEV_TOOLS, discoverTailnet, evaluateTools } from "./devtools.js";
 import { viewJob } from "./jobs.js";
 import { loadConfig, api } from "./k8s.js";
@@ -32,7 +35,18 @@ import {
 import type { RepoStats } from "./stats.js";
 
 const root = process.env.PANEL_ROOT ?? process.cwd();
-const app = new Hono();
+const port = Number(process.env.PORT ?? 3000);
+const tailnetPort = process.env.PANEL_TAILNET_PORT
+  ? Number(process.env.PANEL_TAILNET_PORT)
+  : null;
+const app = new Hono<AuthEnv>();
+app.use(
+  "/api/*",
+  requireCaller({
+    authDir: process.env.PANEL_AUTH_DIR ?? "/secrets-panel-auth",
+    tailnetPort,
+  })
+);
 const k8s = api(loadConfig());
 const knowledgeCfg = loadKnowledgeConfig();
 const knowledge = createKnowledgeClient(knowledgeCfg);
@@ -95,12 +109,6 @@ const FACTORY_ACTIVE_LABELS = [
   "factory/pending-approval",
 ];
 const FACTORY_FAILED_LABELS = ["factory/failed", "factory/cancelled"];
-// Executor sets `X-Factory-Requested-By` host-side per MCP client, so callers
-// cannot claim another identity. Label-safe so it can ride a Job label.
-const REQUESTED_BY_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$/u;
-const requestedByFrom = (value: string | undefined): string =>
-  value !== undefined && REQUESTED_BY_RE.test(value) ? value : "panel";
-
 const runStateFor = (issue: GhIssue): string | null => {
   const labels = new Set((issue.labels ?? []).map((l) => l.name));
   for (const [label, state] of FACTORY_RUN_STATES) {
@@ -954,12 +962,20 @@ const parseNum = (v: unknown): number | null => {
   return Number.isInteger(n) && n >= 1 && n <= 1_000_000 ? n : null;
 };
 
+// The panel only reviews and merges what the factory opened.
+const notFactoryBranch = (pr: number, meta: GhPull): string | null => {
+  const headRef = meta.head?.ref ?? "";
+  return FACTORY_PR_HEAD_RE.test(headRef)
+    ? null
+    : `PR #${pr} head '${headRef}' is not a factory branch`;
+};
+
 // Merge preconditions on the PR object itself: factory branch, not draft,
 // not blocked. Returns the refusal message, or null when safe to proceed.
 const mergeGuardError = (pr: number, meta: GhPull): string | null => {
-  const headRef = meta.head?.ref ?? "";
-  if (!FACTORY_PR_HEAD_RE.test(headRef)) {
-    return `PR #${pr} head '${headRef}' is not a factory branch — refusing to merge`;
+  const branchError = notFactoryBranch(pr, meta);
+  if (branchError !== null) {
+    return `${branchError} — refusing to merge`;
   }
   if (meta.draft === true) {
     return `PR #${pr} is still a draft`;
@@ -1097,6 +1113,16 @@ app.post("/api/factory/review", async (c) => {
     typeof body.body === "string" && body.body.trim()
       ? body.body.trim().slice(0, 4000)
       : undefined;
+  let meta: GhPull;
+  try {
+    meta = (await ghFetch(`/repos/${repo}/pulls/${pr}`)) as GhPull;
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, respondStatus(error, [404]));
+  }
+  const branchError = notFactoryBranch(pr, meta);
+  if (branchError !== null) {
+    return c.json({ error: `${branchError} — refusing to review` }, 409);
+  }
   try {
     const review = (await ghFetch(`/repos/${repo}/pulls/${pr}/reviews`, {
       body: JSON.stringify(
@@ -1258,7 +1284,7 @@ app.post("/api/factory/run", async (c) => {
   }
 
   // Trigger the orchestrator now instead of waiting for the next scheduled tick.
-  const requestedBy = requestedByFrom(c.req.header("x-factory-requested-by"));
+  const requestedBy = c.get("caller");
   const trigger = await triggerFactoryJob(repo, profile, issueNum, requestedBy);
   if (typeof trigger !== "string") {
     // Keep the label; the next scheduled tick will pick the issue up.
@@ -1576,7 +1602,7 @@ app.post("/api/factory/run/cancel", async (c) => {
   if ("error" in target) {
     return c.json({ error: target.error }, target.status);
   }
-  const requestedBy = requestedByFrom(c.req.header("x-factory-requested-by"));
+  const requestedBy = c.get("caller");
   const fetched = await fetchIssue(target.repo, target.issue);
   if ("error" in fetched) {
     return c.json({ error: fetched.error }, fetched.status);
@@ -1649,7 +1675,7 @@ app.post("/api/factory/run/cancel", async (c) => {
   await auditComment(
     target.repo,
     target.issue,
-    `🛑 Factory Run cancelled (requested by \`${requestedBy}\` via Executor MCP).`
+    `🛑 Factory Run cancelled (requested by \`${requestedBy}\`).`
   );
   return c.json({
     cancelled: true,
@@ -1686,7 +1712,7 @@ app.post("/api/factory/run/retry", async (c) => {
       400
     );
   }
-  const requestedBy = requestedByFrom(c.req.header("x-factory-requested-by"));
+  const requestedBy = c.get("caller");
   const fetched = await fetchIssue(target.repo, target.issue);
   if ("error" in fetched) {
     return c.json({ error: fetched.error }, fetched.status);
@@ -1738,7 +1764,7 @@ app.post("/api/factory/run/retry", async (c) => {
   await auditComment(
     target.repo,
     target.issue,
-    `🔁 Factory Run re-queued (requested by \`${requestedBy}\` via Executor MCP).`
+    `🔁 Factory Run re-queued (requested by \`${requestedBy}\`).`
   );
   return c.json(
     {
@@ -1830,7 +1856,8 @@ app.use("*", async (c, next) => {
     });
   }
 });
-const port = Number(process.env.PORT ?? 3000);
-serve({ fetch: app.fetch, port }, () =>
-  console.log(`[panel] listening on ${port}`)
+const ports = tailnetPort === null ? [port] : [port, tailnetPort];
+await Promise.all(
+  ports.map((p) => once(serve({ fetch: app.fetch, port: p }), "listening"))
 );
+console.log(`[panel] listening on ${ports.join(", ")}`);

@@ -6,11 +6,12 @@
 | --- | --- |
 | Identity | `kubectl auth can-i` as `panel` matches production: create/list/delete Jobs and get/list/patch CronJobs in `sandbox`, get Services in `agents`; Job watch, CronJob create/delete, and secrets denied |
 | Listing | `GET /api/state` returns the seeded sandbox Job and CronJob |
+| Auth | a mutation without a bearer token returns 401 and changes nothing |
 | Schedules | `PATCH /api/cronjobs/:name` resumes and re-suspends the seeded CronJob |
 | Cleanup | `DELETE /api/jobs/:name` removes the seeded Job |
 | No launcher | `POST /api/jobs` returns 404 and creates nothing |
 
-RBAC is probed before the panel starts, and non-200 responses print the upstream error with a certificate/forbidden hint.
+RBAC is probed before the panel starts, and non-200 responses print the upstream error with a certificate/forbidden hint. The panel pod gets a one-run bearer token through Secret `panel-e2e-auth`, shaped like `panel-auth`.
 
 ## Run
 
@@ -50,6 +51,7 @@ PANEL_E2E_URL=http://127.0.0.1:3933 \
 PANEL_E2E_NS=sandbox \
 PANEL_E2E_SEED_JOB=<a-disposable-job> \
 PANEL_E2E_CRONJOB=<a-disposable-suspended-cronjob> \
+PANEL_E2E_TOKEN=<a-token-from-the-panel's-tokens-file> \
   node --test apps/panel/tests/integration/panel-e2e.test.mjs
 ```
 

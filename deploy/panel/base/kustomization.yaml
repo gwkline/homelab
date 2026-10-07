@@ -16,6 +16,7 @@ resources:
   - rbac.yaml
   - cluster-reader.yaml
   - deployment.yaml
+  - externalsecret.yaml
   - service.yaml
   - stats-pvc.yaml
   - stats-cronjob.yaml
