@@ -59,10 +59,14 @@ const formatAge = (seconds: number): string => {
 const jobIssue = (name: string): string | null =>
   name.match(/^factory-issue-(?<num>\d+)/u)?.groups?.num ?? null;
 
-const jobRepo = (j: K8sObject, issue: string | null): string | null =>
-  issue === null
-    ? null
-    : (j.metadata?.labels?.["factory.gwkline.io/repo"] ?? null);
+// Panel-triggered Jobs carry a repo label; the worker Jobs an orchestrator
+// spawns carry the repo only in their FACTORY_REPO env.
+export const jobRepo = (j: K8sObject): string | null =>
+  j.metadata?.labels?.["factory.gwkline.io/repo"] ??
+  j.spec?.template?.spec?.containers?.[0]?.env?.find(
+    (e) => e.name === "FACTORY_REPO"
+  )?.value ??
+  null;
 
 export const viewJob = (j: K8sObject): JobView => {
   const conds = j.status?.conditions ?? [];
@@ -82,7 +86,7 @@ export const viewJob = (j: K8sObject): JobView => {
     issue,
     kind: jobKind(name, j.metadata?.labels),
     name,
-    repo: jobRepo(j, issue),
+    repo: jobRepo(j),
     status,
   };
 };

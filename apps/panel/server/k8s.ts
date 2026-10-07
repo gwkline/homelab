@@ -7,6 +7,13 @@ import { URL } from "node:url";
 
 const NS = "sandbox";
 
+// Pod env entry; valueFrom entries (secret refs) pass through clones intact.
+export interface EnvVar {
+  name: string;
+  value?: string;
+  valueFrom?: unknown;
+}
+
 // Only the fields the panel reads, all optional so every access is checked.
 export interface K8sObject {
   metadata?: {
@@ -25,7 +32,7 @@ export interface K8sObject {
     // Batch Job payloads carry their pod template here (listJobs/viewJob).
     template?: {
       spec?: {
-        containers?: { env?: { name: string; value: string }[] }[];
+        containers?: { env?: EnvVar[] }[];
       };
     };
   };
@@ -50,7 +57,7 @@ export interface K8sObject {
 export interface JobTemplateSpec {
   template?: {
     spec?: {
-      containers?: { env?: { name: string; value: string }[] }[];
+      containers?: { env?: EnvVar[] }[];
     };
   };
 }
@@ -157,11 +164,13 @@ export const api = (cfg: K8sConfig) => ({
       `/apis/batch/v1/namespaces/${NS}/jobs`,
       manifest
     ),
+  // batch/v1 orphans a deleted Job's pods unless told otherwise; a cancelled
+  // run must stop running.
   deleteJob: (name: string): Promise<unknown> =>
     k8sFetch<unknown>(
       cfg,
       "DELETE",
-      `/apis/batch/v1/namespaces/${NS}/jobs/${encodeURIComponent(name)}`
+      `/apis/batch/v1/namespaces/${NS}/jobs/${encodeURIComponent(name)}?propagationPolicy=Background`
     ),
   getCronJob: (name: string): Promise<K8sObject> =>
     k8sFetch<K8sObject>(

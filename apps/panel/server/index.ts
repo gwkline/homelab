@@ -8,9 +8,9 @@ import { Hono } from "hono";
 import { requireCaller } from "./auth.js";
 import type { AuthEnv } from "./auth.js";
 import { DEV_TOOLS, discoverTailnet, evaluateTools } from "./devtools.js";
-import { viewJob } from "./jobs.js";
+import { jobRepo, viewJob } from "./jobs.js";
 import { loadConfig, api } from "./k8s.js";
-import type { K8sObject, JobTemplateSpec } from "./k8s.js";
+import type { EnvVar, K8sObject, JobTemplateSpec } from "./k8s.js";
 import {
   createKnowledgeClient,
   KnowledgeApiError,
@@ -52,22 +52,16 @@ const knowledgeCfg = loadKnowledgeConfig();
 const knowledge = createKnowledgeClient(knowledgeCfg);
 
 const FACTORY_NS = "sandbox";
-const FACTORY_CRONJOB = "factory-orchestrator";
-// Factory-eligible repos; keep in sync with apps/factory/orchestrator/run.sh.
-// Extend via FACTORY_EXTRA_REPOS="a/b,c/d".
-const FACTORY_REPOS = new Set([
-  "gwkline/homelab",
-  "gwkline/launchpad",
-  "gwkline/plantry",
-  "gwkline/personal-site",
-  "gwkline/kline-services-bot",
-  "gwkline/discord-bot",
-  "gwkline/pr-czar",
-  ...(process.env.FACTORY_EXTRA_REPOS ?? "")
-    .split(",")
-    .map((r) => r.trim())
-    .filter(Boolean),
+// Each factory repo and the orchestrator CronJob that serves it
+// (deploy/factory/base/orchestrator-*cronjob.yaml). A run clones that CronJob,
+// so a repo without one could never leave factory/queued.
+const FACTORY_ORCHESTRATORS: ReadonlyMap<string, string> = new Map([
+  ["gwkline/homelab", "factory-orchestrator"],
+  ["gwkline/launchpad", "factory-orchestrator-launchpad"],
 ]);
+const FACTORY_REPOS: ReadonlySet<string> = new Set(
+  FACTORY_ORCHESTRATORS.keys()
+);
 const FACTORY_PROFILES = new Set(["code-pr", "security"]);
 const DEFAULT_FACTORY_REPO = process.env.FACTORY_REPO ?? "gwkline/launchpad";
 const DEFAULT_FACTORY_PROFILE = process.env.FACTORY_PROFILE ?? "code-pr";
@@ -1026,17 +1020,28 @@ const rejectUnknownFields = (
     : null;
 };
 
-// Clone the orchestrator CronJob into an ad-hoc Job with FACTORY_ISSUE,
-// FACTORY_PROFILE, and FACTORY_TRIGGERED_BY injected. Returns the job name or
-// the failure message; the queued label is kept either way.
+// Replaces entries by name rather than appending: duplicate env names draw
+// API warnings and leave anyone reading the spec guessing which value runs.
+const withEnv = (env: EnvVar[], set: Record<string, string>): EnvVar[] => [
+  ...env.filter((e) => !Object.hasOwn(set, e.name)),
+  ...Object.entries(set).map(([name, value]) => ({ name, value })),
+];
+
+// Clone the repo's orchestrator CronJob into an ad-hoc Job pinned to the
+// requested repo, issue, profile, and caller. Returns the job name or the
+// failure message; the queued label is kept either way.
 const triggerFactoryJob = async (
   repo: string,
   profile: string,
   issueNum: number,
   requestedBy: string
 ): Promise<string | Error> => {
+  const cronJob = FACTORY_ORCHESTRATORS.get(repo);
+  if (cronJob === undefined) {
+    return new Error(`no orchestrator for ${repo}`);
+  }
   try {
-    const cj = await k8s.getCronJob(FACTORY_CRONJOB);
+    const cj = await k8s.getCronJob(cronJob);
     const template = cj.spec?.jobTemplate;
     if (!template) {
       return new Error("CronJob has no jobTemplate");
@@ -1047,12 +1052,12 @@ const triggerFactoryJob = async (
     const spec = structuredClone(template.spec ?? {}) as JobTemplateSpec;
     const containers = spec.template?.spec?.containers ?? [];
     if (containers[0]) {
-      containers[0].env = [
-        ...(containers[0].env ?? []),
-        { name: "FACTORY_ISSUE", value: String(issueNum) },
-        { name: "FACTORY_PROFILE", value: profile },
-        { name: "FACTORY_TRIGGERED_BY", value: requestedBy },
-      ];
+      containers[0].env = withEnv(containers[0].env ?? [], {
+        FACTORY_ISSUE: String(issueNum),
+        FACTORY_PROFILE: profile,
+        FACTORY_REPO: repo,
+        FACTORY_TRIGGERED_BY: requestedBy,
+      });
     }
     const job = {
       apiVersion: "batch/v1",
@@ -1406,16 +1411,20 @@ const fetchRunMarker = async (
   }
 };
 
+// Issue numbers repeat across repos, so a run's Jobs match on both. Jobs
+// whose repo is unknown belong to no run.
+const isRunJob = (j: K8sObject, repo: string, issueNum: number): boolean =>
+  j.metadata?.labels?.["factory.gwkline.io/issue"] === String(issueNum) &&
+  jobRepo(j) === repo;
+
 const fetchRunJobs = async (
+  repo: string,
   issueNum: number
 ): Promise<{ name: string; status: string }[]> => {
   try {
     const all = await k8s.listJobs();
     return (all.items ?? [])
-      .filter(
-        (j: K8sObject) =>
-          j.metadata?.labels?.["factory.gwkline.io/issue"] === String(issueNum)
-      )
+      .filter((j: K8sObject) => isRunJob(j, repo, issueNum))
       .map((j: K8sObject) => ({
         name: j.metadata?.name ?? "",
         status: viewJob(j).status,
@@ -1452,7 +1461,7 @@ app.get("/api/factory/run", async (c) => {
     return c.json({ error: `no factory run on issue #${issueNum}` }, 404);
   }
   const { marker, parsed } = await fetchRunMarker(repo, issueNum);
-  const jobs = await fetchRunJobs(issueNum);
+  const jobs = await fetchRunJobs(repo, issueNum);
   return c.json({
     artifacts: {
       logTail: parsed?.logTail ?? null,
@@ -1570,10 +1579,13 @@ const auditComment = async (
   }
 };
 
-const inFlightJobs = async (issueNum: number): Promise<K8sObject[]> => {
+const inFlightJobs = async (
+  repo: string,
+  issueNum: number
+): Promise<K8sObject[]> => {
   const all = await k8s.listJobs();
   return (all.items ?? []).filter((j: K8sObject) => {
-    if (j.metadata?.labels?.["factory.gwkline.io/issue"] !== String(issueNum)) {
+    if (!isRunJob(j, repo, issueNum)) {
       return false;
     }
     const conditions = j.status?.conditions ?? [];
@@ -1632,7 +1644,7 @@ app.post("/api/factory/run/cancel", async (c) => {
   // A failed delete still leaves the label swapped; the next tick converges.
   let stopping: string[] = [];
   try {
-    const inFlight = await inFlightJobs(target.issue);
+    const inFlight = await inFlightJobs(target.repo, target.issue);
     stopping = inFlight.map((j) => j.metadata?.name ?? "");
   } catch (error: unknown) {
     return c.json({ error: errMessage(error) }, 502);
