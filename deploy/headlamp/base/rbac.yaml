@@ -1,4 +1,5 @@
-# Read-only: no secrets, exec/attach/portforward, or node/service proxy.
+# Read-only: no secrets or ConfigMaps (some hold credentials), no
+# exec/attach/portforward, no node/service proxy, no debug or log endpoints.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -20,7 +21,6 @@ rules:
         "namespaces",
         "nodes",
         "services",
-        "configmaps",
       ]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
@@ -35,8 +35,10 @@ rules:
   - apiGroups: ["metrics.k8s.io"]
     resources: ["nodes", "pods"]
     verbs: ["get", "list"]
-  # Health/version endpoints.
-  - nonResourceURLs: ["*"]
+  # Health, version and discovery only; "*" would also allow /debug/pprof
+  # and /logs.
+  - nonResourceURLs:
+      ["/healthz", "/livez", "/readyz", "/version", "/api", "/apis"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

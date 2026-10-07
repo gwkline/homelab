@@ -240,12 +240,15 @@ awk -F'\t' -v managed="$MANAGED_NS" '
 ' "$graph" || fail "RBAC integrity check failed (see BROKEN/MISSING lines above)"
 
 echo "==> [6/7] ServiceAccount permission probes (kubectl auth can-i)"
+# can <sa> <verb> <resource> <namespace> <expect> [subresource]
+# A subresource goes in $6: `can-i get nodes/proxy` would ask about a node
+# named "proxy".
 can() {
   # tail -1: the answer is the last line; kubectl prints namespace-scope
   # warnings on stderr for cluster-scoped resources.
-  can_got="$(kubectl auth can-i "$2" "$3" ${4:+-n "$4"} --as="system:serviceaccount:$1" 2>&1 || true)"
+  can_got="$(kubectl auth can-i "$2" "$3" ${4:+-n "$4"} ${6:+--subresource="$6"} --as="system:serviceaccount:$1" 2>&1 || true)"
   can_got="$(printf '%s\n' "$can_got" | tail -n 1)"
-  printf '  can-i %-8s %-16s as %-34s -> %s (expect %s)\n' "$2" "$3" "$1" "$can_got" "$5"
+  printf '  can-i %-8s %-16s as %-34s -> %s (expect %s)\n' "$2" "$3${6:+/$6}" "$1" "$can_got" "$5"
   [ "$can_got" = "$5" ] || CAN_FAIL=1
 }
 CAN_FAIL=0
@@ -261,7 +264,10 @@ can "agents:t3code-readonly" list pods "" yes
 can "agents:t3code-readonly" create pods agents no
 can "sandbox:factory-orchestrator" create jobs sandbox yes
 can "agents:kube-state-metrics" list deployments "" yes
-can "agents:victoriametrics" get nodes/proxy "" yes
+can "agents:victoriametrics" get nodes "" yes metrics
+can "agents:victoriametrics" get nodes "" no proxy
+can "agents:headlamp" list configmaps "" no
+can "agents:t3code-readonly" list configmaps "" no
 [ "$CAN_FAIL" -eq 0 ] || fail "permission probes failed (see output above)"
 
 echo "==> [7/7] runtime fixtures"

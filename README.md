@@ -50,7 +50,7 @@ Long-lived credentials live in 1Password, and External Secrets syncs them into t
   - deployer applies its target workloads.
   - hermes, headlamp, alloy and victoriametrics only read.
 
-  Each grant lives in an `rbac.yaml` beside its workload.
+  Each grant lives in an `rbac.yaml` beside its workload. The `default` ServiceAccounts mount no token, so only pods that call the API carry one.
 
 - **Image admission:** the sigstore policy-controller rejects any homelab image whose digest isn't signed by this repo's `main` CI ([ADR-004](docs/adr/adr-004-cosign-admission-verification.md)).
 - **Tailscale SSH:** it is enabled on nodes and gated by tailnet ACLs.
