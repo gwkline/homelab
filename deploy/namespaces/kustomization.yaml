@@ -10,3 +10,4 @@ labels:
 resources:
   - system-namespaces.yaml
   - namespaces.yaml
+  - default-serviceaccounts.yaml

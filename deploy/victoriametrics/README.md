@@ -4,7 +4,7 @@ Single-node VictoriaMetrics plus kube-state-metrics in `agents`: the metrics bac
 
 Scrape targets (ConfigMap `victoriametrics-scrape`):
 
-- kubelet `/metrics` and cAdvisor for every node, through the API-server proxy. The pod never dials node IPs.
+- kubelet `/metrics` and `/metrics/cadvisor` for every node, scraped directly at the node's InternalIP on port 10250 and verified against the cluster CA.
 - kube-state-metrics, limited by its `--resources` allowlist to nodes, pods, jobs/cronjobs, deployments/statefulsets, and PVCs.
 - VictoriaMetrics itself.
 
@@ -17,7 +17,7 @@ kubectl apply -k deploy/victoriametrics/base
 kubectl apply -k deploy/grafana/base   # datasource, dashboards, alerts
 ```
 
-There are no secrets: scraping uses the read-only `victoriametrics` ServiceAccount. Note that `nodes/proxy` get is a broad kubelet grant.
+There are no secrets: scraping uses the read-only `victoriametrics` ServiceAccount, which can read `nodes/metrics` and discover nodes. It has no `nodes/proxy`, so it cannot exec, attach, or read host logs through the kubelet.
 
 ## Verify
 

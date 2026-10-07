@@ -69,11 +69,21 @@ export interface ChannelResults {
   vector: RankedCandidate[];
 }
 
+export interface EmbeddingReport {
+  /** The model queries embed with; the vector channel ranks only its chunks. */
+  configuredModel: string;
+  /** Live embedded chunks per stored model tag. */
+  storedModels: { chunks: number; model: string }[];
+}
+
 export interface RetrievalStore {
   search: (options: SearchOptions) => Promise<ChannelResults>;
   // Optional query-embedding capability for vector/hybrid modes. Returning
   // null disables the vector channel for that query instead of failing.
   embedQuery?: (query: string) => Promise<number[] | null> | number[] | null;
+  /** False when no real embedding model is configured: every search is BM25. */
+  vectorSearch?: boolean;
+  embeddingReport?: () => Promise<EmbeddingReport>;
 }
 
 export class StoreUnavailableError extends Error {

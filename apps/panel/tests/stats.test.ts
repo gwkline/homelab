@@ -263,8 +263,8 @@ test("GET /api/factory/stats/rollup aggregates all repos and persists weekly his
     ghCalls.push(url);
     if (url.startsWith("/search/issues?")) {
       const q = new URL(url, "http://gh").searchParams.get("q") ?? "";
-      // One allowlisted repo (pr-czar) fails, exercising per-repo degradation.
-      if (q.includes("gwkline/pr-czar")) {
+      // One allowlisted repo (launchpad) fails, exercising per-repo degradation.
+      if (q.includes("gwkline/launchpad")) {
         res.writeHead(500).end('{"message":"boom"}');
         return;
       }
@@ -358,24 +358,26 @@ test("GET /api/factory/stats/rollup aggregates all repos and persists weekly his
     assert.equal(j.weeks.length, 8);
     assert.equal(j.persisted, true);
 
-    // pr-czar failed upstream → 6 repos with stats, 1 with an error, and the
-    // cross-repo totals only count the healthy repos.
-    const okRepos = j.repos.filter((x) => x.error === undefined);
-    const failed = j.repos.find((x) => x.repo === "gwkline/pr-czar");
-    assert.equal(okRepos.length, j.repos.length - 1);
+    // launchpad failed upstream → homelab with stats, launchpad with an
+    // error, and the cross-repo totals only count the healthy repo.
+    assert.deepEqual(
+      j.repos.map((x) => x.repo),
+      ["gwkline/homelab", "gwkline/launchpad"]
+    );
+    const failed = j.repos.find((x) => x.repo === "gwkline/launchpad");
     assert.equal(failed?.error, "boom");
-    assert.equal(j.totals.openIssues, 12);
-    assert.equal(j.totals.openPrs, 6);
+    assert.equal(j.totals.openIssues, 2);
+    assert.equal(j.totals.openPrs, 1);
     const series = j.totals.issuesOpened as number[];
     assert.equal(series.length, 8);
-    assert.deepEqual(series, [0, 0, 0, 0, 6, 0, 6, 6]);
-    assert.deepEqual(j.totals.prsOpened, [0, 0, 6, 0, 0, 6, 0, 6]);
-    assert.deepEqual(j.totals.prsMerged, [0, 0, 0, 0, 0, 0, 0, 6]);
+    assert.deepEqual(series, [0, 0, 0, 0, 1, 0, 1, 1]);
+    assert.deepEqual(j.totals.prsOpened, [0, 0, 1, 0, 0, 1, 0, 1]);
+    assert.deepEqual(j.totals.prsMerged, [0, 0, 0, 0, 0, 0, 0, 1]);
 
     // 4 GitHub calls per healthy repo per rollup (2 search + 2 list). The
     // failed repo's two search requests fire in parallel before the 500
     // surfaces, so it adds 2 calls of its own.
-    assert.equal(ghCalls.length - callsBeforeRollup, 6 * 4 + 2);
+    assert.equal(ghCalls.length - callsBeforeRollup, 4 + 2);
 
     // History comes from the snapshot file: the seeded week plus the current
     // one, whose totals exclude the failed repo.
@@ -384,7 +386,7 @@ test("GET /api/factory/stats/rollup aggregates all repos and persists weekly his
     assert.equal(
       (j.history.at(-1) as { totals: { openIssues: number } }).totals
         .openIssues,
-      12
+      2
     );
 
     // The artifact on disk holds both weeks; a second call upserts the same
