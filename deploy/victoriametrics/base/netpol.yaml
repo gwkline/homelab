@@ -1,4 +1,5 @@
-# Grafana -> VictoriaMetrics and VictoriaMetrics -> kube-state-metrics only.
+# Ingress: Grafana -> VictoriaMetrics and VictoriaMetrics -> kube-state-metrics
+# only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -36,3 +37,21 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
+---
+# Additive to agents-egress-default: the kubelet on each node's InternalIP.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: victoriametrics-egress-kubelet
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: victoriametrics
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 192.168.0.0/16 # node/LAN
+      ports:
+        - { protocol: TCP, port: 10250 }
