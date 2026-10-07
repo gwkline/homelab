@@ -47,4 +47,11 @@ EOF
 
 [ -s /usr/local/share/worker/brief.schema.json ] || fail "brief.schema.json missing"
 
+# The clone step is a separate initContainer; the image itself never carries
+# a GitHub credential into PID 1's environment.
+[ -x /usr/local/bin/prepare ] || fail "prepare (initContainer clone step) missing"
+if tr '\0' '\n' < /proc/1/environ | grep -qE '^(GH_TOKEN|GITHUB_TOKEN)='; then
+  fail "GitHub token in PID 1 environment"
+fi
+
 echo "SMOKE OK: all advertised CLIs, non-root user, no setuid/setgid, pinned skills verified"
