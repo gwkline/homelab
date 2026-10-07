@@ -1,6 +1,7 @@
 import { z } from "@hono/zod-openapi";
 
 import { JOB_KINDS, JOB_STATES } from "./queue.ts";
+import { GITHUB_REPO_PATTERN } from "./source-url.ts";
 
 // Patterns must match the panel's pinned knowledge API.
 
@@ -105,7 +106,7 @@ export const ingestRequestSchema = z.object({
       .describe("Branch/tag/ref for repository sources; null otherwise."),
     repo: z
       .string()
-      .max(256)
+      .regex(GITHUB_REPO_PATTERN)
       .nullish()
       .describe(
         "Repository (owner/name) for repository sources; null otherwise."
@@ -118,7 +119,9 @@ export const ingestRequestSchema = z.object({
       .url()
       .max(2048)
       .nullish()
-      .describe("Resolvable source URL; null when the source has none."),
+      .describe(
+        "Resolvable https source URL under an allowed prefix (https://github.com/ by default); null when the source has none."
+      ),
   }),
   tags: z
     .array(z.string().min(1).max(64))

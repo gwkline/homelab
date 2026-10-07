@@ -24,6 +24,9 @@ interface AppEnv {
   Variables: { requestId: string };
 }
 
+/** The search token may only search; everything else needs the admin token. */
+const SEARCH_SCOPE_ROUTES = new Set(["/v1/search"]);
+
 export class TimeoutError extends Error {
   override name = "TimeoutError";
 }
@@ -127,12 +130,19 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
   );
 
   // Network policy limits reachability; this constant-time bearer check is
-  // the application-layer gate.
+  // the application-layer gate. Scope is deny-by-default: the search token
+  // reaches only the routes listed for it.
   app.use(
     "/v1/*",
     createMiddleware<AppEnv>(async (c, next) => {
       const header = c.req.header("authorization") ?? "";
-      if (!bearerTokenMatches(header, config.token)) {
+      if (bearerTokenMatches(header, config.token)) {
+        return await next();
+      }
+      const searchScoped =
+        config.searchToken !== null &&
+        bearerTokenMatches(header, config.searchToken);
+      if (!searchScoped) {
         logger.warn("unauthorized", {
           path: c.req.path,
           requestId: c.get("requestId"),
@@ -140,6 +150,20 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
         return c.json(
           errorBody("unauthorized", "missing or invalid bearer token", null),
           401
+        );
+      }
+      if (!SEARCH_SCOPE_ROUTES.has(c.req.path)) {
+        logger.warn("forbidden", {
+          path: c.req.path,
+          requestId: c.get("requestId"),
+        });
+        return c.json(
+          errorBody(
+            "forbidden",
+            "the search token cannot use this route",
+            c.get("requestId")
+          ),
+          403
         );
       }
       return await next();

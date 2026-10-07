@@ -20,6 +20,11 @@ import { readGitHubBlob } from "./git-fetch.ts";
 import { syncGitSourceDocuments } from "./git-sync.ts";
 import type { GitManifestStore } from "./git-sync.ts";
 import type { Logger } from "./log.ts";
+import {
+  DEFAULT_SOURCE_URL_PREFIXES,
+  isAllowedSourceUrl,
+  sourceUrlPrefixesFromEnv,
+} from "./source-url.ts";
 import type {
   ClaimedJob,
   DocumentPayload,
@@ -41,6 +46,11 @@ export interface PipelineConfig {
   maxContentBytes: number;
   /** Per-request timeout for url/web fetches. */
   fetchTimeoutMs: number;
+  /**
+   * Prefixes every cloned or fetched URL must match. Checked again here
+   * because stored sources predate the API check.
+   */
+  sourceUrlPrefixes: readonly string[];
 }
 
 const positiveIntOr = (
@@ -83,7 +93,11 @@ export const pipelineConfigFromEnv = (
       )}`
     );
   }
-  return { fetchTimeoutMs, maxContentBytes };
+  return {
+    fetchTimeoutMs,
+    maxContentBytes,
+    sourceUrlPrefixes: sourceUrlPrefixesFromEnv(env),
+  };
 };
 
 /** The normalized document the sink ingests. */
@@ -329,6 +343,15 @@ export const createPipelineHandler = (deps: PipelineDeps): JobHandler => {
   const config = deps.config ?? {
     fetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
     maxContentBytes: DEFAULT_MAX_CONTENT_BYTES,
+    sourceUrlPrefixes: DEFAULT_SOURCE_URL_PREFIXES,
+  };
+  const allowedUrl = (url: string, jobId: string): string => {
+    if (!isAllowedSourceUrl(url, config.sourceUrlPrefixes)) {
+      throw new Error(
+        `pipeline: job ${jobId} source url is not under an allowed https prefix`
+      );
+    }
+    return url;
   };
   const fetchImpl = deps.fetchImpl ?? fetch;
   const log = deps.logger;
@@ -412,13 +435,17 @@ export const createPipelineHandler = (deps: PipelineDeps): JobHandler => {
     let content: string;
     let documentId: string;
     if (source.kind === "github") {
+      const repositoryUrl =
+        source.url ??
+        (source.repo === null ? null : `https://github.com/${source.repo}`);
       const blob = await readGitHubBlob({
         maxBlobBytes: config.maxContentBytes,
         namespace: payload.namespace,
         path: source.path ?? payload.externalId,
         ref: source.ref ?? "main",
-        repo: source.repo,
-        repositoryUrl: source.url,
+        repo: null,
+        repositoryUrl:
+          repositoryUrl === null ? null : allowedUrl(repositoryUrl, job.jobId),
       });
       ({ documentId, text: content } = blob);
     } else if (source.kind === "url" || source.kind === "web") {
@@ -428,7 +455,7 @@ export const createPipelineHandler = (deps: PipelineDeps): JobHandler => {
           `pipeline: job ${job.jobId} url source has no url to fetch`
         );
       }
-      content = await fetchText(url, config, fetchImpl);
+      content = await fetchText(allowedUrl(url, job.jobId), config, fetchImpl);
       documentId = `doc_${sha256Hex(
         `${payload.namespace}|${source.sourceId}|${payload.externalId}`
       ).slice(0, 40)}`;
@@ -479,7 +506,8 @@ export const createPipelineHandler = (deps: PipelineDeps): JobHandler => {
         config: {
           namespace: job.namespace,
           ref: source.ref ?? "main",
-          repositoryUrl: source.url,
+          repositoryUrl:
+            source.url === null ? null : allowedUrl(source.url, job.jobId),
         },
         ...(deps.gitSync === undefined ? {} : { gitSync: deps.gitSync }),
         manifests: deps.manifests,

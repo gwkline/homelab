@@ -84,6 +84,11 @@ const harness = (
   return { app };
 };
 
+const bearerFor = (token: string): Record<string, string> => ({
+  authorization: `Bearer ${token}`,
+  "content-type": "application/json",
+});
+
 const bearer = (): Record<string, string> => ({
   authorization: `Bearer ${TOKEN}`,
   "content-type": "application/json",
@@ -358,4 +363,47 @@ test("readyz follows the store's database check; healthz never does", async () =
   assert.equal(down.status, 503);
   assert.deepEqual(await down.json(), { status: "unavailable" });
   assert.equal((await app.request("/healthz")).status, 200);
+});
+
+test("the search token searches, but every ingest route answers 403", async () => {
+  const searchToken = "retrieval-search-token-0987654321";
+  const app = createApp({
+    config: baseConfig(TOKEN, { searchToken }),
+    logger: noopLogger,
+    store: new MemoryStore({ documents: documents() }),
+  });
+  const searched = await app.request("/v1/search", {
+    body: JSON.stringify({ query: "restart postgres" }),
+    headers: bearerFor(searchToken),
+    method: "POST",
+  });
+  assert.equal(searched.status, 200);
+  const ingestRoutes: [string, string][] = [
+    ["GET", "/v1/sources"],
+    ["POST", "/v1/sources/homelab-docs/sync"],
+    ["GET", "/v1/sync-jobs/job-1"],
+    ["GET", "/v1/anything-added-later"],
+  ];
+  for (const [method, path] of ingestRoutes) {
+    const res = await app.request(path, {
+      headers: bearerFor(searchToken),
+      method,
+    });
+    assert.equal(res.status, 403, `${method} ${path}`);
+    const body = (await res.json()) as { error: { code: string } };
+    assert.equal(body.error.code, "forbidden");
+    // The admin token gets past auth (503: no ingest API in this test).
+    const admin = await app.request(path, {
+      headers: bearerFor(TOKEN),
+      method,
+    });
+    assert.notEqual(admin.status, 401);
+    assert.notEqual(admin.status, 403);
+  }
+  const stranger = await app.request("/v1/search", {
+    body: JSON.stringify({ query: "restart postgres" }),
+    headers: bearerFor("not-a-real-token-at-all"),
+    method: "POST",
+  });
+  assert.equal(stranger.status, 401);
 });
