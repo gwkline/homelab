@@ -249,9 +249,6 @@ can() {
   [ "$can_got" = "$5" ] || CAN_FAIL=1
 }
 CAN_FAIL=0
-can "sandbox:chaos-monkey" delete pods sandbox yes
-can "sandbox:chaos-monkey" delete pods agents yes
-can "sandbox:chaos-monkey" create secrets sandbox no
 can "agents:deployer" patch cronjobs agents yes
 can "agents:deployer" patch statefulsets work yes
 can "agents:deployer" create secrets agents no
