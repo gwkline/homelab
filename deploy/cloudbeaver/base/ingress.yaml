@@ -1,0 +1,17 @@
+# https://cloudbeaver.<tailnet>.ts.net (TLS terminated by the Tailscale Ingress).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cloudbeaver
+  namespace: agents
+  annotations:
+    tailscale.com/tags: tag:k8s-operator
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: cloudbeaver
+      port:
+        number: 80
+  tls:
+    - hosts: [cloudbeaver]

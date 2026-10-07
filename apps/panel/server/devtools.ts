@@ -93,9 +93,7 @@ export const DEV_TOOLS: ToolDef[] = [
     dependsOn: "deploy/homepage/base",
     description: "Tailnet-wide dashboard for every service.",
     enabled: true,
-    // 443 is the only port declared on the tailscale LoadBalancer Service;
-    // it forwards to the container's plain HTTP port.
-    health: { namespace: "agents", path: "/", port: 443, service: "homepage" },
+    health: { namespace: "agents", path: "/", port: 80, service: "homepage" },
     icon: "LayoutDashboard",
     name: "Homepage",
     noEmbed: true,

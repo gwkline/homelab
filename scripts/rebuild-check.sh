@@ -71,6 +71,11 @@ check_https() { # <namespace> <ingress> <required: 1|0>
 check_https agents t3code-0 1
 check_https agents panel 1
 check_https work work-t3code-0 0
+check_https agents grafana 0
+check_https agents headlamp 0
+check_https agents homepage 0
+check_https agents cloudbeaver 0
+check_https agents knowledge 0
 
 echo "== 5. tailscale exposure annotations =="
 # Every tailscale LoadBalancer Service must declare its hostname, and every
