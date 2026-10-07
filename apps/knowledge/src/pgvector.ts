@@ -361,6 +361,26 @@ export const parseBackfillCounts = (
   total: validatedCount(row["total"], "total"),
 });
 
+/** Live embedded chunks per stored model tag, across namespaces. */
+export const EMBEDDING_MODEL_COUNT_SQL = `SELECT "embedding_model" AS model, count(*) AS chunks
+FROM "${PGVECTOR_TABLE}"
+WHERE "embedding" IS NOT NULL AND "valid_to" IS NULL
+GROUP BY "embedding_model"
+ORDER BY "embedding_model"`;
+
+export interface EmbeddingModelCount {
+  chunks: number;
+  model: string;
+}
+
+export const parseEmbeddingModelCounts = (
+  rows: Record<string, unknown>[]
+): EmbeddingModelCount[] =>
+  rows.map((row) => ({
+    chunks: validatedCount(row["chunks"], "chunks"),
+    model: typeof row["model"] === "string" ? row["model"] : "untagged",
+  }));
+
 export const countChunksNeedingBackfill = async (
   client: PgClient,
   namespace: string,

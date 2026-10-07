@@ -164,7 +164,10 @@ test(
 
         ingest = await startService(INGEST_ENTRY, ingestEnv(url));
         await waitFor(ingest, "/readyz", 200);
-        assert.equal((await search(retrieval)).status, 200);
+        const served = await search(retrieval);
+        assert.equal(served.status, 200);
+        const body = (await served.json()) as { mode?: string };
+        assert.equal(body.mode, "bm25", "no embedding provider is configured");
       } finally {
         await stop(retrieval);
         if (ingest !== null) {

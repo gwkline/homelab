@@ -31,4 +31,4 @@ curl -sS -H "authorization: Bearer $TOKEN" \
 
 ## Notes
 
-Embeddings are deterministic and offline by default. Set `KNOWLEDGE_EMBEDDING_PROVIDER=openai` and `KNOWLEDGE_EMBEDDING_BASE_URL` to use a real model; ingest and retrieval must share the same setting.
+No embedding model is configured yet. Ingest stores placeholder vectors tagged `fake/384`, and retrieval serves every search as BM25 (the response's `mode` says `bm25`). To turn on vector and hybrid search, set `KNOWLEDGE_EMBEDDING_PROVIDER=openai` and `KNOWLEDGE_EMBEDDING_BASE_URL` on both services, then re-embed. Until the re-embed, `knowledge_embedding_model_mismatch_chunks` on retrieval's `/metrics` counts the vectors the channel ignores.
