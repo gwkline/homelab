@@ -134,6 +134,26 @@ spec:
                   name: executor-client
                   key: token
                   optional: true
+            # Model/platform credentials (deploy/hermes/base/credentials.yaml);
+            # optional so a missing 1Password item degrades instead of blocking boot.
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-openrouter
+                  key: OPENROUTER_API_KEY
+                  optional: true
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-telegram
+                  key: TELEGRAM_BOT_TOKEN
+                  optional: true
+            - name: DISCORD_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-discord
+                  key: DISCORD_BOT_TOKEN
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: /data
