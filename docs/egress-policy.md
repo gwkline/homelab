@@ -23,7 +23,7 @@ Ingress is default-deny in `agents`, `sandbox`, and `work`; each workload declar
 
 ## Required destinations
 
-A sandbox pod must reach DNS, GitHub (git, codeload, API), a package registry, and a model API. `./scripts/egress-smoke.sh` runs `examples/egress-smoke.mjs` in a real sandbox pod and proves those open and every private target closed.
+A sandbox pod must reach DNS, GitHub (git, codeload, API), a package registry, and a model API. `./scripts/egress-smoke.sh` runs this working tree's `examples/egress-smoke.mjs` in real pods in `sandbox` and `work` and proves those open and every private target closed, including the API server on the node's LAN address.
 
 ## Adding an exception
 
