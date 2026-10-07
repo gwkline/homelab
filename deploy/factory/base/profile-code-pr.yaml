@@ -23,7 +23,9 @@ data:
       "netpolName": "allow-factory-worker"
     }
 ---
-# Worker egress: GitHub and package registries by IP.
+# Worker egress: HTTPS to the public internet (GitHub, the model provider,
+# package registries), nothing private. Vendor CIDR lists go stale without
+# notice; narrowing to named domains needs an egress proxy, not more CIDRs.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -36,18 +38,23 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress: [] # nothing may connect TO a worker
   egress:
-    - to: # GitHub + git clones over HTTPS
-        - ipBlock: { cidr: 140.82.112.0/20 } # github.com
-        - ipBlock: { cidr: 185.199.108.0/22 } # raw.githubusercontent
-        - ipBlock: { cidr: 185.199.108.0/22 } # objects.githubusercontent (fastly)
-    - to: # container registries (npm, ghcr, crates.io)
-        - ipBlock: { cidr: 104.16.0.0/12 }
-        - ipBlock: { cidr: 18.214.0.0/16 } # index.crates.io (legacy)
-        - ipBlock: { cidr: 108.138.128.0/17 } # static.crates.io CDN (legacy)
-        - ipBlock: { cidr: 151.101.0.0/16 } # fastly: index/static.crates.io today
-    - ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
     - to:
-        - ipBlock: { cidr: 10.43.0.1/32 }
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8 # LAN + k3s pod/service CIDRs, incl. the API
+              - 172.16.0.0/12
+              - 192.168.0.0/16 # node/LAN
+              - 169.254.0.0/16 # link-local metadata
+              - 100.64.0.0/10 # tailnet
       ports: [{ protocol: TCP, port: 443 }]
 ---
 # Workers get no Kubernetes API token.

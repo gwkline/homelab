@@ -174,6 +174,26 @@ if grep -rnE '[a-z0-9][a-z0-9-]*\.ts\.net' scripts/ deploy/ apps/ bootstrap/ exa
   fail 'hard-coded tailnet DNS suffix committed'
 fi
 
+echo '==> no vendor IP ranges in NetworkPolicies'
+# Egress is public-internet-minus-private-ranges (docs/egress-policy.md): a
+# SaaS CIDR goes stale without notice. Only 0.0.0.0/0 and private/special
+# ranges may appear as an ipBlock cidr.
+if grep -rnE 'cidr:' deploy/ | awk '
+    {
+      v = $0
+      sub(/.*cidr:[[:space:]]*/, "", v)
+      sub(/[[:space:],}#].*/, "", v)
+      split(v, o, ".")
+      ok = v == "0.0.0.0/0" || o[1] == 10 || o[1] == 127 \
+        || (o[1] == 172 && o[2] >= 16 && o[2] <= 31) \
+        || (o[1] == 192 && o[2] == 168) || (o[1] == 169 && o[2] == 254) \
+        || (o[1] == 100 && o[2] >= 64 && o[2] <= 127)
+      if (!ok) { print "  " $0; bad = 1 }
+    }
+    END { exit !bad }'; then
+  fail 'vendor IP range in deploy/ (use public-minus-private egress)'
+fi
+
 echo '==> secret patterns (working tree)'
 # Tracked + untracked files only; history is not scanned. Excluded files hold
 # redaction/scan patterns or synthetic fixtures by design.
