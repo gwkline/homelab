@@ -37,7 +37,7 @@ git config --global advice.detachedHead false
 SEED="${WORK}/seed"
 git init -q -b main "${SEED}"
 (
-  cd "${SEED}"
+  cd "${SEED}" || exit 1
   mkdir -p src
   printf '#!/bin/sh\necho (ok\n' > src/broken.sh # deliberate syntax error → dash -n fails → ci-red
   git add -A && git commit -qm "seed: factory branch with deliberate lint failure"
@@ -50,7 +50,6 @@ git -C "${SEED}" commit -q --allow-empty -m "main tip" && git -C "${SEED}" push 
 
 # Same shape as the homelab verifier, but diffed against the empty tree.
 VERIFY_OK="for f in \$(git diff --name-only 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD -- '*.sh'); do dash -n \"\$f\" || exit 1; done; echo verify-ok"
-EMPTY_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904
 if (cd "${SEED}" && sh -c "${VERIFY_OK}" >/dev/null 2>&1); then
   fail "seed branch unexpectedly green — fixture is broken"
 fi
@@ -375,7 +374,7 @@ rm -f "${GH_STATE}/labels/6/factory/queued"
 FIXDIR="${WORK}/fix"
 git clone -q "${BARE}" "${FIXDIR}"
 (
-  cd "${FIXDIR}"
+  cd "${FIXDIR}" || exit 1
   git checkout -q factory/issue-6/code-pr
   printf '#!/bin/sh\necho ok\n' > src/broken.sh # the lint fix
 )
@@ -438,7 +437,7 @@ CUR_HEAD="$(git -C "${FIXDIR}" ls-remote origin refs/heads/factory/issue-6/code-
 # ---- proof 3: stuck path --------------------------------------------------------
 # Re-break the branch so the PR has a new red head.
 (
-  cd "${FIXDIR}"
+  cd "${FIXDIR}" || exit 1
   git checkout -q factory/issue-6/code-pr
   printf '#!/bin/sh\necho (broken again\n' > src/broken.sh
 )

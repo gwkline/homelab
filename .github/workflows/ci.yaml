@@ -15,6 +15,9 @@ concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Each job requests only what it uses.
+permissions: {}
+
 env:
   REGISTRY: ghcr.io
 
@@ -25,6 +28,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
@@ -55,21 +60,14 @@ jobs:
         with:
           # Full history for the gitleaks mainline scan below.
           fetch-depth: 0
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          persist-credentials: false
+      - name: Install pinned linters
+        run: |
+          ./scripts/install-ci-tools.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: ./scripts/verify.sh
       - name: Secret scan (git history, first-parent mainline)
-        run: |
-          (
-            cd /tmp
-            curl -fsSL -O https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
-            curl -fsSL -O https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt
-            grep 'gitleaks_8.30.1_linux_x64.tar.gz' gitleaks_8.30.1_checksums.txt | sha256sum -c --strict -
-            # -C BEFORE the member name, or GNU tar treats it as another member
-            # and the binary lands in cwd ("gitleaks: command not found").
-            tar -xzf gitleaks_8.30.1_linux_x64.tar.gz -C /usr/local/bin gitleaks
-            gitleaks version
-          )
-          gitleaks git --log-opts=--first-parent --config .gitleaks.toml --redact
+        run: gitleaks git --log-opts=--first-parent --config .gitleaks.toml --redact
       - name: Shell fixture tests
         run: |
           for t in apps/*/tests/*.test.sh apps/factory/*/tests/*.test.sh deploy/*/tests/*.test.sh; do
@@ -85,6 +83,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
@@ -105,6 +105,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
         with:
           cluster_name: manifest-smoke
@@ -129,6 +131,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           fetch-depth: 0
       - id: diff
         env:
@@ -164,6 +167,8 @@ jobs:
       id-token: write # keyless cosign signing via OIDC
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 

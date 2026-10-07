@@ -10,7 +10,10 @@
 # image's digest in cluster.yaml) whenever the operand changes.
 ARG BASE=ghcr.io/cloudnative-pg/postgresql:18.6-202608310817-minimal-trixie@sha256:5c389b0268d9e637ca55efa41a7fafa3996332b5ea3c6099d0861c5f31acb00e
 FROM $BASE AS builder
+# Build stage only; the shipped stage runs as 65532.
+# hadolint ignore=DL3002
 USER 0
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG PG_MAJOR=18
 # timescale/pg_textsearch release: tag + release-asset hash.
