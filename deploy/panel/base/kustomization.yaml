@@ -1,6 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: agents
+
+# No namespace transformer here: rbac.yaml holds the sandbox panel-sandbox-runs
+# Role/RoleBinding, which a base-wide `namespace: agents` would silently move
+# into agents (caught by the manifest smoke permission probes, issue #16).
+# Every resource declares its namespace explicitly.
 
 labels:
   - pairs:
