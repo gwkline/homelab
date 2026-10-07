@@ -342,6 +342,28 @@ spec:
       restartPolicy: Never
       serviceAccountName: ${WORKER_SA}
       automountServiceAccountToken: false
+      # The clone runs in its own container, the only one given the GitHub
+      # token (ADR-001 D6): the agent reads untrusted text, and anything in its
+      # container's env stays readable in /proc/1/environ.
+      initContainers:
+        - name: clone
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: Always
+          command: ["/usr/local/bin/prepare"]
+          env:
+            - { name: FACTORY_REPO, value: "${REPO}" }
+            - name: GH_TOKEN
+              valueFrom:
+                secretKeyRef: { name: github-token, key: token }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: "1", memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: work, mountPath: /work }
+            - { name: out, mountPath: /out }
       containers:
         - name: worker
           image: ${WORKER_IMAGE}
@@ -350,15 +372,9 @@ spec:
             - { name: FACTORY_REPO,  value: "${REPO}" }
             - { name: FACTORY_ISSUE, value: "${NUM}" }
             - { name: FACTORY_PROFILE, value: "${PROFILE}" }
-            # The worker builds its clone URL from GH_TOKEN, so the token never
-            # appears in the Job spec (ADR D6).
-            - name: GH_TOKEN
-              valueFrom:
-                secretKeyRef: { name: github-token, key: token }
             - { name: WORKER_CMD,    value: "${WORKER_CMD:-claude --dangerously-skip-permissions}" }
-            - name: OPENCODE_AUTH_B64
-              valueFrom:
-                secretKeyRef: { name: factory-opencode-auth, key: auth-b64, optional: true }
+            # A file, not env, so the model key stays out of /proc/1/environ.
+            - { name: OPENCODE_AUTH_FILE, value: /secrets/opencode/auth-b64 }
             - name: FACTORY_BRIEF_B64
               value: '${BRIEF_B64}'            # shell substitutes
             - { name: FACTORY_SECURITY_MODE, value: "per-issue" }
@@ -368,6 +384,18 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: work, mountPath: /work }
+            - { name: out, mountPath: /out }
+            - { name: opencode-auth, mountPath: /secrets/opencode, readOnly: true }
+      volumes:
+        - { name: work, emptyDir: {} }
+        - { name: out, emptyDir: {} }
+        - name: opencode-auth
+          secret:
+            secretName: factory-opencode-auth
+            optional: true
+            items: [{ key: auth-b64, path: auth-b64 }]
 EOF2
 echo "[orch] job ${JOB_NAME} created"
 
@@ -391,7 +419,7 @@ for _i in $(seq 1 340); do
   sleep 10
 done
 if [ "${WAIT_OK}" != "1" ]; then
-  LOGTAIL=$(kubectl logs "job/${JOB_NAME}" -n sandbox --tail=40 2>/dev/null | redact || true)
+  LOGTAIL=$(kubectl logs "job/${JOB_NAME}" -n sandbox --all-containers --tail=40 2>/dev/null | redact || true)
   # Bounded auto-retry: one extra attempt for transient failures (flaky
   # provider, netpol blip). 2 run markers max, then park in failed for a human.
   ATTEMPTS=$(gh api "repos/${REPO}/issues/${NUM}/comments?per_page=100" --jq '[.[] | select(.body | contains("<!-- factory:run:"))] | length' 2>/dev/null || echo 2)
@@ -434,7 +462,7 @@ if [ -z "${POD}" ]; then
 fi
 # Logs are fetched once: they carry both PATCH_B64 and REPORT_B64 blocks.
 POD_LOGS="/tmp/pod-logs-${NUM}.txt"
-kubectl logs -n sandbox "${POD}" > "${POD_LOGS}" 2>/dev/null || true
+kubectl logs -n sandbox "${POD}" -c worker > "${POD_LOGS}" 2>/dev/null || true
 EXTRACTED=0
 if grep -q "PATCH_B64_BEGIN" "${POD_LOGS}"; then
   sed -n '/---PATCH_B64_BEGIN---/,/---PATCH_B64_END---/p' "${POD_LOGS}" \
