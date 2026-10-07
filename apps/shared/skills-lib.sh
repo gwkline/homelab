@@ -24,7 +24,11 @@
 #     are ever created, refreshed, or removed — real user files are skipped.
 # Source mode: `. skills-lib.sh` then call skills_sync / skills_link_generated.
 
-SKILLS_SECRET_PATTERN='(github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|tskey-auth-[A-Za-z0-9_-]{10,})'
+# Fetched skill content is scanned at install time, where gitleaks is not
+# available. Includes the credential formats these pods hold (1Password,
+# GitHub App, OpenRouter, Anthropic, Tailscale). Same set as
+# scripts/install-personal-skills.sh.
+SKILLS_SECRET_PATTERN='(github_pat_[A-Za-z0-9_]{20,}|gh[oprsu]_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|tskey-[a-z]+-[A-Za-z0-9_-]{10,}|ops_eyJ[A-Za-z0-9+/]{100,}|sk-or-v1-[0-9a-f]{64}|sk-ant-[a-z]+[0-9]{2}-[A-Za-z0-9_-]{80,})'
 
 # Strip characters that would break a single-line JSON string.
 skills_clean() {
@@ -223,7 +227,7 @@ skills_stage() {
       skills_fail "staging mkdir failed for $_name"
       return 1
     }
-    rm -rf "$_staging/$_name"
+    rm -rf "${_staging:?}/$_name"
     cp -a "$_src" "$_staging/$_name" || {
       skills_fail "copy failed for $_name"
       return 1

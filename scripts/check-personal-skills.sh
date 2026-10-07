@@ -1,8 +1,8 @@
 #!/bin/sh
 # Contract check for the personal-skills fixture (ADR-007): manifest
-# consistency, secret scan, install into claude/hermes/codex sandboxes,
-# idempotent re-run, default-deny, no overwrite of user content, and
-# rejection of unreviewed files. Run by scripts/verify.sh.
+# consistency, install into claude/hermes/codex sandboxes, idempotent re-run,
+# default-deny, no overwrite of user content, and rejection of unreviewed
+# files. Run by scripts/verify.sh, whose gitleaks scan covers the fixture.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -14,12 +14,6 @@ fail() {
   echo "FAIL: $1" >&2
   exit 1
 }
-
-# Same pattern set as scripts/verify.sh; bare prefix literals assembled from
-# parts so this file never contains a scannable string itself.
-_sp_gh="github_pat"
-_sp_ts="tskey"
-SECRET_PATTERN="(${_sp_gh}_|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|${_sp_ts}-auth-)"
 
 [ -f "${FIXTURE}/skills.yaml" ] || fail "fixture manifest missing"
 [ -d "${FIXTURE}/skills" ] || fail "fixture skills dir missing"
@@ -55,11 +49,6 @@ for m_dir in "${FIXTURE}/skills"/*/; do
 done
 grep -q "^${SAMPLE} allow" "${mlist}" \
   || fail "sample skill ${SAMPLE} must be allow: true for the harness demo"
-
-echo '==> secret-pattern scan over fixture'
-if grep -rnIEq -- "${SECRET_PATTERN}" "${FIXTURE}" 2>/dev/null; then
-  fail "secret-looking string in the fixture"
-fi
 
 echo '==> sample skill installs into claude + hermes + codex (sandbox)'
 sb_home="${work}/home"

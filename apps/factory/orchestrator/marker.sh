@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 # Factory Run marker comment body (ADR-003 ledger): one comment per Run,
 # created once and edited in place. Sourced by run.sh, which supplies NUM,
 # RUN_TS, PROFILE, WORKFLOW_VERSION, WORKER_IMAGE and timestamp().
