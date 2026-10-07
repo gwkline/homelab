@@ -18,25 +18,48 @@ setup_gh_cli
 DATA_DIR="${DATA_DIR:-/data}"
 REPOS_DIR="${DATA_DIR}/repos"
 
-# Agent CLI state (logins, sessions, opencode config) lives in the container;
-# restore it from the PVC and write changes back every 60s so it survives
-# rollouts.
+# Agent CLI state lives in the container; restore it from the PVC and write
+# changes back every 60s so logins and config survive rollouts. Caches, logs
+# and repo clones stay container-local:
+#   claude, codex          ~/.claude, ~/.codex
+#   opencode (stable+beta) ~/.config/opencode, ~/.local/share/opencode
+#                          (auth.json, opencode.db*; not log/ or repos/)
+#   cursor-agent           ~/.config/cursor/auth.json, ~/.cursor/cli-config.json
+#                          (not projects/)
 STATE_SRC="${DATA_DIR}/agent-state"
-for _d in .claude .codex .config/opencode; do
-  if [ -d "${STATE_SRC}/${_d}" ]; then
-    mkdir -p "/home/node/${_d}"
-    cp -a "${STATE_SRC}/${_d}/." "/home/node/${_d}/" 2>/dev/null || true
-  fi
+OC_SHARE="/home/node/.local/share/opencode"
+
+# sync_dirs <from> <to> [excluded-names...]: merge-copy the children of
+# <from> into <to>, skipping the excluded top-level names.
+sync_dirs() {
+  _from="$1"; _to="$2"; shift 2
+  [ -d "${_from}" ] || return 0
+  mkdir -p "${_to}"
+  for _child in "${_from}"/* "${_from}"/.[!.]* "${_from}"/..?*; do
+    [ -e "${_child}" ] || continue
+    _name=${_child##*/}
+    for _x in "$@"; do
+      if [ "${_name}" = "${_x}" ]; then continue 2; fi
+    done
+    cp -a "${_child}" "${_to}/" 2>/dev/null || true
+  done
+}
+
+for _d in .claude .codex .config/opencode .config/cursor; do
+  sync_dirs "${STATE_SRC}/${_d}" "/home/node/${_d}"
 done
+# Older images symlinked the whole opencode share dir onto the PVC.
+if [ -L "${OC_SHARE}" ]; then rm -f "${OC_SHARE}"; fi
+sync_dirs "${STATE_SRC}/opencode/share" "${OC_SHARE}" log repos
+sync_dirs "${STATE_SRC}/cursor" "/home/node/.cursor" projects
 (
   while :; do
     sleep 60
-    for _d in .claude .codex .config/opencode; do
-      if [ -d "/home/node/${_d}" ]; then
-        mkdir -p "${STATE_SRC}/${_d}"
-        cp -a "/home/node/${_d}/." "${STATE_SRC}/${_d}/" 2>/dev/null || true
-      fi
+    for _d in .claude .codex .config/opencode .config/cursor; do
+      sync_dirs "/home/node/${_d}" "${STATE_SRC}/${_d}"
     done
+    sync_dirs "${OC_SHARE}" "${STATE_SRC}/opencode/share" log repos
+    sync_dirs "/home/node/.cursor" "${STATE_SRC}/cursor" projects
   done
 ) &
 echo "[t3code] agent-state sync started (${STATE_SRC})"
@@ -133,13 +156,6 @@ json.dump(s, open(p, 'w'), indent=2)
 "
   fi
 fi
-
-# Keep opencode's auth.json on the PVC so it survives rollouts.
-mkdir -p "${DATA_DIR}/agent-state/opencode/share" /home/node/.local/share
-[ -f "${DATA_DIR}/agent-state/opencode/share/auth.json" ] || \
-  cp /home/node/.local/share/opencode/auth.json \
-     "${DATA_DIR}/agent-state/opencode/share/auth.json" 2>/dev/null || true
-ln -sfn "${DATA_DIR}/agent-state/opencode/share" /home/node/.local/share/opencode
 
 echo "[t3code] starting server on 0.0.0.0:3773"
 exec t3 serve --host 0.0.0.0 --port 3773
