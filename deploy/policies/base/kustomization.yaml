@@ -8,4 +8,5 @@ labels:
     includeSelectors: false
 
 resources:
+  - priorityclasses.yaml
   - networkpolicy.yaml
