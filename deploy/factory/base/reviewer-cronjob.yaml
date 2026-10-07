@@ -54,3 +54,12 @@ spec:
                 - { name: tmp, mountPath: /tmp }
           volumes:
             - { name: tmp, emptyDir: {} }
+---
+# Shared by the reviewer, medic, sweeper, and reviewer-launchpad CronJobs
+# (GitHub-only automation; no Kubernetes API access, so no token).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: factory-reviewer
+  namespace: sandbox
+automountServiceAccountToken: false

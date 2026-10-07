@@ -94,6 +94,27 @@ jobs:
       - name: Panel list-and-launch e2e against the real Kubernetes API
         run: ./scripts/panel-e2e-smoke.sh
 
+  # Rendered manifests against a real API server (issue #16): RoleBinding
+  # roleRef resolution, referenced ServiceAccounts, permission probes, and a
+  # running sandbox Job. Node image pinned to the production Kubernetes
+  # version (k3s v1.36.4+k3s1, docs/rebuild-runbook.md).
+  manifest-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: manifest-smoke
+          # Pinned to the production Kubernetes version (k3s v1.36.4+k3s1).
+          version: v0.33.0
+          node_image: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+          kubectl_version: v1.36.4
+      - name: Smoke the rendered manifests against the API server
+        run: ./scripts/manifest-smoke.sh
+
   # Images whose build inputs changed: the image's directory plus every
   # path its Dockerfile COPYs. On main the diff starts at the last green
   # run, so a failed build is retried by the next push. Scheduled and manual
@@ -202,7 +223,7 @@ jobs:
   # succeeded or was legitimately skipped.
   ci:
     if: always()
-    needs: [check, validate, panel-e2e, changes, build]
+    needs: [check, validate, panel-e2e, manifest-smoke, changes, build]
     runs-on: ubuntu-latest
     steps:
       - run: test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false
