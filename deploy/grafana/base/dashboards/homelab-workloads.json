@@ -189,7 +189,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "victoriametrics" },
-      "description": "Consumed capacity per PVC from kubelet volume stats (fires homelab-pvc-nearly-full at >90%).",
+      "description": "Consumed capacity per PVC from kubelet volume stats. local-path PVCs all report the node filesystem.",
       "fieldConfig": {
         "defaults": { "max": 100, "min": 0, "unit": "percent" },
         "overrides": []
