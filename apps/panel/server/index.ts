@@ -7,6 +7,7 @@ import { Hono } from "hono";
 
 import { requireCaller } from "./auth.js";
 import type { AuthEnv } from "./auth.js";
+import { validCronSchedule } from "./cron.js";
 import { DEV_TOOLS, discoverTailnet, evaluateTools } from "./devtools.js";
 import { jobRepo, viewJob } from "./jobs.js";
 import { loadConfig, api } from "./k8s.js";
@@ -140,6 +141,7 @@ interface GhPull {
   mergeable?: boolean;
   mergeable_state?: string;
   merged_at?: string | null;
+  node_id?: string;
   number: number;
   state: string;
   title: string;
@@ -1151,6 +1153,73 @@ app.post("/api/factory/review", async (c) => {
   }
 });
 
+interface GhGraphql {
+  data?: {
+    markPullRequestReadyForReview?: { pullRequest?: { isDraft?: boolean } };
+  };
+  errors?: { message?: string }[];
+}
+
+// Un-draft a factory PR. REST cannot flip draft; only this GraphQL mutation can.
+app.post("/api/factory/ready", async (c) => {
+  let body: { repo?: string; pr?: number | string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const repo = (body.repo ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) {
+    return c.json(
+      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
+      400
+    );
+  }
+  const pr = parseNum(body.pr);
+  if (pr === null) {
+    return c.json({ error: "pr must be a positive integer" }, 400);
+  }
+  let meta: GhPull;
+  try {
+    meta = (await ghFetch(`/repos/${repo}/pulls/${pr}`)) as GhPull;
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, respondStatus(error, [404]));
+  }
+  const branchError = notFactoryBranch(pr, meta);
+  if (branchError !== null) {
+    return c.json({ error: `${branchError} — refusing to change it` }, 409);
+  }
+  if (meta.draft !== true) {
+    return c.json({ error: `PR #${pr} is already ready for review` }, 409);
+  }
+  try {
+    const out = (await ghFetch("/graphql", {
+      body: JSON.stringify({
+        query:
+          "mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { isDraft } } }",
+        variables: { id: meta.node_id },
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })) as GhGraphql;
+    const isDraft =
+      out.data?.markPullRequestReadyForReview?.pullRequest?.isDraft;
+    if (out.errors?.length || isDraft !== false) {
+      return c.json(
+        {
+          error:
+            out.errors?.map((e) => e.message).join("; ") ||
+            `PR #${pr} is still a draft`,
+        },
+        502
+      );
+    }
+    return c.json({ isDraft, pr, repo });
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, 502);
+  }
+});
+
 app.post("/api/factory/merge", async (c) => {
   let body: { repo?: string; pr?: number | string; strategy?: string };
   try {
@@ -1807,10 +1876,19 @@ app.patch("/api/cronjobs/:name", async (c) => {
     patch.spec.suspend = body.suspended === true;
   }
   if (body.schedule !== undefined) {
-    if (!/^[\d*/,-]+$/u.test(body.schedule)) {
-      return c.json({ error: "invalid cron schedule" }, 400);
+    if (
+      typeof body.schedule !== "string" ||
+      !validCronSchedule(body.schedule)
+    ) {
+      return c.json(
+        {
+          error:
+            "schedule must be five cron fields: minute hour day-of-month month day-of-week",
+        },
+        400
+      );
     }
-    patch.spec.schedule = body.schedule;
+    patch.spec.schedule = body.schedule.trim().split(/\s+/u).join(" ");
   }
   if (!Object.keys(patch.spec).length) {
     return c.json({ error: "nothing to patch" }, 400);

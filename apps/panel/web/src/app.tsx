@@ -165,13 +165,8 @@ export default function App() {
           method: "POST",
         });
       } else if (action === "ready") {
-        res = await fetch("/api/factory/review", {
-          body: JSON.stringify({
-            body: "Ready for review — flipping draft via panel",
-            event: "COMMENT",
-            pr: pr.number,
-            repo: factoryRepo,
-          }),
+        res = await fetch("/api/factory/ready", {
+          body: JSON.stringify({ pr: pr.number, repo: factoryRepo }),
           headers: { "content-type": "application/json" },
           method: "POST",
         });
@@ -189,9 +184,12 @@ export default function App() {
       const body = await res.json();
       if (res.ok) {
         setReviewMsg(
-          action === "merge"
-            ? `merged #${pr.number} (${body.strategy ?? "squash"})`
-            : `${action} recorded on #${pr.number}`
+          {
+            approve: `approved #${pr.number}`,
+            changes: `requested changes on #${pr.number}`,
+            merge: `merged #${pr.number} (${body.strategy ?? "squash"})`,
+            ready: `#${pr.number} is ready for review`,
+          }[action]
         );
       } else {
         setReviewMsg(body.error ?? `action failed on #${pr.number}`);
