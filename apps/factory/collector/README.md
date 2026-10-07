@@ -26,13 +26,14 @@ An issue is eligible when **all** of these hold:
 1. it is an issue, not a pull request;
 2. its state is `open`;
 3. if `FACTORY_ELIGIBILITY_LABEL` is set, it carries that label;
-4. it carries **no** factory lifecycle label (`factory/queued`, `factory/in-progress`, `factory/draft-pr`, `factory/needs-review`, `factory/failed`, `factory/cancelled`, `factory/stuck`).
+4. its author is a collaborator: `author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`. On a public repo anyone can write the body the agent will act on;
+5. it carries **no** factory lifecycle label (`apps/factory/lib/labels.json`: `factory/queued`, `factory/in-progress`, `factory/draft-pr`, `factory/needs-review`, `factory/failed`, `factory/cancelled`, `factory/stuck`).
 
 ## Idempotency
 
 - The queued label **is** the Run's durable record: one issue + one label event = one logical Run (ADR-003).
 - The key `sha256("github:<repo>:<issue>:<profile>@<ruleVersion>")` is computed and logged for every Run creation.
-- Rule 4 makes re-admission impossible while any lifecycle label is present, so repeated polls and Job TTL deletion cannot duplicate work.
+- Rule 5 makes re-admission impossible while any lifecycle label is present, so repeated polls and Job TTL deletion cannot duplicate work.
 - The collector re-reads the issue immediately before the label write, so an issue claimed or closed since the listing is not re-queued.
 - `concurrencyPolicy: Forbid` keeps the poller single-instance. A claim racing the label write can leave both labels; `factory/in-progress` takes precedence, so no duplicate Run results.
 
@@ -53,7 +54,7 @@ An issue is eligible when **all** of these hold:
 
 ## Hostile inputs and failures
 
-- Issue titles/bodies are never interpolated into shell, YAML, or manifests. Eligibility uses only `number`, `state`, `labels`, `updated_at`, and the `pull_request` flag; titles appear only JSON-encoded and truncated in logs.
+- Issue titles/bodies are never interpolated into shell, YAML, or manifests. Eligibility uses only `number`, `state`, `labels`, `author_association`, `updated_at`, and the `pull_request` flag; titles appear only JSON-encoded and truncated in logs.
 - 429 and rate-limit 403s honor `Retry-After` / `x-ratelimit-reset` (capped). Network errors and 5xx retry with capped exponential backoff; other client errors fail fast.
 - A repo whose retries are exhausted fails the tick (non-zero exit) while other repos still complete.
 

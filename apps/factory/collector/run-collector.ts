@@ -2,8 +2,9 @@
 // the queued label to eligible issues — that label is the Run's ledger record.
 //
 // Issue titles and bodies are untrusted. Eligibility reads only number, state,
-// labels, updated_at and the pull_request flag; titles reach stdout only
-// truncated and JSON-encoded. See README.md for the full behavior matrix.
+// labels, author_association, updated_at and the pull_request flag; titles
+// reach stdout only truncated and JSON-encoded. See README.md for the full
+// behavior matrix.
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -51,6 +52,7 @@ export interface SkipCounts {
   "already-run": number;
   closed: number;
   duplicate: number;
+  "not-collaborator": number;
   "not-eligible-label": number;
   "not-found": number;
   "pull-request": number;
@@ -62,6 +64,7 @@ const skipReasons = (): SkipCounts => ({
   "already-run": 0,
   closed: 0,
   duplicate: 0,
+  "not-collaborator": 0,
   "not-eligible-label": 0,
   "not-found": 0,
   "pull-request": 0,
@@ -106,6 +109,12 @@ const latest = (a: string | null, b: string): string | null => {
   return a;
 };
 
+const TRUSTED_AUTHOR_ASSOCIATIONS: ReadonlySet<string> = new Set([
+  "COLLABORATOR",
+  "MEMBER",
+  "OWNER",
+]);
+
 const classifySkip = (
   config: CollectorConfig,
   issue: IssueRef
@@ -121,6 +130,11 @@ const classifySkip = (
     !issue.labels.includes(config.eligibilityLabel)
   ) {
     return "not-eligible-label";
+  }
+  // The issue body becomes the agent's task. On a public repo anyone can
+  // author one, so a collaborator's label alone is not enough.
+  if (!TRUSTED_AUTHOR_ASSOCIATIONS.has(issue.authorAssociation)) {
+    return "not-collaborator";
   }
   const labelSet = new Set(issue.labels);
   for (const lifecycle of FACTORY_LIFECYCLE_LABELS) {
