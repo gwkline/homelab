@@ -9,3 +9,4 @@ labels:
 
 resources:
   - namespaces.yaml
+  - default-serviceaccounts.yaml

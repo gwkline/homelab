@@ -5,6 +5,9 @@
  * The vector channel filters on the embedding model tag so generations never
  * mix (ADR-002 D6).
  *
+ * knowledge-ingest owns the schema. Until it has applied
+ * `KNOWLEDGE_SCHEMA_VERSION`, search and readiness fail as unavailable.
+ *
  * `source.sourceId` is the version-independent `document.id`;
  * `provenance.ingestionEventId` is the cited `document_version.id`. `tags`
  * are always empty and `version.commit` is null: the schema stores neither.
@@ -20,17 +23,25 @@ import type { EmbeddingProvider } from "../../knowledge/src/embedder.ts";
 import {
   embeddingProviderFromEnv,
   embeddingVectorProblem,
+  isFakeEmbeddingProvider,
 } from "../../knowledge/src/embedder.ts";
 import type { CitationAnchor } from "../../knowledge/src/pgvector.ts";
 import {
+  EMBEDDING_MODEL_COUNT_SQL,
   parseAnchors,
+  parseEmbeddingModelCounts,
   buildPgvectorSearchQuery,
   parsePgvectorRows,
 } from "../../knowledge/src/pgvector.ts";
+import {
+  KNOWLEDGE_SCHEMA_VERSION,
+  readKnowledgeSchemaVersion,
+} from "../../knowledge/src/schema.ts";
 import type {
   ChannelResults,
   ChunkRecord,
   DocumentVersion,
+  EmbeddingReport,
   RankedCandidate,
   RetrievalStore,
   SearchOptions,
@@ -99,11 +110,15 @@ WHERE c.chunk_id = ANY($1::text[])
 export class PgRetrievalStore implements RetrievalStore {
   private readonly pool: Pool;
   private readonly provider: EmbeddingProvider;
+  private schemaReady = false;
+  readonly vectorSearch: boolean;
 
   constructor(pool: Pool, options: PgStoreOptions = {}) {
     this.pool = pool;
     this.provider =
       options.provider ?? embeddingProviderFromEnv(options.env ?? process.env);
+    // Fake vectors carry no meaning; ranking by them only adds noise.
+    this.vectorSearch = !isFakeEmbeddingProvider(this.provider);
   }
 
   /** Embed the query; a provider failure disables the vector channel instead of failing the search. */
@@ -120,12 +135,27 @@ export class PgRetrievalStore implements RetrievalStore {
     }
   }
 
+  /** Once the schema is current it stays current, so only misses re-check. */
+  private async assertSchemaReady(): Promise<void> {
+    if (this.schemaReady) {
+      return;
+    }
+    const version = await readKnowledgeSchemaVersion(this.pool);
+    if (version < KNOWLEDGE_SCHEMA_VERSION) {
+      throw new StoreUnavailableError(
+        `knowledge schema is at version ${version}, this build needs ${KNOWLEDGE_SCHEMA_VERSION}; knowledge-ingest applies migrations`
+      );
+    }
+    this.schemaReady = true;
+  }
+
   async search(options: SearchOptions): Promise<ChannelResults> {
     // The schema has no tags, so a tag filter matches nothing.
     if (options.filters.tags.length > 0) {
       return { bm25: [], vector: [] };
     }
     try {
+      await this.assertSchemaReady();
       const { includeSuperseded } = options.filters;
       const bm25 = buildBm25SearchQuery(options.query, {
         includeSuperseded,
@@ -251,8 +281,29 @@ export class PgRetrievalStore implements RetrievalStore {
     }
   }
 
-  /** Readiness probe; throws (fast) when the database is unreachable. */
+  async embeddingReport(): Promise<EmbeddingReport> {
+    try {
+      await this.assertSchemaReady();
+      const { rows } = await this.pool.query(EMBEDDING_MODEL_COUNT_SQL);
+      return {
+        configuredModel: this.provider.model,
+        storedModels: parseEmbeddingModelCounts(
+          rows as Record<string, unknown>[]
+        ),
+      };
+    } catch (error) {
+      throw new StoreUnavailableError(
+        `retrieval store unavailable: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error }
+      );
+    }
+  }
+
+  /** Readiness probe; throws (fast) when the database is unreachable or not migrated. */
   async ping(): Promise<void> {
     await this.pool.query("SELECT 1");
+    await this.assertSchemaReady();
   }
 }

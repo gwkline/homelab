@@ -1,24 +1,16 @@
 /**
- * Pure queue core (ADR-002 D5): schema, SQL, idempotency keys, and backoff
- * math. No I/O; `PgIngestStore` executes it and `MemoryIngestStore` mirrors
- * the same state machine.
+ * Pure queue core (ADR-002 D5): SQL, idempotency keys, and backoff math. No
+ * I/O; `PgIngestStore` executes it and `MemoryIngestStore` mirrors the same
+ * state machine. The tables are defined in `knowledge/src/schema.ts`.
  *
- * Tables:
- * - `ingest_job`: the queue, claimed with `FOR UPDATE SKIP LOCKED` and leased
- *   via `heartbeat_at`. `document` jobs carry identity only and the worker
- *   fetches content; `document-version` jobs carry their own content.
- * - `ingest_source`: registered sources for the panel.
- * - `ingest_document`: published-version ledger. Its UNIQUE identity makes
- *   stale-claim re-runs land on the same row. Not named `document`, which is
- *   the retrieval corpus table in the same database.
- * - `git_source_manifest`: last synced commit and blob map per git source.
+ * `document` jobs carry identity only and the worker fetches content;
+ * `document-version` jobs carry their own content. `ingest_document`'s UNIQUE
+ * identity makes stale-claim re-runs land on the same row.
  */
 
 import { createHash, randomUUID } from "node:crypto";
 
 import type { IngestRequestInput, JobKind, JobState } from "./store.ts";
-
-export const INGEST_SCHEMA_VERSION = "2-ingest-queue-pipeline";
 
 export const INGEST_TABLE = "ingest_job";
 export const SOURCE_TABLE = "ingest_source";
@@ -46,76 +38,6 @@ export const CLAIMABLE_STATES = ["pending", "retryable"] as const;
 
 export const STALE_RECOVERY_MESSAGE =
   "claim lease expired; recovered for retry";
-
-/**
- * Idempotent schema. The UNIQUE `idempotency_key` makes duplicate event
- * delivery collide instead of enqueueing twice; the partial index serves the
- * SKIP LOCKED scan.
- */
-export const INGEST_SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS ingest_job (
-  id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('document', 'document-version', 'source_sync')),
-  idempotency_key TEXT NOT NULL UNIQUE,
-  source_id TEXT NOT NULL,
-  namespace TEXT NOT NULL,
-  payload JSONB NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'running', 'succeeded', 'retryable', 'dead')),
-  attempts INTEGER NOT NULL DEFAULT 0,
-  max_attempts INTEGER NOT NULL DEFAULT 5,
-  priority INTEGER NOT NULL DEFAULT 0,
-  error TEXT,
-  result JSONB,
-  worker_id TEXT,
-  enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  started_at TIMESTAMPTZ,
-  heartbeat_at TIMESTAMPTZ,
-  finished_at TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS ingest_job_claimable
-  ON ingest_job (priority DESC, enqueued_at ASC, id ASC)
-  WHERE status IN ('pending', 'retryable');
-CREATE INDEX IF NOT EXISTS ingest_job_source_recent
-  ON ingest_job (source_id, enqueued_at DESC);
-
-CREATE TABLE IF NOT EXISTS ingest_source (
-  source_id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('github', 'file', 'url', 'web')),
-  namespace TEXT NOT NULL,
-  repo TEXT,
-  ref TEXT,
-  url TEXT,
-  path TEXT,
-  registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS ingest_document (
-  document_id TEXT PRIMARY KEY,
-  namespace TEXT NOT NULL,
-  source_id TEXT NOT NULL,
-  external_id TEXT NOT NULL,
-  version_id TEXT NOT NULL,
-  content_hash TEXT NOT NULL,
-  title TEXT,
-  commit_ref TEXT,
-  chunk_count INTEGER NOT NULL DEFAULT 0,
-  provenance JSONB NOT NULL,
-  published_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (namespace, source_id, external_id, version_id)
-);
-CREATE INDEX IF NOT EXISTS document_source
-  ON ingest_document (source_id);
-
-CREATE TABLE IF NOT EXISTS git_source_manifest (
-  source_key TEXT PRIMARY KEY,
-  commit_sha TEXT,
-  entries JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-`;
 
 /** New job ids are app-generated so every store produces the same shape. */
 export const newJobId = (): string => `job_${randomUUID()}`;

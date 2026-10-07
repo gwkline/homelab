@@ -17,12 +17,11 @@ Knowledge (`deploy/knowledge`): two services over Postgres. `knowledge-ingest` r
 
 Platform:
 
-- **panel**: this repo's control panel. It shows factory runs, launches jobs, explores the knowledge base, and links to every dev tool.
+- **panel**: this repo's control panel. It queues and shows factory runs, explores the knowledge base, and links to every dev tool.
 - **homepage**, **headlamp** (read-only Kubernetes UI), **cloudbeaver** (SQL client) and **grafana**: tailnet UIs.
 - **postgres**: a CloudNativePG cluster holding factory and knowledge state.
 - **loki** and **victoriametrics**: 30 days of logs and metrics, read by Grafana.
 - **deployer**: continuous delivery for this repo's images (see below).
-- **chaos**: a small operational CronJob.
 
 Every UI is reachable only on the tailnet, through the Tailscale operator.
 
@@ -51,7 +50,7 @@ Long-lived credentials live in 1Password, and External Secrets syncs them into t
   - deployer applies its target workloads.
   - hermes, headlamp, alloy and victoriametrics only read.
 
-  Each grant lives in an `rbac.yaml` beside its workload.
+  Each grant lives in an `rbac.yaml` beside its workload. The `default` ServiceAccounts mount no token, so only pods that call the API carry one.
 
 - **Image admission:** the sigstore policy-controller rejects any homelab image whose digest isn't signed by this repo's `main` CI ([ADR-004](docs/adr/adr-004-cosign-admission-verification.md)).
 - **Tailscale SSH:** it is enabled on nodes and gated by tailnet ACLs.

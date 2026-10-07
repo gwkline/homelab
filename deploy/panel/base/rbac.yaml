@@ -1,6 +1,7 @@
-# Exactly the calls apps/panel/server/k8s.ts makes. sandbox: launch, list, and
-# cancel Jobs; read and patch CronJobs (schedules card). agents: Service
-# health checks and the panel Ingress (tailnet discovery). No secrets.
+# Exactly the calls apps/panel/server/k8s.ts makes. sandbox: list and delete
+# Jobs, and create the Job a factory run clones from its orchestrator CronJob;
+# read and patch CronJobs (schedules card). agents: Service health checks and
+# the panel Ingress (tailnet discovery). No secrets.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

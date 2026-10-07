@@ -38,6 +38,8 @@ Input, mounted read-only at `/task/brief.json` (schema: `apps/factory/worker/bri
 
 Output: `/out/report.json`, `/out/patch.diff`, and the log stream. Exit 0 plus a valid `report.json` is success; anything else is a failed attempt (one automatic retry).
 
+The patch is the diff from the clone's base commit, agent commits included. Agent CLI and package-manager state (`.opencode/`, `.cursor/`, `.claude/`, `.codex/`, `.local/`, `.cache/`, `*.db`, `*.sqlite*`) is written to `.git/info/exclude` before the agent runs. A patch that still adds such a path, or exceeds `WORKER_PATCH_MAX_BYTES` (512 KiB), is rejected: report `tests: rejected`, no patch artifact, exit 65.
+
 ### D6. Credential boundaries
 
 - Worker: no GitHub write token, no kubeconfig, netpol-restricted egress. Read-only clone; the token is unset before the agent runs.

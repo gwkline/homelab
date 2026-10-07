@@ -1,5 +1,6 @@
-# Read-only cluster view for personal t3 sessions: get/list only, no secrets,
-# no exec, no writes. The work runner has no ServiceAccount token at all.
+# Read-only cluster view for personal t3 sessions: get/list only, no secrets
+# or ConfigMaps (some hold credentials), no exec, no writes. The work runner
+# has no ServiceAccount token at all.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -24,7 +25,6 @@ rules:
         "nodes",
         "namespaces",
         "services",
-        "configmaps",
         "persistentvolumeclaims",
       ]
     verbs: ["get", "list"]
