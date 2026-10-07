@@ -996,7 +996,7 @@ test("documents convert to worker-shaped ingest jobs deterministically", async (
   assert.deepEqual(buildIngestJob(readme), job);
 
   const payload = job.payload as Record<string, unknown>;
-  // Exactly the fields the ingest worker's parseDocumentPayload reads.
+  // Exactly the fields the pipeline's parseDocumentVersionPayload reads.
   assert.equal(payload["content"], readme.text);
   assert.equal(payload["documentId"], readme.documentId);
   assert.equal(payload["externalId"], "README.md");

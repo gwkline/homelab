@@ -19,7 +19,6 @@ resources:
 configMapGenerator:
   - name: grafana-dashboards
     files:
-      - dashboards/homelab-chaos.json
       - dashboards/homelab-factory-jobs.json
       - dashboards/homelab-logs.json
       - dashboards/homelab-nodes.json

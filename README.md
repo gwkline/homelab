@@ -22,7 +22,6 @@ Platform:
 - **postgres**: a CloudNativePG cluster holding factory and knowledge state.
 - **loki** and **victoriametrics**: 30 days of logs and metrics, read by Grafana.
 - **deployer**: continuous delivery for this repo's images (see below).
-- **chaos**: a small operational CronJob.
 
 Every UI is reachable only on the tailnet, through the Tailscale operator.
 
@@ -42,7 +41,7 @@ Long-lived credentials live in 1Password, and External Secrets syncs them into t
 
 ## Security model
 
-- **Pod Security:** `agents` and `sandbox` enforce `baseline` Pod Security and `work` enforces `restricted`. Nothing runs privileged, and no pod gets a Docker socket.
+- **Pod Security:** `agents`, `work` and `database` enforce the `restricted` level. `sandbox` enforces `baseline` and warns on `restricted` until the factory worker Job complies. Outside `kube-system`, only the Tailscale LoadBalancer proxies run privileged, and no pod gets a Docker socket.
 - **Network policy:**
   - Ingress is default-deny, and only Tailscale proxies reach the UIs.
   - Egress from `sandbox` and `work` is public-internet only: no Kubernetes API, LAN, tailnet or cloud metadata ([docs/egress-policy.md](docs/egress-policy.md)).
@@ -51,7 +50,7 @@ Long-lived credentials live in 1Password, and External Secrets syncs them into t
   - deployer applies its target workloads.
   - hermes, headlamp, alloy and victoriametrics only read.
 
-  Each grant lives in an `rbac.yaml` beside its workload.
+  Each grant lives in an `rbac.yaml` beside its workload. The `default` ServiceAccounts mount no token, so only pods that call the API carry one.
 
 - **Image admission:** the sigstore policy-controller rejects any homelab image whose digest isn't signed by this repo's `main` CI ([ADR-004](docs/adr/adr-004-cosign-admission-verification.md)).
 - **Tailscale SSH:** it is enabled on nodes and gated by tailnet ACLs.

@@ -72,7 +72,7 @@ jobs:
           gitleaks git --log-opts=--first-parent --config .gitleaks.toml --redact
       - name: Shell fixture tests
         run: |
-          for t in apps/*/tests/*.test.sh apps/factory/*/tests/*.test.sh; do
+          for t in apps/*/tests/*.test.sh apps/factory/*/tests/*.test.sh deploy/*/tests/*.test.sh; do
             echo "==> $t"
             sh "$t"
           done

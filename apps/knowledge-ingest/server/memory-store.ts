@@ -231,8 +231,6 @@ export const createMemoryIngestStore = (
   };
 
   const store: IngestStore = {
-    applySchema: () => Promise.resolve(),
-
     backend: "memory",
 
     claim(request: ClaimRequest): Promise<ClaimedJob[]> {

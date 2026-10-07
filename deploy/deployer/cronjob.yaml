@@ -1,5 +1,5 @@
-# Every 5 minutes: clone main, resolve each homelab :latest image to its current
-# digest, apply the targets. Changes to this directory need a manual apply.
+# Every 5 minutes: run deploy.sh, mounted from the deployer-script ConfigMap.
+# Changes to this directory, the script included, need a manual apply.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -29,51 +29,7 @@ spec:
           containers:
             - name: deployer
               image: ghcr.io/gwkline/homelab/loop-agent:latest
-              command: ["/bin/sh", "-c"]
-              args:
-                - |
-                  set -eu
-                  targets="
-                    deploy/factory/base
-                    deploy/chaos/base/cronjob.yaml
-                    deploy/hermes/base/statefulset.yaml
-                    deploy/knowledge/base/deployment-knowledge-ingest.yaml
-                    deploy/knowledge/base/deployment-knowledge-retrieval.yaml
-                    deploy/knowledge/base/netpol-knowledge.yaml
-                    deploy/panel/base/deployment.yaml
-                    deploy/panel/base/stats-cronjob.yaml
-                    deploy/t3code/base/statefulset.yaml
-                    deploy/work-t3code/base/statefulset.yaml
-                  "
-
-                  digest() {
-                    token=$(curl -fsS "https://ghcr.io/token?scope=repository:$1:pull" \
-                      | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
-                    curl -fsSI -H "Authorization: Bearer ${token}" \
-                      -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json" \
-                      "https://ghcr.io/v2/$1/manifests/latest" \
-                      | tr -d '\r' | sed -n 's/^docker-content-digest: //Ip'
-                  }
-
-                  git clone -q --depth 1 https://github.com/gwkline/homelab.git /tmp/repo
-                  cd /tmp/repo
-                  echo "main @ $(git rev-parse --short HEAD)"
-
-                  for ref in $(grep -rhoE 'ghcr\.io/gwkline/homelab/[a-z0-9/-]+:latest' $targets | sort -u); do
-                    repo=${ref#ghcr.io/}
-                    repo=${repo%:latest}
-                    d=$(digest "$repo")
-                    [ -n "$d" ] || { echo "cannot resolve $ref" >&2; exit 1; }
-                    echo "$ref -> $d"
-                    grep -rlF "$ref" $targets | xargs sed -i "s|$ref|ghcr.io/$repo@$d|g"
-                  done
-
-                  rc=0
-                  for t in $targets; do
-                    if [ -d "$t" ]; then flag=-k; else flag=-f; fi
-                    kubectl apply "$flag" "$t" || rc=1
-                  done
-                  exit "$rc"
+              command: ["sh", "/opt/deployer/deploy.sh"]
               resources:
                 requests: { cpu: 50m, memory: 64Mi }
                 limits: { memory: 256Mi }
@@ -83,5 +39,7 @@ spec:
                 readOnlyRootFilesystem: true
               volumeMounts:
                 - { name: tmp, mountPath: /tmp }
+                - { name: script, mountPath: /opt/deployer, readOnly: true }
           volumes:
             - { name: tmp, emptyDir: {} }
+            - { name: script, configMap: { name: deployer-script } }

@@ -65,10 +65,13 @@ git clone https://github.com/<github-user>/homelab.git && cd homelab
 ```sh
 brew install kubectl helm                                   # or see kubernetes.io/docs/tasks/tools
 ssh <user>@<server-ip> sudo cat /etc/rancher/k3s/k3s.yaml > ~/kubeconfig-homelab
-sed -i '' "s|127.0.0.1|<server-ip>|" ~/kubeconfig-homelab   # GNU sed: drop the ''
+chmod 600 ~/kubeconfig-homelab
+sed -i '' "s|127.0.0.1|<server>.<tailnet>.ts.net|" ~/kubeconfig-homelab   # GNU sed: drop the ''
 export KUBECONFIG=~/kubeconfig-homelab
 kubectl get nodes
 ```
+
+The API certificate covers the node's tailnet name and IP (bootstrap writes them to `/etc/rancher/k3s/config.yaml.d/10-tailnet.yaml`) and its LAN IP, so TLS verification stays on. Never add `insecure-skip-tls-verify`. If the certificate doesn't match, re-run `bootstrap.sh server`, which restarts k3s.
 
 ## 5. One-time external accounts
 
@@ -95,6 +98,24 @@ Deliberate, never automatic. Version and installer sha256 always change together
 2. Update `K3S_VERSION` + `K3S_INSTALLER_SHA256` and/or `TAILSCALE_VERSION` + `TAILSCALE_INSTALLER_SHA256` in `bootstrap/bootstrap.sh` (env overrides allow upgrading a node before the repo change lands).
 3. Re-run `./bootstrap/bootstrap.sh server` (upgrade-aware), then each agent; check `k3s --version` and `tailscale version`.
 4. Run `./scripts/rebuild-check.sh`.
+
+## Secrets encryption and the audit log
+
+A server bootstrapped from this repo encrypts Secrets in the datastore from its first start. A server that ran without encryption needs a migration, and `bootstrap.sh server` refuses to restart it until step 2 is done ([k3s docs](https://docs.k3s.io/cli/secrets-encrypt#enable-secrets-encryption-on-an-existing-cluster)):
+
+```sh
+sudo k3s secrets-encrypt status        # Disabled, no configuration file found
+sudo k3s secrets-encrypt enable
+./bootstrap/bootstrap.sh server        # restarts k3s with secrets-encryption: true
+sudo k3s secrets-encrypt status        # Disabled, stage start, all hashes match
+sudo k3s secrets-encrypt rotate-keys   # re-encrypts every Secret
+sudo systemctl restart k3s
+sudo k3s secrets-encrypt status        # Enabled, stage reencrypt_finished
+```
+
+Rotate the key later with the last three commands. The key is in `/var/lib/rancher/k3s/server/cred/encryption-config.json`, so a datastore backup without that file can't be decrypted.
+
+API audit events go to `/var/lib/rancher/k3s/server/logs/audit.log`, rotated at 100 MB, keeping 10 files or 30 days. `bootstrap/audit-policy.yaml` logs metadata for every request and full bodies for RBAC writes. It never logs Secret or ConfigMap bodies.
 
 ## When a node dies
 

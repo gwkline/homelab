@@ -1,8 +1,8 @@
 #!/bin/sh
 # Offline run-contract test for the worker entrypoint: a stub agent edits a
 # local file:// origin, verify runs, and a patch + report are emitted without
-# pushing. Also checks schema rejection and that SIGTERM keeps artifacts but
-# scrubs credentials.
+# pushing. Also checks schema rejection, that SIGTERM keeps artifacts but
+# scrubs credentials, and that agent state never rides in a patch.
 set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
@@ -86,7 +86,8 @@ PROMPT_DUMP="${FIX}/prompt.txt" \
 TASK_DIR="${FIX}/task" OUT_DIR="${FIX}/out" WORK_DIR="${FIX}/work" \
 HOME="${FIX}/home" \
 PATH="${FIX}/bin:${PATH}" \
-  sh "${ENTRYPOINT}" > "${FIX}/log" 2>&1
+  sh "${ENTRYPOINT}" > "${FIX}/log" 2>&1 \
+  || { echo "FAIL: happy-path run exited non-zero"; cat "${FIX}/log"; exit 1; }
 
 test -s "${FIX}/out/patch.diff" || { echo "FAIL: no patch artifact emitted"; cat "${FIX}/log"; exit 1; }
 grep -q "patched by fixture" "${FIX}/out/patch.diff" \
@@ -159,5 +160,74 @@ grep -q '"tests": "interrupted"' "${FIX}/out-term/report.json" \
 test ! -f "${FIX}/home-term/.local/share/opencode/auth.json" \
   || { echo "FAIL: credentials survived shutdown"; exit 1; }
 echo "PASS: graceful shutdown preserves report, scrubs credentials (exit ${RC})"
+
+# run_case <name> <agent-cli> [VAR=value ...]: one entrypoint run against the
+# fixture origin; artifacts under ${FIX}/<name>, exit status in RC.
+run_case() {
+  _name="$1" _cli="$2"
+  shift 2
+  mkdir -p "${FIX}/${_name}/out" "${FIX}/${_name}/work"
+  RC=0
+  env GH_TOKEN=fixture-secret-token CLONE_URL="file://${FIX}/origin" \
+    WORKER_CMD="${_cli}" WORKER_TIMEOUT=30 \
+    TASK_DIR="${FIX}/task" OUT_DIR="${FIX}/${_name}/out" WORK_DIR="${FIX}/${_name}/work" \
+    HOME="${FIX}/${_name}/home" PATH="${FIX}/bin:${PATH}" "$@" \
+    sh "${ENTRYPOINT}" > "${FIX}/${_name}/log" 2>&1 || RC=$?
+}
+
+# --- 4. agent state written into the clone stays out of the patch -------------
+cat > "${FIX}/bin/stray-cli" << 'EOF'
+#!/bin/sh
+# Agent that runs a tool with HOME inside the repo, then does the task.
+mkdir -p h1/.local/share/opencode .cursor/cache
+printf 'sqlite' > h1/.local/share/opencode/opencode.db
+printf 'wal' > h1/.local/share/opencode/opencode.db-wal
+printf '{}' > .cursor/cache/state.json
+echo "patched by fixture" >> README.md
+EOF
+chmod +x "${FIX}/bin/stray-cli"
+run_case stray stray-cli
+[ "$RC" -eq 0 ] || { echo "FAIL: stray-state run exited ${RC}"; cat "${FIX}/stray/log"; exit 1; }
+grep -q "patched by fixture" "${FIX}/stray/out/patch.diff" \
+  || { echo "FAIL: stray-state patch lost the task edit"; exit 1; }
+if grep -qE 'opencode\.db|\.cursor/' "${FIX}/stray/out/patch.diff"; then
+  echo "FAIL: agent state leaked into the patch"; grep '^diff' "${FIX}/stray/out/patch.diff"; exit 1
+fi
+grep -qE '^\[worker\] patch: [0-9]+ bytes \(cap 524288\)' "${FIX}/stray/log" \
+  || { echo "FAIL: patch size not logged"; cat "${FIX}/stray/log"; exit 1; }
+echo "PASS: stray h1/.local/share/opencode/opencode.db and .cursor/ stay out of the patch"
+
+# --- 5. state that gets past the excludes rejects the run ---------------------
+cat > "${FIX}/bin/commit-state-cli" << 'EOF'
+#!/bin/sh
+# Agent that force-adds and commits a cache, bypassing the excludes.
+mkdir -p h2/.cache/tool
+printf 'blob' > h2/.cache/tool/state.bin
+echo "patched by fixture" >> README.md
+git add -f h2 README.md
+git -c user.name=agent -c user.email=agent@localhost commit -qm "agent commit"
+EOF
+chmod +x "${FIX}/bin/commit-state-cli"
+run_case committed commit-state-cli
+[ "$RC" -eq 65 ] || { echo "FAIL: committed state should exit 65, got ${RC}"; cat "${FIX}/committed/log"; exit 1; }
+test ! -e "${FIX}/committed/out/patch.diff" || { echo "FAIL: rejected run left a patch"; exit 1; }
+grep -q '"tests": "rejected"' "${FIX}/committed/out/report.json" \
+  || { echo "FAIL: rejection not reported"; cat "${FIX}/committed/out/report.json"; exit 1; }
+grep -q "h2/.cache/tool/state.bin" "${FIX}/committed/log" \
+  || { echo "FAIL: rejection does not name the state path"; cat "${FIX}/committed/log"; exit 1; }
+echo "PASS: committed agent state rejects the run (exit 65, no patch)"
+
+# --- 6. the patch size cap is enforced -----------------------------------------
+run_case oversize fake-cli WORKER_PATCH_MAX_BYTES=64
+[ "$RC" -eq 65 ] || { echo "FAIL: oversize patch should exit 65, got ${RC}"; cat "${FIX}/oversize/log"; exit 1; }
+grep -q "over the 64-byte cap" "${FIX}/oversize/log" \
+  || { echo "FAIL: size-cap rejection not logged"; cat "${FIX}/oversize/log"; exit 1; }
+test ! -e "${FIX}/oversize/out/patch.diff" || { echo "FAIL: oversize run left a patch"; exit 1; }
+echo "PASS: a patch over WORKER_PATCH_MAX_BYTES is rejected"
+
+# --- 7. HOME inside the clone is refused before any work -----------------------
+run_case homeinrepo fake-cli HOME="${FIX}/homeinrepo/work/repo/h"
+[ "$RC" -eq 78 ] || { echo "FAIL: HOME inside the clone should exit 78, got ${RC}"; cat "${FIX}/homeinrepo/log"; exit 1; }
+echo "PASS: HOME inside the clone is refused"
 
 echo "ALL FIXTURE TESTS PASSED"

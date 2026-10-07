@@ -20,6 +20,7 @@ spec:
         seccompProfile:
           type: RuntimeDefault
         fsGroup: 8978
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: cloudbeaver
           # Upstream doesn't support downgrades; back up the workspace first.
@@ -81,19 +82,6 @@ spec:
               path: /
               port: http
             periodSeconds: 30
-      initContainers:
-        # Root only to chown the volume (local-path ignores fsGroup).
-        - name: volume-init
-          image: busybox:1.36
-          command: ["chown", "-R", "8978:8978", "/opt/cloudbeaver/workspace"]
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-              add: ["CHOWN", "FOWNER"]
-          volumeMounts:
-            - name: workspace
-              mountPath: /opt/cloudbeaver/workspace
       volumes:
         - name: tmp
           emptyDir:
