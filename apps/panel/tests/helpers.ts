@@ -21,7 +21,7 @@ export const ALLOWED_LOGIN = "operator@example.com";
 
 export type Caller = keyof typeof TOKENS;
 
-export const writeAuthDir = (): string => {
+const writeAuthDir = (): string => {
   const dir = mkdtempSync(path.join(tmpdir(), "panel-auth-"));
   writeFileSync(
     path.join(dir, "tokens"),
