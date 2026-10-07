@@ -9,84 +9,70 @@
     "enabled": true,
     "schedule": ["before 6am on monday"]
   },
+  "ignorePaths": ["deploy/cnpg/base/upstream.yaml", "deploy/eso/base/eso.yaml"],
+  "kubernetes": {
+    "managerFilePatterns": ["/^deploy/.+\\.ya?ml$/"]
+  },
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Version pins recorded next to a `renovate:` comment (ARG/ENV lines in Dockerfiles)",
-      "fileMatch": ["(^|/)Dockerfile$"],
+      "description": "Versions recorded under a `# renovate: datasource=\u2026 depName=\u2026` comment (Dockerfile ARG/ENV, shared install scripts)",
+      "managerFilePatterns": [
+        "/(^|/)Dockerfile$/",
+        "/^apps/shared/install-[^/]+\\.sh$/"
+      ],
       "matchStrings": [
-        "datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*(?:ARG|ENV) [A-Za-z0-9_]+=(?<currentValue>\\S+)"
+        "datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*(?:ARG |ENV )?[A-Za-z0-9_]+=(?<currentValue>\\S+)"
       ]
     }
   ],
   "packageRules": [
     {
-      "description": "Agent CLIs: weekly, grouped, auto-merge patch/minor after CI passes",
-      "groupName": "agent CLIs (codex/claude-code/opencode/t3)",
-      "matchFileNames": [
-        "apps/t3code/Dockerfile",
-        "apps/factory/worker/Dockerfile"
-      ],
-      "matchDatasources": ["npm"],
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": true,
-      "schedule": ["after 6am and before 9am on monday"]
+      "description": "Our own images float on :latest; deploy/deployer resolves them",
+      "matchPackageNames": ["/^ghcr\\.io/gwkline/homelab//"],
+      "enabled": false
     },
     {
-      "description": "Major bumps of agent CLIs: separate PR, no automerge \u2014 review breaking changes",
-      "groupName": "agent CLI majors",
-      "matchFileNames": [
-        "apps/t3code/Dockerfile",
-        "apps/factory/worker/Dockerfile"
-      ],
-      "matchDatasources": ["npm"],
-      "matchUpdateTypes": ["major"],
+      "description": "Third-party images: keep tag+digest pins current",
+      "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["digest", "pin", "patch", "minor"],
+      "automerge": true
+    },
+    {
+      "description": "Downloaded build tools: grouped, reviewed by hand",
+      "groupName": "build tools",
+      "matchManagers": ["custom.regex"],
       "automerge": false
     },
     {
-      "description": "t3 rides the nightly channel (issue #35): the pin is a recorded nightly version and Renovate bumps within the channel \u2014 never to a stable release",
+      "description": "Agent CLIs recorded in Dockerfiles/install scripts: weekly, non-major automerge",
+      "groupName": "agent CLIs",
+      "matchManagers": ["custom.regex"],
       "matchDatasources": ["npm"],
-      "matchDepNames": ["t3"],
-      "allowedVersions": "/-nightly\\./"
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true,
+      "schedule": ["after 6am and before 9am on monday"]
     },
     {
-      "description": "opencode-ai installed from the beta prefix in t3code: beta prereleases only, never dev builds",
-      "matchDatasources": ["npm"],
+      "description": "opencode-ai beta channel stays on beta prereleases",
       "matchDepNames": ["opencode-ai"],
       "matchCurrentVersion": "/^0\\.0\\.0-beta-/",
       "allowedVersions": "/^0\\.0\\.0-beta-/"
     },
     {
-      "description": "Third-party base/runtime images: keep tag+digest pins current, automerge digest/pin once CI is green",
-      "matchDatasources": ["docker"],
-      "matchPackagePatterns": [
-        "^library/",
-        "^gethomepage/",
-        "^nousresearch/",
-        "^victoriametrics/",
-        "^registry\\.k8s\\.io/"
-      ],
-      "matchUpdateTypes": ["digest", "pin", "patch", "minor"],
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": true
-    },
-    {
-      "description": "Downloaded build-time tools (kubectl, gh, scanners, semgrep): grouped, no automerge \u2014 checksums are re-verified in CI",
-      "groupName": "pinned build tools",
-      "matchManagers": ["regex"],
-      "matchDatasources": ["github-releases", "pypi"],
-      "automerge": false
+      "description": "npm: grouped non-major updates",
+      "groupName": "npm non-major",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
     },
     {
       "description": "GitHub Actions: monthly, grouped",
       "groupName": "github-actions",
       "matchManagers": ["github-actions"],
       "extends": ["schedule:monthly"],
-      "automerge": true,
-      "matchUpdateTypes": ["minor", "patch", "digest"]
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "automerge": true
     }
   ]
 }

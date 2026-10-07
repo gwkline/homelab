@@ -5,14 +5,13 @@
 # Base image is digest-pinned so a rebuild cannot silently pick up a new
 # Debian point release (issue #35), matching apps/panel/Dockerfile.
 FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS build
-# The bundle imports the shared knowledge lib via ../../knowledge/src — keep
-# the repo-shaped layout so those relative paths resolve inside the image.
 WORKDIR /src
-COPY apps/knowledge-retrieval/package.json apps/knowledge-retrieval/package-lock.json ./apps/knowledge-retrieval/
-RUN cd apps/knowledge-retrieval && npm ci --no-audit --no-fund
-COPY apps/knowledge/src ./apps/knowledge/src
-COPY apps/knowledge-retrieval/ ./apps/knowledge-retrieval/
-RUN cd apps/knowledge-retrieval && npm run build
+COPY package.json package-lock.json ./
+COPY apps/knowledge-retrieval/package.json apps/knowledge-retrieval/
+RUN npm ci -w apps/knowledge-retrieval --no-audit --no-fund
+COPY apps/knowledge/src apps/knowledge/src
+COPY apps/knowledge-retrieval/ apps/knowledge-retrieval/
+RUN npm run build -w apps/knowledge-retrieval
 
 FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
 WORKDIR /app
@@ -20,8 +19,9 @@ ENV NODE_ENV=production \
     PORT=3000
 # dist/index.js is the bundled service; pg stays external (native-optional
 # dependency), so the runtime ships node_modules from the lockfile.
-COPY apps/knowledge-retrieval/package.json apps/knowledge-retrieval/package-lock.json ./
-RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
+COPY package.json package-lock.json ./
+COPY apps/knowledge-retrieval/package.json apps/knowledge-retrieval/
+RUN npm ci -w apps/knowledge-retrieval --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY --from=build --chown=1000:1000 --chmod=0555 /src/apps/knowledge-retrieval/dist ./dist
 USER node
 EXPOSE 3000

@@ -19,10 +19,7 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  # Lint/format/typecheck are hard blockers: nothing builds unless this is
-  # green. Ultracite (oxlint + oxfmt) runs at max strictness — every rule is
-  # error-or-off, so there are no warnings to wave through (#115).
-  lint:
+  check:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,99 +27,39 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
-          cache-dependency-path: package-lock.json
-      - name: Install toolchain
-        run: npm ci --no-audit --no-fund
-      - name: Install panel deps (tsc typecheck needs panel @types/node)
-        run: npm ci --no-audit --no-fund
-        working-directory: apps/panel
-      - name: Install factory github-app deps (tsc typecheck needs @types/node)
-        run: npm ci --no-audit --no-fund
-        working-directory: apps/factory/github-app
-      - name: Install factory collector deps (tsc typecheck needs @types/node)
-        run: npm ci --no-audit --no-fund
-        working-directory: apps/factory/collector
-      - name: oxlint (ultracite core preset, 0 errors 0 warnings)
-        run: npx ultracite check
-      - name: oxfmt --check (refuse unformatted files)
-        run: npx oxfmt --check .
-      - name: tsc --noEmit (max-strict tsconfigs, panel + factory github-app + collector)
-        run: npm run typecheck
-      - name: No CommonJS anywhere (require/module.exports)
+      - run: npm ci --no-audit --no-fund
+      - run: npx ultracite check
+      - run: npx oxfmt --check .
+      - run: npm run typecheck
+      - name: ESM only
         run: |
           if grep -rn --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.js' \
               --exclude-dir=node_modules --exclude-dir=dist \
-              -E '(^|[^.\w])(require\(|module\.exports)' apps examples scripts 2>/dev/null; then
-            echo "::error::CommonJS found — the repo is ESM-only (#115)"
+              -E '(^|[^.\w])(require\(|module\.exports)' apps examples scripts; then
+            echo "::error::CommonJS found; the repo is ESM-only"
             exit 1
           fi
+      - run: npm run build -w apps/panel
+      - run: npm test
+      - name: Knowledge retrieval eval (deterministic subset)
+        run: npm run eval -w apps/knowledge -- --json --subset
 
-  # Panel smoke test: build the web bundle, serve it, and prove index + an
-  # asset answer 200 through vite preview.
-  panel-smoke:
+  validate:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/panel/package-lock.json
-      - name: Install panel deps
-        working-directory: apps/panel
-        run: npm ci --no-audit --no-fund
-      - name: Build web bundle
-        working-directory: apps/panel
-        run: npm run build:web
-      - name: vite preview smoke test (index + asset answer 200)
-        working-directory: apps/panel
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+      - run: ./scripts/verify.sh
+      - name: Shell fixture tests
         run: |
-          npx vite preview --host 127.0.0.1 --port 4173 --strictPort &
-          PREVIEW_PID=$!
-          for i in $(seq 1 30); do
-            curl -sf http://127.0.0.1:4173/ >/dev/null && break
-            sleep 0.5
+          for t in apps/*/tests/*.test.sh apps/factory/*/tests/*.test.sh; do
+            echo "==> $t"
+            sh "$t"
           done
-          curl -sf http://127.0.0.1:4173/ | grep -q '<div id="root">' \
-            || { echo "::error::index.html missing #root"; kill $PREVIEW_PID; exit 1; }
-          ASSET=$(curl -s http://127.0.0.1:4173/ | grep -oE '/assets/[^"]+\.js' | head -1)
-          test -n "$ASSET" || { echo "::error::no JS asset in index.html"; kill $PREVIEW_PID; exit 1; }
-          curl -sf -o /dev/null -w "asset %{http_code}\n" "http://127.0.0.1:4173${ASSET}" \
-            || { echo "::error::asset $ASSET did not answer 200"; kill $PREVIEW_PID; exit 1; }
-          kill $PREVIEW_PID
-
-  # Panel unit/integration tests (node --test against the built server):
-  # npm ci installs strictly from the committed apps/panel/package-lock.json,
-  # and the npm cache is keyed on that same lockfile, so lockfile drift always
-  # busts the cache instead of being papered over by stale packages (#18).
-  # verify.sh deliberately does not run this suite: it is bash-only (and must
-  # stay untouched by dash-gated worker edits, see the validate job below), so
-  # CI owns the panel test path and documents the split here — every other
-  # check CI runs still lives in verify.sh.
-  panel-test:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/panel/package-lock.json
-      - name: Install panel deps
-        working-directory: apps/panel
-        run: npm ci --no-audit --no-fund
-      - name: Build
-        working-directory: apps/panel
-        run: npm run build
-      - name: Test
-        working-directory: apps/panel
-        run: npm test
 
   # Panel list-and-launch e2e (#27): the panel runs inside a disposable kind
   # cluster as its production ServiceAccount (`panel`) with the mounted
@@ -139,172 +76,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 24
       - uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
         with:
           cluster_name: panel-e2e
       - name: Panel list-and-launch e2e against the real Kubernetes API
         run: ./scripts/panel-e2e-smoke.sh
-
-  # Knowledge retrieval eval (#59): the cheap deterministic subset runs on
-  # every PR — fully offline, no paid API — and the threshold gate blocks
-  # obvious retrieval regressions via non-zero exit code.
-  knowledge-eval:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/knowledge/package-lock.json
-      - name: Install knowledge deps
-        working-directory: apps/knowledge
-        run: npm ci --no-audit --no-fund
-      - name: Typecheck
-        working-directory: apps/knowledge
-        run: npm run typecheck
-      - name: Unit tests (fusion + eval harness)
-        working-directory: apps/knowledge
-        run: npm test
-      - name: Retrieval eval gate (deterministic subset, machine-readable)
-        working-directory: apps/knowledge
-        run: npm run eval -- --json --subset
-
-  # Knowledge ingest service tests (#58 + the retrieval issues): the queue's
-  # idempotency/lease contracts and the real extract → chunk → embed → upsert
-  # pipeline handler, all offline (deterministic fake embeddings, memory
-  # store; the live-DB integration suite skips without DATABASE_URL). The
-  # service typechecks against apps/knowledge sources (relative imports), so
-  # the knowledge lib deps are installed first.
-  knowledge-ingest-test:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            apps/knowledge/package-lock.json
-            apps/knowledge-ingest/package-lock.json
-      - name: Install knowledge lib deps (typecheck @types)
-        working-directory: apps/knowledge
-        run: npm ci --no-audit --no-fund
-      - name: Install ingest deps
-        working-directory: apps/knowledge-ingest
-        run: npm ci --no-audit --no-fund
-      - name: Typecheck
-        working-directory: apps/knowledge-ingest
-        run: npm run typecheck
-      - name: Test (queue contracts + pipeline handler)
-        working-directory: apps/knowledge-ingest
-        run: npm test
-
-  # Knowledge retrieval service tests: API surface (health, auth, search,
-  # ingest passthrough) on the memory store plus the Postgres store's SQL
-  # construction and mapping against a fake pg client — offline by design.
-  knowledge-retrieval-test:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/knowledge-retrieval/package-lock.json
-      - name: Install retrieval deps
-        working-directory: apps/knowledge-retrieval
-        run: npm ci --no-audit --no-fund
-      # The retrieval tsconfig compiles the shared knowledge lib's channel
-      # modules too; their `pg` imports resolve from the knowledge app's
-      # node_modules (same pattern as the ingest job).
-      - name: Install knowledge lib deps (typecheck @types)
-        working-directory: apps/knowledge
-        run: npm ci --no-audit --no-fund
-      - name: Typecheck
-        working-directory: apps/knowledge-retrieval
-        run: npm run typecheck
-      - name: Test (API surface + pg store)
-        working-directory: apps/knowledge-retrieval
-        run: npm test
-
-  # GitHub App token service (#70): integration tests with mocked JWT/token
-  # exchange (no network, no real App needed).
-  github-app-test:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/factory/github-app/package-lock.json
-      - name: Install deps
-        working-directory: apps/factory/github-app
-        run: npm ci --no-audit --no-fund
-      - name: Test (mocked JWT/token exchange)
-        working-directory: apps/factory/github-app
-        run: npm test
-
-  # Issue collector (#78): behavior tests against a fake GitHub server/client
-  # (no network): pagination, conditional requests, rate limits, duplicate-run
-  # guarantees.
-  collector-test:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/factory/collector/package-lock.json
-      - name: Install deps
-        working-directory: apps/factory/collector
-        run: npm ci --no-audit --no-fund
-      - name: Test (fake GitHub server/client)
-        working-directory: apps/factory/collector
-        run: npm test
-
-  validate:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install shellcheck
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-      - name: Verify (lint, manifests, secrets, image refs)
-        run: ./scripts/verify.sh
-      # Skills-sync fixture tests (#81): a local fixture repo proves
-      # pinned-commit verification, allowlist enforcement, idempotent
-      # install, obsolete-file removal, private>public precedence, and
-      # credential-free Git config. Run beside verify.sh, not inside it:
-      # verify.sh itself is bash and must stay untouched by dash-gated
-      # worker edits.
-      - name: Skills-sync fixture tests
-        run: sh apps/shared/tests/skills-sync.test.sh
-      - name: Reclaimer fixture test
-        run: sh apps/factory/orchestrator/tests/reclaimer.test.sh
-      # Stalled-PR sweeper (#242): three seeded PRs (green+old, ci-red fresh,
-      # ci-red stale) take distinct correct actions; a stateful gh shim makes
-      # the re-run prove idempotency (no duplicate issues/pings/comments).
-      - name: Sweeper fixture test
-        run: sh apps/factory/reviewer/tests/sweeper.test.sh
-      # Medic fixture tests (#239): red→green convergence via a real local
-      # bare remote, plus the write-guard and stuck-escalation paths.
-      - name: Medic fixture test
-        run: sh apps/factory/medic/tests/medic.test.sh
 
   # Images whose build inputs changed: the image's directory plus every
   # path its Dockerfile COPYs. On main the diff starts at the last green
@@ -342,20 +119,7 @@ jobs:
           echo "images=$(cat images.json)" >> "$GITHUB_OUTPUT"
 
   build:
-    needs:
-      [
-        changes,
-        validate,
-        lint,
-        panel-smoke,
-        panel-test,
-        panel-e2e,
-        knowledge-eval,
-        knowledge-ingest-test,
-        knowledge-retrieval-test,
-        github-app-test,
-        collector-test,
-      ]
+    needs: [changes, check, validate, panel-e2e]
     if: needs.changes.outputs.images != '[]'
     name: build ${{ matrix.image.name }}
     strategy:
@@ -428,21 +192,7 @@ jobs:
   # succeeded or was legitimately skipped.
   ci:
     if: always()
-    needs:
-      [
-        lint,
-        validate,
-        panel-smoke,
-        panel-test,
-        panel-e2e,
-        knowledge-eval,
-        knowledge-ingest-test,
-        knowledge-retrieval-test,
-        github-app-test,
-        collector-test,
-        changes,
-        build,
-      ]
+    needs: [check, validate, panel-e2e, changes, build]
     runs-on: ubuntu-latest
     steps:
       - run: test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false

@@ -116,7 +116,7 @@ Until that lands, the operator can mint locally with `npm run mint -- --out /tmp
 - **Integration (mocked JWT/token exchange, no network, throwaway RSA keys generated per run):**
 
   ```sh
-  cd apps/factory/github-app && npm test
+  npm test -w apps/factory/github-app
   ```
 
   Covers: JWT claim shape + RS256 signature verification (and tamper rejection), the exchange request shape, expiry-aware caching/refresh margin, per-permission-set cache keys, credential validation, CLI spec parsing, and the redaction guarantees.

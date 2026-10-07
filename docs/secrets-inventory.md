@@ -202,7 +202,7 @@ Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret w
 
 | Credential | Why out of scope |
 | --- | --- |
-| CI `secrets.GITHUB_TOKEN` (`.github/workflows/ci.yaml`, `cleanup-ghcr.yaml`) | Ephemeral, Actions-provided per workflow run; not cluster runtime |
+| CI `secrets.GITHUB_TOKEN` (`.github/workflows/ci.yaml`) | Ephemeral, Actions-provided per workflow run; not cluster runtime |
 | Automounted ServiceAccount tokens (hermes, panel, chaos-monkey, deployer, factory-orchestrator) | Issued and rotated by Kubernetes; RBAC-scoped identity, not a stored secret |
 | `PANEL_K8S_TOKEN` (`apps/panel/server/k8s.ts`) | Dev/test override only; production uses the mounted SA token |
 | Known credentials scrubbed at runtime (`apps/hermes/run-hermes.sh` dotfile scrub) | Hygiene measure, not a secret |

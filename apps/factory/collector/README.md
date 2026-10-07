@@ -68,7 +68,7 @@ Polling works without public ingress: the collector only makes outbound HTTPS ca
 ## Tests
 
 ```sh
-npm --prefix apps/factory/collector test
+npm test -w apps/factory/collector
 ```
 
 The GitHub API is faked two ways: an in-memory fake **server** behind `fetch` (client tests: pagination, 304s, rate limits, retries, redaction) and a fake **client** (behavior tests: eligibility, duplicate-run guarantees, cursor rules, race narrowing). No network, no real tokens.
