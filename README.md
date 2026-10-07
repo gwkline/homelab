@@ -25,7 +25,7 @@ Platform:
 
 Every UI is reachable only on the tailnet, through the Tailscale operator.
 
-`kubectl apply -k clusters/home` applies the core set. The operators (ESO, CNPG, policy-controller, tailscale) and the per-component bases (executor, knowledge, cloudbeaver) are applied as described in [docs/rebuild-runbook.md](docs/rebuild-runbook.md).
+`kubectl apply -k clusters/home` applies the core set. The operators (ESO, CNPG, policy-controller, tailscale) and the per-component bases (executor, knowledge) are applied as described in [docs/rebuild-runbook.md](docs/rebuild-runbook.md).
 
 ## Images and deploys
 
