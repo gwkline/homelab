@@ -18,7 +18,7 @@ kubectl apply -k deploy/knowledge/base
 kubectl -n agents rollout status deploy/knowledge-ingest deploy/knowledge-retrieval
 ```
 
-The schema migrates idempotently on boot.
+knowledge-ingest applies pending schema migrations on boot under a Postgres advisory lock. Retrieval never issues DDL; it answers 503 until the schema version it needs is in place, so the two can start in either order.
 
 ## Verify
 
