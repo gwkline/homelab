@@ -4,7 +4,8 @@
  * are never mixed into results; `countChunksNeedingBackfill` reports them.
  */
 
-import type { PgClient } from "./pg-client.ts";
+import type { PgClient, PgPool } from "./pg-client.ts";
+import { withTransaction } from "./pg-client.ts";
 import { KNOWLEDGE_SCHEMA_MIGRATION_SQL } from "./schema.ts";
 
 export const PGVECTOR_TABLE = "chunks";
@@ -276,35 +277,20 @@ export const parsePgvectorRows = (
     };
   });
 
-const runVectorQuery = async (
-  client: PgClient,
-  prelude: string | null,
+const runVectorQuery = (
+  pool: PgPool,
+  prelude: string,
   built: PgvectorSearchQuery
-): Promise<PgvectorHit[]> => {
-  await client.query("BEGIN", []);
-  try {
-    if (prelude !== null) {
-      await client.query(prelude, []);
-    }
+): Promise<PgvectorHit[]> =>
+  withTransaction(pool, async (client) => {
+    await client.query(prelude, []);
     const result = await client.query(built.text, built.params);
-    await client.query("COMMIT", []);
     return parsePgvectorRows(result.rows);
-  } catch (error) {
-    try {
-      await client.query("ROLLBACK", []);
-    } catch {
-      // The original failure is the one worth surfacing.
-    }
-    throw error;
-  }
-};
+  });
 
-/**
- * HNSW search. `efSearch` is scoped to this transaction, so the client must
- * be a dedicated connection, not one shared across concurrent searches.
- */
+/** HNSW search; `efSearch` is `SET LOCAL`, scoped to its own transaction. */
 export const searchPgvector = async (
-  client: PgClient,
+  pool: PgPool,
   queryEmbedding: number[],
   options: PgvectorSearchOptions = {}
 ): Promise<PgvectorHit[]> => {
@@ -312,17 +298,17 @@ export const searchPgvector = async (
   const efSearchStatement = buildEfSearchStatement(
     options.efSearch ?? DEFAULT_EF_SEARCH
   );
-  return await runVectorQuery(client, efSearchStatement, built);
+  return await runVectorQuery(pool, efSearchStatement, built);
 };
 
 /** Same query forced to a sequential scan: the ground truth for `hnswRecall`. */
 export const searchPgvectorExact = async (
-  client: PgClient,
+  pool: PgPool,
   queryEmbedding: number[],
   options: PgvectorSearchOptions = {}
 ): Promise<PgvectorHit[]> => {
   const built = buildPgvectorSearchQuery(queryEmbedding, options);
-  return await runVectorQuery(client, PGVECTOR_EXACT_SCAN_GUARD, built);
+  return await runVectorQuery(pool, PGVECTOR_EXACT_SCAN_GUARD, built);
 };
 
 /** |approximate ∩ exact| / |exact|; an empty exact list is vacuously 1. */
@@ -407,7 +393,7 @@ export const ensurePgvectorSchema = async (client: PgClient): Promise<void> => {
 
 /** `pg` is imported lazily so offline consumers never need the driver. */
 export const withPgvectorClientFromEnv = async <T>(
-  fn: (client: PgClient) => Promise<T>
+  fn: (pool: PgPool) => Promise<T>
 ): Promise<T> => {
   const connectionString = process.env["DATABASE_URL"];
   if (!connectionString) {
@@ -417,11 +403,9 @@ export const withPgvectorClientFromEnv = async <T>(
   }
   const { default: pg } = await import("pg");
   const pool = new pg.Pool({ connectionString });
-  const client = await pool.connect();
   try {
-    return await fn(client);
+    return await fn(pool);
   } finally {
-    client.release();
     await pool.end();
   }
 };

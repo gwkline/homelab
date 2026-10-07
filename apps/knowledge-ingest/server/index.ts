@@ -3,11 +3,10 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
 import { configFromEnv } from "./config.ts";
 import { createMemoryManifestStore } from "./git-sync.ts";
-import { PgKnowledgeSink, sinkClientFromPool } from "./knowledge-sink.ts";
+import { PgKnowledgeSink } from "./knowledge-sink.ts";
 import { createJsonLogger } from "./log.ts";
 import { createMemoryIngestStore } from "./memory-store.ts";
 import { PgIngestStore, createPgPool } from "./pg-store.ts";
-import type { QueueDbClient } from "./pg-store.ts";
 import {
   createMemoryPipelineSink,
   createPipelineHandler,
@@ -20,11 +19,11 @@ const logger = createJsonLogger();
 
 try {
   const config = configFromEnv(process.env);
-  const client: QueueDbClient | null = config.databaseUrl
+  const pool = config.databaseUrl
     ? await createPgPool(config.databaseUrl)
     : null;
-  const store = client
-    ? new PgIngestStore(client, {
+  const store = pool
+    ? new PgIngestStore(pool, {
         defaultMaxAttempts: config.worker.maxAttempts,
       })
     : createMemoryIngestStore({ maxAttempts: config.worker.maxAttempts });
@@ -32,16 +31,16 @@ try {
   // The queue schema must apply before the knowledge schema: both create
   // `ingest_job` IF NOT EXISTS, and this service's richer table must win.
   const sink =
-    client === null
+    pool === null
       ? createMemoryPipelineSink()
-      : new PgKnowledgeSink(sinkClientFromPool(client), {
+      : new PgKnowledgeSink(pool, {
           log: (entry) => logger.info("sink", entry),
         });
   const manifests =
-    client === null ? createMemoryManifestStore() : (sink as PgKnowledgeSink);
+    pool === null ? createMemoryManifestStore() : (sink as PgKnowledgeSink);
 
   if (config.applySchemaOnBoot) {
-    if (client === null) {
+    if (pool === null) {
       logger.warn(
         "no database configured; running the in-memory queue and sink (jobs are NOT durable)",
         {}

@@ -22,6 +22,7 @@ The live-database tests are skipped unless `DATABASE_URL` points at a Postgres w
 | File | Role |
 | --- | --- |
 | `src/schema.ts` | Base migration and statement builders: `knowledge_namespace`, `document`, `document_version`, `chunks`, `ingest_job`. |
+| `src/pg-client.ts` | Pool surface and `withTransaction`, which runs each transaction on one checked-out connection. |
 | `src/git-source.ts` | Incremental Git sync into whole-file documents, emitted as `document-version` ingest jobs. |
 | `src/chunk.ts` | Deterministic markdown/code/text chunking with citation anchors. |
 | `src/embedder.ts` | Embedding providers plus a batched, bounded, retrying request engine. |

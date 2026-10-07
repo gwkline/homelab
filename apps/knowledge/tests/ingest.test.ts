@@ -35,15 +35,19 @@ import type {
   IngestDocumentVersion,
   IngestJobRecord,
 } from "../src/ingest.ts";
-import type { PgClient } from "../src/pg-client.ts";
+import type { PgClient, PgPool } from "../src/pg-client.ts";
 import { EMBEDDING_DIMENSIONS } from "../src/pgvector.ts";
 import { KNOWLEDGE_SCHEMA_MIGRATION_SQL } from "../src/schema.ts";
+import { fakePool } from "./fake-pool.ts";
+import type { FakePool } from "./fake-pool.ts";
 
 // --- fakes ---
 
 interface RecordedClient {
-  client: PgClient;
+  calls: FakePool["calls"];
   params: unknown[][];
+  pool: PgPool;
+  releases: FakePool["releases"];
   statements: string[];
 }
 
@@ -85,7 +89,8 @@ const stubClient = (
       return Promise.resolve({ rows: [] });
     },
   };
-  return { client, params, statements };
+  const { calls, pool, releases } = fakePool(client);
+  return { calls, params, pool, releases, statements };
 };
 
 const fakeProvider = (
@@ -135,7 +140,7 @@ const chunkUpsertIndices = (recorded: RecordedClient): number[] =>
 const runHappyPath = async () => {
   const logs: Record<string, unknown>[] = [];
   const recorded = stubClient();
-  const outcome = await processDocumentVersion(recorded.client, baseDoc(), {
+  const outcome = await processDocumentVersion(recorded.pool, baseDoc(), {
     config: resolveEmbeddingWorkerConfig({
       maxChars: 60,
       provider: createFakeEmbeddingProvider("fake/test-model"),
@@ -159,9 +164,12 @@ test("happy path writes the #56 document model before chunks", async () => {
   assert.equal(outcome.documentId, "doc-1");
   assert.equal(outcome.versionId, "v7");
 
-  const { params, statements } = recorded;
+  const { calls, params, releases, statements } = recorded;
   assert.equal(statements[0], "BEGIN");
   assert.equal(statements.at(-1), "COMMIT");
+  // One checkout carries the whole version swap and goes back clean.
+  assert.ok(calls.every((call) => call.checkout === 1));
+  assert.deepEqual(releases, [{ checkout: 1, error: undefined }]);
   // FK order: namespace → document → version → chunks → supersede.
   assert.match(statements[1] ?? "", /^INSERT INTO knowledge_namespace/u);
   assert.match(
@@ -313,7 +321,7 @@ test("unchanged content resolves the existing document and version rows", async 
     ]
   );
   const outcome = await processDocumentVersion(
-    recorded.client,
+    recorded.pool,
     baseDoc({ documentId: "doc-fresh", versionId: "v-fresh" }),
     {
       config: resolveEmbeddingWorkerConfig({
@@ -344,7 +352,7 @@ test("one invalid vector fails only its chunk; valid batchmates still embed", as
     input.includes("S3cr3tBody") ? [0.1, 0.2, 0.3] : null
   );
   const recorded = stubClient();
-  const outcome = await processDocumentVersion(recorded.client, baseDoc(), {
+  const outcome = await processDocumentVersion(recorded.pool, baseDoc(), {
     config: resolveEmbeddingWorkerConfig({
       maxChars: 60,
       provider,
@@ -414,7 +422,7 @@ test("provider requests are batched and concurrency is capped", async () => {
   };
   const recorded = stubClient();
   const outcome = await processDocumentVersion(
-    recorded.client,
+    recorded.pool,
     baseDoc({
       content: ["aaaa", "bbbb", "cccc", "dddd", "eeee"].join("\n\n"),
       documentId: "doc-batches",
@@ -460,7 +468,7 @@ test("retryable provider failures back off and recover", async () => {
   };
   const recorded = stubClient();
   const outcome = await processDocumentVersion(
-    recorded.client,
+    recorded.pool,
     baseDoc({ content: "retry me please", documentId: "doc-retry" }),
     {
       config: resolveEmbeddingWorkerConfig({
@@ -499,7 +507,7 @@ test("non-retryable 4xx fails fast; text rows still persist for BM25", async () 
   };
   const recorded = stubClient();
   const outcome = await processDocumentVersion(
-    recorded.client,
+    recorded.pool,
     baseDoc({ content: "doomed content", documentId: "doc-400" }),
     {
       config: resolveEmbeddingWorkerConfig({
@@ -541,8 +549,9 @@ test("database failure rolls the whole version swap back", async () => {
       return Promise.resolve({ rows: [] });
     },
   };
+  const { calls, pool, releases } = fakePool(failing);
   await assert.rejects(
-    processDocumentVersion(failing, baseDoc({ content: "alpha beta" }), {
+    processDocumentVersion(pool, baseDoc({ content: "alpha beta" }), {
       config: resolveEmbeddingWorkerConfig({
         provider: createFakeEmbeddingProvider("fake/test-model"),
       }),
@@ -550,6 +559,9 @@ test("database failure rolls the whole version swap back", async () => {
     /does not exist/u
   );
   assert.ok(queries >= 2);
+  assert.equal(calls.at(-1)?.text, "ROLLBACK");
+  assert.ok(calls.every((call) => call.checkout === 1));
+  assert.deepEqual(releases, [{ checkout: 1, error: undefined }]);
 });
 
 // --- dimension honesty ---
@@ -894,7 +906,7 @@ test("re-ingesting a changed version supersedes the dropped content hashes", asy
   const v1Keep = v1.recorded.params.at(-2)?.[1] as string[];
   const recorded = stubClient();
   const outcome = await processDocumentVersion(
-    recorded.client,
+    recorded.pool,
     baseDoc({
       content: "totally different content now",
       versionId: "v8",
@@ -1164,7 +1176,7 @@ test("parseDocumentPayload validates the normalized version shape", () => {
 test("runIngestJob marks done on success and records truncated failures", async () => {
   const success = stubClient();
   const result = await runIngestJob(
-    success.client,
+    success.pool,
     {
       attempts: 1,
       jobId: "job-ok",
@@ -1196,7 +1208,7 @@ WHERE id = $1`
 
   const failing = stubClient();
   const failed = await runIngestJob(
-    failing.client,
+    failing.pool,
     {
       attempts: 2,
       jobId: "job-bad",
@@ -1240,7 +1252,7 @@ test("drainIngestJobs claims until the queue is empty or the cap hits", async ()
     },
   });
   const recorded = stubClient([[job("j1")], [job("j2")]]);
-  const results = await drainIngestJobs(recorded.client, {
+  const results = await drainIngestJobs(recorded.pool, {
     config: resolveEmbeddingWorkerConfig({
       maxChars: 60,
       provider: createFakeEmbeddingProvider("fake/test-model"),
@@ -1252,7 +1264,7 @@ test("drainIngestJobs claims until the queue is empty or the cap hits", async ()
   );
   const capped = stubClient([[job("j1")], [job("j2")], [job("j3")]]);
   const limited = await drainIngestJobs(
-    capped.client,
+    capped.pool,
     {
       config: resolveEmbeddingWorkerConfig({
         provider: createFakeEmbeddingProvider("fake/test-model"),
@@ -1263,7 +1275,7 @@ test("drainIngestJobs claims until the queue is empty or the cap hits", async ()
   assert.equal(limited.length, 2);
   await assert.rejects(
     drainIngestJobs(
-      stubClient().client,
+      stubClient().pool,
       {
         config: resolveEmbeddingWorkerConfig({
           provider: createFakeEmbeddingProvider(),

@@ -10,14 +10,14 @@ import type { EmbeddingWorkerConfig } from "../../knowledge/src/embedder.ts";
 import type { GitSourceManifest } from "../../knowledge/src/git-source.ts";
 import { processDocumentVersion } from "../../knowledge/src/ingest.ts";
 import type { DocumentIngestOutcome } from "../../knowledge/src/ingest.ts";
-import type { PgClient } from "../../knowledge/src/pg-client.ts";
+import type { PgPool } from "../../knowledge/src/pg-client.ts";
+import { withTransaction } from "../../knowledge/src/pg-client.ts";
 import {
   buildChunkSupersede,
   buildDocumentTombstone,
   ensureKnowledgeSchema,
 } from "../../knowledge/src/schema.ts";
 import type { GitManifestStore } from "./git-sync.ts";
-import type { QueueDbClient } from "./pg-store.ts";
 import type {
   PipelineDocument,
   PipelineSink,
@@ -57,14 +57,17 @@ const asManifest = (
   };
 };
 
-/** Pipeline sink and git manifest store over the service's pg pool. */
+/**
+ * Pipeline sink and git manifest store over the service's pg pool. Single
+ * statements use the pool; transactions check out their own connection.
+ */
 export class PgKnowledgeSink implements PipelineSink, GitManifestStore {
-  private readonly client: PgClient;
+  private readonly pool: PgPool;
   private readonly config: EmbeddingWorkerConfig;
   private readonly log: PgSinkOptions["log"];
 
-  constructor(client: PgClient, options: PgSinkOptions = {}) {
-    this.client = client;
+  constructor(pool: PgPool, options: PgSinkOptions = {}) {
+    this.pool = pool;
     this.config =
       options.config ??
       embeddingWorkerConfigFromEnv(options.env ?? process.env);
@@ -73,11 +76,11 @@ export class PgKnowledgeSink implements PipelineSink, GitManifestStore {
 
   /** Idempotent knowledge schema; apply after the queue schema. */
   async applySchema(): Promise<void> {
-    await ensureKnowledgeSchema(this.client);
+    await ensureKnowledgeSchema(this.pool);
   }
 
   async loadManifest(sourceKey: string): Promise<GitSourceManifest> {
-    const { rows } = await this.client.query(
+    const { rows } = await this.pool.query(
       "SELECT commit_sha, entries FROM git_source_manifest WHERE source_key = $1",
       [sourceKey]
     );
@@ -85,7 +88,7 @@ export class PgKnowledgeSink implements PipelineSink, GitManifestStore {
   }
 
   async saveManifest(manifest: GitSourceManifest): Promise<void> {
-    await this.client.query(
+    await this.pool.query(
       `INSERT INTO git_source_manifest (source_key, commit_sha, entries)
 VALUES ($1, $2, $3::jsonb)
 ON CONFLICT (source_key) DO UPDATE SET
@@ -100,7 +103,7 @@ ON CONFLICT (source_key) DO UPDATE SET
     doc: PipelineDocument
   ): Promise<PipelineSinkOutcome> {
     const outcome: DocumentIngestOutcome = await processDocumentVersion(
-      this.client,
+      this.pool,
       {
         content: doc.content,
         documentId: doc.documentId,
@@ -124,28 +127,11 @@ ON CONFLICT (source_key) DO UPDATE SET
   }
 
   async tombstoneDocument(documentId: string): Promise<void> {
-    await this.client.query("BEGIN", []);
-    try {
+    await withTransaction(this.pool, async (client) => {
       const tombstone = buildDocumentTombstone(documentId);
-      await this.client.query(tombstone.text, tombstone.params);
+      await client.query(tombstone.text, tombstone.params);
       const supersede = buildChunkSupersede(documentId);
-      await this.client.query(supersede.text, supersede.params);
-      await this.client.query("COMMIT", []);
-    } catch (error) {
-      try {
-        await this.client.query("ROLLBACK", []);
-      } catch {
-        // The original failure is the one worth surfacing.
-      }
-      throw error;
-    }
+      await client.query(supersede.text, supersede.params);
+    });
   }
 }
-
-/** Adapt the service's queue pool client to the sink's client surface. */
-export const sinkClientFromPool = (pool: QueueDbClient): PgClient => ({
-  query: async (text, params) => {
-    const result = await pool.query(text, params ?? []);
-    return { rows: (result.rows ?? []) as Record<string, unknown>[] };
-  },
-});
