@@ -88,6 +88,4 @@ export interface RetrievalStore {
   ping?: () => Promise<void>;
 }
 
-export class StoreUnavailableError extends Error {
-  override name = "StoreUnavailableError";
-}
+export { StoreUnavailableError } from "../../knowledge/src/store-errors.ts";

@@ -11,6 +11,8 @@ import {
 import type { Bm25SearchQuery } from "../src/bm25.ts";
 import type { PgClient } from "../src/pg-client.ts";
 import { migrateKnowledgeSchema } from "../src/schema.ts";
+import { fixtureVersionId, insertChunkFixtures } from "./live-fixtures.ts";
+import type { ChunkFixture } from "./live-fixtures.ts";
 
 const stubClient = (
   rows: Record<string, unknown>[],
@@ -64,12 +66,9 @@ test("builder defaults: namespace default, live chunks only, limit 10", () => {
   assert.ok(built.text.includes('AND "valid_to" IS NULL'));
 });
 
-test("builder includeSuperseded drops the active-version predicate", () => {
-  const built = buildBm25SearchQuery("q", { includeSuperseded: true });
-  assert.ok(
-    !built.text.includes('"valid_to" IS NULL'),
-    "superseded mode cannot use the partial index"
-  );
+test("builder always searches live chunks, the only ones the index can rank", () => {
+  const built = buildBm25SearchQuery("q");
+  assert.ok(built.text.includes('AND "valid_to" IS NULL'));
 });
 
 test("builder accepts a custom index name, rejects injection", () => {
@@ -280,75 +279,74 @@ const TEST_NAMESPACES = [WIDE_NAMESPACE, SPARSE_NAMESPACE, OTHER_NAMESPACE];
  */
 const FILLER_ROWS = 10_000;
 
+const FILLER_NOUNS = [
+  "database",
+  "network",
+  "storage",
+  "backup",
+  "cluster",
+  "router",
+  "volume",
+  "policy",
+  "image",
+  "gateway",
+];
+
 const seedFixture = async (client: PgClient): Promise<void> => {
   await client.query("DELETE FROM chunks WHERE namespace = ANY($1)", [
     TEST_NAMESPACES,
   ]);
-  await client.query(
-    `INSERT INTO chunks (chunk_id, document_id, version_id, namespace, text)
-SELECT 'bm25-filler-' || g,
-       'bm25-filler-doc-' || (g / 4),
-       'v1',
-       $1,
-       'filler ' || (ARRAY['database', 'network', 'storage', 'backup', 'cluster', 'router', 'volume', 'policy', 'image', 'gateway'])[1 + (g % 10)]
-         || ' ' || (ARRAY['database', 'network', 'storage', 'backup', 'cluster', 'router'])[1 + (g % 7)] || ' report'
-FROM generate_series(1, $2) AS g`,
-    [WIDE_NAMESPACE, FILLER_ROWS]
+  const filler: ChunkFixture[] = Array.from(
+    { length: FILLER_ROWS },
+    (_, index) => {
+      const g = index + 1;
+      return {
+        chunkId: `bm25-filler-${g}`,
+        documentId: `bm25-filler-doc-${Math.trunc(g / 4)}`,
+        namespace: WIDE_NAMESPACE,
+        text: `filler ${FILLER_NOUNS[g % 10] ?? ""} ${FILLER_NOUNS[g % 6] ?? ""} report`,
+      };
+    }
   );
-
-  const probeInsert = `INSERT INTO chunks
-  (chunk_id, document_id, version_id, namespace, text)
-VALUES ($1, $2, 'v1', $3, $4)`;
-  const probes: [string, string, string][] = [
-    [
-      "bm25-ident",
-      "bm25-ident-doc",
-      "fixture identifier KWREF-6087 marks the keyword channel",
-    ],
+  const probes: ChunkFixture[] = [
+    ["bm25-ident", "fixture identifier KWREF-6087 marks the keyword channel"],
     [
       "bm25-rare",
-      "bm25-rare-doc",
       "the fluxcapacitor valve regulates pressure in the storage room",
     ],
-    [
-      "bm25-stem",
-      "bm25-stem-doc",
-      "the service runs continuously and the runner retries",
-    ],
-    [
-      "bm25-punct",
-      "bm25-punct-doc",
-      "restart failed; check the logs, then reboot",
-    ],
-  ];
-  await Promise.all(
-    probes.map(([chunkId, documentId, text]) =>
-      client.query(probeInsert, [chunkId, documentId, WIDE_NAMESPACE, text])
-    )
-  );
-  // Superseded chunk: must stay invisible to the default (live-only) search.
-  await client.query(
-    `INSERT INTO chunks
-  (chunk_id, document_id, version_id, namespace, text, valid_to)
-VALUES ('bm25-dead', 'bm25-dead-doc', 'v1', $1, 'dead chunk marker KWXDEAD-1', now())`,
-    [WIDE_NAMESPACE]
-  );
-  await client.query(probeInsert, [
-    "bm25-other-1",
-    "bm25-other-doc",
-    OTHER_NAMESPACE,
-    "wireless headphones live in another collection",
+    ["bm25-stem", "the service runs continuously and the runner retries"],
+    ["bm25-punct", "restart failed; check the logs, then reboot"],
+  ].map(([chunkId = "", text = ""]) => ({
+    chunkId,
+    documentId: `${chunkId}-doc`,
+    namespace: WIDE_NAMESPACE,
+    text,
+  }));
+  const sparse: ChunkFixture[] = Array.from({ length: 5 }, (_, index) => ({
+    chunkId: `bm25-sparse-${index + 1}`,
+    documentId: `bm25-sparse-doc-${index + 1}`,
+    namespace: SPARSE_NAMESPACE,
+    text: `sparse collection row ${index + 1} about network policy`,
+  }));
+  await insertChunkFixtures(client, [
+    ...filler,
+    ...probes,
+    // Superseded: must stay invisible to the default (live-only) search.
+    {
+      chunkId: "bm25-dead",
+      documentId: "bm25-dead-doc",
+      namespace: WIDE_NAMESPACE,
+      superseded: true,
+      text: "dead chunk marker KWXDEAD-1",
+    },
+    {
+      chunkId: "bm25-other-1",
+      documentId: "bm25-other-doc",
+      namespace: OTHER_NAMESPACE,
+      text: "wireless headphones live in another collection",
+    },
+    ...sparse,
   ]);
-  await client.query(
-    `INSERT INTO chunks (chunk_id, document_id, version_id, namespace, text)
-SELECT 'bm25-sparse-' || g,
-       'bm25-sparse-doc-' || g,
-       'v1',
-       $1,
-       'sparse collection row ' || g || ' about network policy'
-FROM generate_series(1, 5) AS g`,
-    [SPARSE_NAMESPACE]
-  );
   // Refresh planner statistics so EXPLAIN sees the loaded corpus size.
   await client.query("ANALYZE chunks", []);
 };
@@ -413,7 +411,7 @@ test(
       assert.ok(ident.length >= 1, "exact identifier must match its chunk");
       assert.equal(ident[0]?.chunkId, "bm25-ident");
       assert.equal(ident[0]?.documentId, "bm25-ident-doc");
-      assert.equal(ident[0]?.versionId, "v1");
+      assert.equal(ident[0]?.versionId, fixtureVersionId("bm25-ident-doc"));
       assert.equal(ident[0]?.namespace, WIDE_NAMESPACE);
       assert.equal(ident[0]?.rank, 1);
       assert.ok(
@@ -476,15 +474,6 @@ test(
         namespace: WIDE_NAMESPACE,
       });
       assert.deepEqual(dead, []);
-      const deadIncluded = await searchBm25(client, "KWXDEAD-1", {
-        includeSuperseded: true,
-        limit: 10,
-        namespace: WIDE_NAMESPACE,
-      });
-      assert.deepEqual(
-        deadIncluded.map((hit) => hit.chunkId),
-        ["bm25-dead"]
-      );
 
       // --- Selective namespace returns only that collection's rows -------
       const sparse = await searchBm25(client, "network policy", {

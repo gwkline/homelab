@@ -7,6 +7,11 @@
  * negative BM25 score (best first) and raw scores are not comparable across
  * queries; fusion consumes only the 1-based `rank`.
  *
+ * Superseded chunks sit outside the partial index, so `<@>` cannot rank them
+ * reliably, and a sequential scan returns non-matching rows as zero-score
+ * hits. BM25 therefore searches live chunks only; superseded versions surface
+ * through the vector channel alone.
+ *
  * On wide namespaces the planner may post-filter, which can return fewer than
  * `limit` rows; over-fetch if a guaranteed count matters.
  */
@@ -40,8 +45,6 @@ export interface Bm25SearchOptions {
   limit?: number;
   namespace?: string;
   indexName?: string;
-  /** The partial BM25 index covers only live chunks, so this scans sequentially. */
-  includeSuperseded?: boolean;
 }
 
 export interface Bm25SearchQuery {
@@ -96,17 +99,12 @@ export const buildBm25SearchQuery = (
   const indexName = validatedIndexName(options.indexName);
   const limit = validatedLimit(options.limit);
   const literal = `'${indexName.replaceAll("'", "''")}'`;
-  const activeOnly = options.includeSuperseded !== true;
   return {
     params: [text, namespace, limit],
     text: `SELECT "${BM25_ID_COLUMN}", "document_id", "version_id", "namespace", "${BM25_COLUMN}", "anchors", ("${BM25_COLUMN}" <@> to_bm25query($1, ${literal})) AS score
 FROM "${BM25_TABLE}"
-WHERE "namespace" = $2${
-      activeOnly
-        ? `
-  AND "valid_to" IS NULL`
-        : ""
-    }
+WHERE "namespace" = $2
+  AND "valid_to" IS NULL
 ORDER BY ("${BM25_COLUMN}" <@> to_bm25query($1, ${literal})) ASC
 LIMIT $3`,
   };

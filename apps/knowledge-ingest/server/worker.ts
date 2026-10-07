@@ -8,8 +8,8 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import type { Logger } from "../../knowledge/src/log.ts";
 import type { WorkerConfig } from "./config.ts";
-import type { Logger } from "./log.ts";
 import { retryDelaySeconds } from "./queue.ts";
 import type { ClaimedJob, IngestStore, JobOutcome } from "./store.ts";
 

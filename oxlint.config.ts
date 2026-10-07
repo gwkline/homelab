@@ -45,10 +45,5 @@ export default {
       files: ["apps/knowledge/eval/rank.ts"],
       rules: { "no-bitwise": "off" },
     },
-    {
-      // Two small domain errors live beside the store contract they guard.
-      files: ["apps/knowledge-ingest/server/store.ts"],
-      rules: { "max-classes-per-file": "off" },
-    },
   ],
 };

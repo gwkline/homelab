@@ -67,8 +67,9 @@ test("heartbeat renews only the worker's own running claims", () => {
 test("enqueue collides on the idempotency key and returns the existing job", () => {
   assert.match(ENQUEUE_JOB_SQL, /ON CONFLICT \(idempotency_key\) DO NOTHING/u);
   assert.match(ENQUEUE_JOB_SQL, /WHERE j\.idempotency_key = \$3/u);
-  assert.match(ENQUEUE_JOB_SQL, /TRUE AS duplicate/u);
-  assert.match(ENQUEUE_JOB_SQL, /FALSE AS duplicate/u);
+  // A row the INSERT returned is fresh; a row read back is the duplicate.
+  assert.match(ENQUEUE_JOB_SQL, /SELECT i\.\*, FALSE AS duplicate FROM ins i/u);
+  assert.match(ENQUEUE_JOB_SQL, /j\.finished_at, TRUE AS duplicate/u);
 });
 
 test("publish is a no-op on the version identity", () => {

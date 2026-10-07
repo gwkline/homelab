@@ -16,8 +16,9 @@ const levelWeight: Record<LogLevel, number> = {
   warn: 30,
 };
 
-// JSON-lines logger. Callers pass only metadata, never query text or chunk
-// content, unless KNOWLEDGE_LOG_QUERIES opts in to logging queries.
+// JSON-lines logger. Callers pass only metadata (ids, counts, states), never
+// payloads, document content, or query text unless KNOWLEDGE_LOG_QUERIES
+// opts in.
 export const createJsonLogger = (
   stream: NodeJS.WritableStream = process.stdout,
   minLevel: LogLevel = "info"

@@ -8,6 +8,9 @@
     "eval": "node --experimental-strip-types eval/run-eval.ts",
     "typecheck": "tsc -p . --noEmit"
   },
+  "dependencies": {
+    "hono": "4.13.13"
+  },
   "devDependencies": {
     "@types/node": "26.3.0",
     "@types/pg": "^8.23.1",

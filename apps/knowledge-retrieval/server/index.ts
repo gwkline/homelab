@@ -4,10 +4,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { serve } from "@hono/node-server";
 
 import { embeddingProviderFromEnv } from "../../knowledge/src/embedder.ts";
+import { createJsonLogger } from "../../knowledge/src/log.ts";
 import { createPgPool } from "../../knowledge/src/pg-pool.ts";
 import { createApp } from "./app.ts";
 import { configFromEnv } from "./config.ts";
-import { createJsonLogger } from "./log.ts";
 import { MemoryStore, memoryStoreFromSeedFile } from "./memory-store.ts";
 import { mismatchedChunks } from "./metrics.ts";
 import { PgRetrievalStore } from "./pg-store.ts";

@@ -1,6 +1,5 @@
 export const BM25_K1 = 1.2;
 export const BM25_B = 0.75;
-export const RRF_DEFAULT_K = 60;
 
 export const tokenize = (text: string): string[] =>
   text
@@ -50,79 +49,3 @@ export const cosineSimilarity = (a: number[], b: number[]): number | null => {
   }
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 };
-
-export interface ChannelRank {
-  rank: number;
-  score: number;
-}
-
-export interface FusedCandidate<T> {
-  item: T;
-  fusedScore: number;
-  bm25: ChannelRank | null;
-  vector: ChannelRank | null;
-}
-
-interface ChannelInput<T> {
-  items: T[];
-  key: "bm25" | "vector";
-}
-
-// Reciprocal Rank Fusion over one or two ranked channel lists. Duplicates
-// collapse to a single candidate that keeps every channel rank it earned;
-// candidates found by only one channel stay eligible. Ties break on the
-// candidate id (ascending) so the output is deterministic.
-export const reciprocalRankFusion = <T>(
-  channels: ChannelInput<T>[],
-  getId: (item: T) => string,
-  k: number = RRF_DEFAULT_K
-): FusedCandidate<T>[] => {
-  if (k <= 0) {
-    throw new Error(`rrf k must be positive, got ${k}`);
-  }
-  const byId = new Map<
-    string,
-    {
-      item: T;
-      fusedScore: number;
-      bm25: ChannelRank | null;
-      vector: ChannelRank | null;
-    }
-  >();
-  for (const channel of channels) {
-    for (let i = 0; i < channel.items.length; i += 1) {
-      const item = channel.items[i];
-      if (!item) {
-        continue;
-      }
-      const id = getId(item);
-      const rank = i + 1;
-      const contribution = 1 / (k + rank);
-      const existing = byId.get(id);
-      if (existing) {
-        existing.fusedScore += contribution;
-        existing[channel.key] = { rank, score: contribution };
-      } else {
-        const entry: FusedCandidate<T> = {
-          bm25: channel.key === "bm25" ? { rank, score: contribution } : null,
-          fusedScore: contribution,
-          item,
-          vector:
-            channel.key === "vector" ? { rank, score: contribution } : null,
-        };
-        byId.set(id, entry);
-      }
-    }
-  }
-  return [...byId.values()].toSorted((a, b) => {
-    if (b.fusedScore !== a.fusedScore) {
-      return b.fusedScore - a.fusedScore;
-    }
-    return getId(a.item).localeCompare(getId(b.item));
-  });
-};
-
-export const rrfScoreForRank = (
-  rank: number,
-  k: number = RRF_DEFAULT_K
-): number => 1 / (k + rank);

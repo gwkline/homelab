@@ -144,9 +144,7 @@ export interface JobOutcome {
   documentsIngested: number;
 }
 
-export class StoreUnavailableError extends Error {
-  override name = "StoreUnavailableError";
-}
+export { StoreUnavailableError } from "../../knowledge/src/store-errors.ts";
 
 export class SourceNotFoundError extends Error {
   override name = "SourceNotFoundError";
