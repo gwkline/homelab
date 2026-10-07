@@ -24,4 +24,3 @@ resources:
   - ../../../deploy/deployer
   - ../../../deploy/work-t3code/base
   - ../../../deploy/chaos/base
-  - ../../../deploy/node-cleanup/base
