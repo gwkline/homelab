@@ -35,8 +35,7 @@ spec:
   podSelector:
     matchLabels:
       factory.gwkline.io/profile: code-pr
-  policyTypes: [Ingress, Egress]
-  ingress: [] # nothing may connect TO a worker
+  policyTypes: [Ingress, Egress] # no ingress rules: nothing may connect TO a worker
   egress:
     - to:
         - namespaceSelector:

@@ -25,7 +25,7 @@ Platform:
 
 Every UI is reachable only on the tailnet, through the Tailscale operator.
 
-`kubectl apply -k clusters/home` applies the core set. The operators (ESO, CNPG, policy-controller, tailscale) and the per-component bases (executor, knowledge, cloudbeaver) are applied as described in [docs/rebuild-runbook.md](docs/rebuild-runbook.md).
+`kubectl apply -k clusters/home` applies the core set. The operators (ESO, CNPG, policy-controller, tailscale) and the per-component bases (executor, knowledge) are applied as described in [docs/rebuild-runbook.md](docs/rebuild-runbook.md).
 
 ## Images and deploys
 
@@ -41,7 +41,7 @@ Long-lived credentials live in 1Password, and External Secrets syncs them into t
 
 ## Security model
 
-- **Pod Security:** `agents` and `sandbox` enforce `baseline` Pod Security and `work` enforces `restricted`. Nothing runs privileged, and no pod gets a Docker socket.
+- **Pod Security:** `agents`, `work` and `database` enforce the `restricted` level. `sandbox` enforces `baseline` and warns on `restricted` until the factory worker Job complies. Outside `kube-system`, only the Tailscale LoadBalancer proxies run privileged, and no pod gets a Docker socket.
 - **Network policy:**
   - Ingress is default-deny, and only Tailscale proxies reach the UIs.
   - Egress from `sandbox` and `work` is public-internet only: no Kubernetes API, LAN, tailnet or cloud metadata ([docs/egress-policy.md](docs/egress-policy.md)).

@@ -20,6 +20,7 @@ Every runtime credential, where it comes from, and who consumes it. No secret va
 | `work-claude-oauth` (`token`) | work | `work-claude-oauth` → `token` | work-t3code (`CLAUDE_CODE_OAUTH_TOKEN`) | From `claude setup-token`; restart work-t3code after rotating |
 | `work-depot-token` (`token`) | work | `work-depot-token` → `token` | work-t3code (`DEPOT_TOKEN`) | Optional |
 | `knowledge-db` (`username`, `password`, `databaseUrl`) | agents | `knowledge-db` → `username`, `password` | knowledge-ingest, knowledge-retrieval | Password must equal Secret `database/pg-primary-knowledge-owner`; rotate both together |
+| `cloudbeaver-admin` (`username`, `password`) | agents | `cloudbeaver-admin` → `username`, `password` | cloudbeaver (`CB_ADMIN_NAME`, `CB_ADMIN_PASSWORD`) | Seeds the admin of an empty workspace only; on rotation also change it in the admin UI |
 | `knowledge-api-token` (`token`) | agents, sandbox | `knowledge-api-token` → `token` | knowledge services, panel (optional), factory orchestrator | Shared internal bearer (`openssl rand -base64 32`) |
 | `panel-auth` (`users`, `tokens`) | agents | `panel-auth` → `users`, `tokens` | panel (optional; read-only without it) | `name=credential` pairs: Tailscale logins allowed to act through the UI, and one bearer token per machine caller (each Executor connection). The name is recorded as "requested by" |
 | `grafana-ntfy` (`url`) | agents | `grafana-ntfy` → `url` | Grafana (`NTFY_URL`, the alert contact point) | `https://ntfy.sh/<topic>`; the topic name is the credential. Restart Grafana after rotating |
@@ -36,7 +37,6 @@ Every runtime credential, where it comes from, and who consumes it. No secret va
 | `grafana-admin` (`admin-password`) | agents | `kubectl -n agents create secret generic grafana-admin --from-literal=admin-password=…` | Grafana admin login |
 | `executor-admin` (`email`, `password`) | agents | `kubectl -n agents create secret generic executor-admin …` | Optional headless Executor admin |
 | `executor-client` (`token`) | agents | issued by Executor; `deploy/hermes/README.md` | Optional; hermes and t3code reach Executor tools with it |
-| `cloudbeaver-db` (`user`, `password`) | agents | `scripts/create-cloudbeaver-secret.sh` | Least-privilege role (`deploy/cloudbeaver/README.md`) |
 | `ghcr-pull` (`.dockerconfigjson`) | per namespace | `kubectl create secret docker-registry` | Only if GHCR packages go private; no manifest references it today |
 
 ## Not Kubernetes Secrets
@@ -44,6 +44,7 @@ Every runtime credential, where it comes from, and who consumes it. No secret va
 | Credential | Where | Notes |
 | --- | --- | --- |
 | k3s node token | `/var/lib/rancher/k3s/server/node-token` on the server | Needed to join agent nodes |
+| CloudBeaver read-only role `cloudbeaver_ro` | 1Password `cloudbeaver-db` (`username`, `password`), typed into the CloudBeaver connection | Stored encrypted on the CloudBeaver PVC; role grants in `deploy/cloudbeaver/README.md` |
 | t3code opencode `auth.json` | t3code PVC, entered in a session | User-held; never synced |
 | CLI logins (Claude, Codex) | hermes and t3code PVC homes | Survive rollouts, lost with the PVC |
 
