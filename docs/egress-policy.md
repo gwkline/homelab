@@ -4,7 +4,7 @@ The normative network posture that `deploy/policies/base/networkpolicy.yaml` and
 
 ## Posture
 
-Ingress is default-deny in `agents`, `sandbox`, `work`, `database`, the operator namespaces (`external-secrets`, `cnpg-system`, `cosign-system`, `tailscale`) and `default`. Each workload declares its own ingress rule beside its manifests (e.g. `deploy/t3code/base/netpol.yaml`); the operator namespaces open only their admission webhook ports (`deploy/operator-policies/base`). VictoriaMetrics admits only Grafana; Loki admits only Alloy and Grafana; Postgres admits only cloudbeaver, knowledge-ingest and knowledge-retrieval.
+Ingress is default-deny in `agents`, `sandbox`, `work`, `database`, the operator namespaces (`external-secrets`, `cnpg-system`, `cosign-system`) and `default`. `tailscale` stays open so its proxies accept direct WireGuard from tailnet peers. Each workload declares its own ingress rule beside its manifests (e.g. `deploy/t3code/base/netpol.yaml`); the operator namespaces open only their admission webhook ports (`deploy/operator-policies/base`). VictoriaMetrics admits only Grafana; Loki admits only Alloy and Grafana; Postgres admits only cloudbeaver, knowledge-ingest and knowledge-retrieval.
 
 | Namespace | Egress |
 | --- | --- |
