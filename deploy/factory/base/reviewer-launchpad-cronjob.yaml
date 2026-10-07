@@ -40,6 +40,10 @@ spec:
                   valueFrom:
                     secretKeyRef:
                       { name: github-token, key: token, optional: false }
+                # Squash-merge factory PRs once CI is green. Admission is the
+                # gate: only `factory`-labelled issues become PRs.
+                - name: FACTORY_REVIEWER_AUTO_MERGE
+                  value: "true"
               resources:
                 requests: { cpu: 100m, memory: 128Mi }
                 limits: { cpu: 500m, memory: 512Mi }

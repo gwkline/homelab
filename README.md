@@ -11,7 +11,7 @@ Agents:
 - **hermes**: Nous Research's persistent agent. It drives the software factory through Executor and has read-only cluster access.
 - **executor**: the shared MCP/tool gateway, giving every agent one catalog of integrations and credentials.
 
-Software factory (`deploy/factory`): a collector admits open GitHub issues as Runs. The orchestrator turns each Run into a tested draft PR. Reviewer, security, medic and sweeper CronJobs keep those PRs moving, and a human merge is the only gate. See [ADR-003](docs/adr/adr-003-factory-github-ledger.md).
+Software factory (`deploy/factory`): a collector admits open GitHub issues labelled `factory` as Runs; only collaborators can apply that label. The orchestrator turns each Run into a tested draft PR, and the reviewer squash-merges it once CI is green. Security, medic and sweeper CronJobs keep PRs moving. See [ADR-003](docs/adr/adr-003-factory-github-ledger.md).
 
 Knowledge (`deploy/knowledge`): two services over Postgres. `knowledge-ingest` runs a queue and an extract → chunk → embed → upsert worker. `knowledge-retrieval` serves cited hybrid search (BM25 + vector). See [ADR-002](docs/adr/adr-002-knowledge-retrieval-architecture.md).
 
