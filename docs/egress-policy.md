@@ -19,7 +19,7 @@ Ingress is default-deny in `agents`, `sandbox`, and `work`; each workload declar
 | --- | --- | --- |
 | Headlamp | DNS + Kubernetes API | `deploy/headlamp/base/netpol.yaml` |
 | CNPG instances | DNS, Kubernetes API, peers on 5432 | `allow-instance-egress` in `deploy/postgres/base/netpol.yaml` |
-| Factory profiles | GitHub, container registries, Kubernetes API by explicit CIDR | `deploy/factory/base/profile-code-pr.yaml`, `profile-security.yaml` |
+| Factory loops and workers | kube-dns, then TCP 443 to the public internet minus private ranges, one policy per `factory.gwkline.io/profile` label. The orchestrator adds the API server node endpoint and knowledge retrieval | `allow-factory-*` beside each component in `deploy/factory/base/` |
 
 ## Required destinations
 
@@ -33,5 +33,7 @@ A sandbox pod must reach DNS, GitHub (git, codeload, API), a package registry, a
 
 ## Decisions
 
-- **Public-internet-minus-private-ranges, not SaaS IP lists:** SaaS IPs change without notice and a stale allowlist is an outage. If a destination can't be expressed this way, add an egress proxy rather than widening the netpol.
+- **Public-internet-minus-private-ranges, not SaaS IP lists:** SaaS IPs change without notice and a stale allowlist is an outage. If a destination can't be expressed this way, add an egress proxy rather than widening the netpol. `scripts/verify.sh` rejects any `ipBlock` CIDR under `deploy/` other than `0.0.0.0/0` and private/special ranges.
+- **Factory workers reach any public HTTPS host** until a domain-allowlisting egress proxy (GitHub, the model provider, npm, PyPI, crates.io) replaces the CIDR rule.
+- **Kubernetes API by node endpoint:** policy matches after DNAT, so an allowance for the Service VIP (`10.43.0.1`) never matches; allow `192.168.1.2:6443` instead.
 - **`agents` stays open** until agents point at sensitive internal targets; then apply per-workload allowlists like headlamp's.
