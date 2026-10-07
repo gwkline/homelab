@@ -157,10 +157,10 @@ jobs:
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # t3code floats its CLIs on dist-tags; a unique CACHEBUST per run
-          # keeps the GHA cache from replaying a stale resolution layer
-          # (see apps/t3code/Dockerfile). Other images don't declare the
-          # ARG, so it is ignored there.
+          # t3code and factory/worker float their agent CLIs on dist-tags; a
+          # unique CACHEBUST per run keeps the GHA cache from replaying a
+          # stale resolution layer (apps/shared/install-agent-clis.sh).
+          # Other images don't declare the ARG, so it is ignored there.
           build-args: |
             CACHEBUST=${{ github.run_id }}
           cache-from: type=gha,scope=${{ matrix.image.name }}
@@ -168,11 +168,12 @@ jobs:
 
       # #74: the worker image must be smoke-tested before it is trusted —
       # every advertised coding CLI answers, non-root holds, pinned skills
-      # match their recorded sha. Rebuilds from cache, so it is cheap.
+      # match their recorded sha. Rebuilds from cache (same CACHEBUST, so
+      # the same CLI resolution as the pushed image), so it is cheap.
       - name: Smoke test factory/worker image
         if: matrix.image.name == 'factory/worker'
         run: |
-          docker buildx build --load -t factory-worker-smoke -f apps/factory/worker/Dockerfile .
+          docker buildx build --load --build-arg CACHEBUST=${{ github.run_id }} -t factory-worker-smoke -f apps/factory/worker/Dockerfile .
           docker run --rm --entrypoint /usr/local/bin/smoke-test factory-worker-smoke
 
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3

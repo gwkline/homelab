@@ -1,9 +1,6 @@
-# Knowledge retrieval API — hybrid BM25 (pg_textsearch) + vector (pgvector)
-# retrieval over the #56 knowledge schema, RRF fusion, and the sources/sync
-# passthrough to the ingest service. Stateless; falls back to the in-memory
-# store when DATABASE_URL is unset (dev), so the image works offline too.
-# Base image is digest-pinned so a rebuild cannot silently pick up a new
-# Debian point release (issue #35), matching apps/panel/Dockerfile.
+# Knowledge retrieval API: hybrid BM25 (pg_textsearch) + vector (pgvector)
+# retrieval with RRF fusion. Stateless; uses an in-memory store when
+# DATABASE_URL is unset.
 FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS build
 WORKDIR /src
 COPY package.json package-lock.json ./

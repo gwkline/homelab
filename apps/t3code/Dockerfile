@@ -1,109 +1,29 @@
 FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
 
-# python3/make/g++ exist for node-pty (native dep of t3) when no prebuild
-# matches the platform.
+# python3/make/g++ build node-pty (a native dep of t3) when no prebuild
+# matches the platform; g++ also links cargo builds.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
       git ca-certificates openssh-client python3 make g++ curl unzip \
   && rm -rf /var/lib/apt/lists/*
 
-# Rust toolchain so cargo repos (e.g. launchpad) build out of the box.
-# System-wide install under /usr/local: uid 1000 gets it at runtime with no
-# per-user rustup. pkg-config/libssl-dev cover the common openssl-sys dep.
-# (The sh.rustup.rs bootstrap itself is not checksum-pinnable — static.rust-
-# lang.org serves rustup-init without a version-stable URL scheme — but the
-# toolchain it installs is pinned below, which is what code actually builds
-# against.)
-ARG RUST_VERSION=1.98.0
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:${PATH}
-RUN curl -fsSL https://sh.rustup.rs \
-      | sh -s -- -y --profile minimal --default-toolchain "${RUST_VERSION}" --no-modify-path \
-  && chmod -R a+rX "${RUSTUP_HOME}" "${CARGO_HOME}" \
-  && cargo --version
+COPY apps/shared/install-rust.sh /usr/local/lib/install-rust.sh
+RUN sh /usr/local/lib/install-rust.sh
 
-# Coding CLIs (t3, codex, claude-code) float on their npm dist-tags
-# (operator direction 2026-10-05): NO version is recorded in this repo —
-# every image build resolves whatever the channel currently serves, and
-# ci.yaml additionally rebuilds weekly. The previous exact-pin + Renovate
-# flow kept serving stale CLIs (server-side claude 2.1.258 vs client
-# 2.1.289 made model calls fail with "version X or newer is required"),
-# and the nightly pins rotted for a month between bumps. opencode stays
-# pinned: Renovate still proposes reviewed bumps for it.
-#
-# CACHEBUST defeats the GHA layer cache for the resolution layer: with a
-# floating dist-tag, a cached npm-install layer would silently keep the
-# versions some earlier build resolved. CI passes
-# --build-arg CACHEBUST=<run id> on every build so resolution always
-# re-runs; the default keeps plain `docker build` working.
-ARG CACHEBUST=1
-# renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.18.23
-# renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_BETA_VERSION=0.0.0-beta-202608110357
-RUN CACHEBUST="${CACHEBUST}" npm install -g \
-      t3@nightly \
-      "@openai/codex@latest" \
-      "@anthropic-ai/claude-code@latest" \
-      "opencode-ai@${OPENCODE_VERSION}" \
-  && npm install -g --prefix /opt/opencode-v2 "opencode-ai@${OPENCODE_BETA_VERSION}" \
-  && ln -sf /opt/opencode-v2/bin/opencode /usr/local/bin/opencode-beta \
-  && opencode-beta --version \
-  && t3 --version \
-  && codex --version \
-  && claude --version
-# The three --version checks above are load-bearing, not cosmetic: the
-# t3 binary ships as an npm OPTIONAL dependency that lags the main
-# package by minutes during a nightly publish — npm silently skips a
-# 404ing optional dep, and the wrapper alone crash-loops the whole
-# pod at boot ("no T3 Code CLI build is available for this platform").
-# A build in that window must fail HERE, in CI, not on the cluster.
-
-# gh CLI — installed by the shared installer (apps/shared/install-gh.sh):
-# one strategy across t3code/hermes/loop-agent so the pin and its
-# checksum verification cannot drift between images (#23). Renovate bumps
-# the ARG ("pinned build tools" group in renovate.json). Authentication is
-# runtime-only: the image carries no token — gh reads GH_TOKEN/GITHUB_TOKEN
-# from pod env (secretKeyRef, see deploy/github-tokens) or a mounted token
-# file via workspace-lib setup_gh_cli — never anything baked into a layer.
-# renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.+)$
-ARG GH_VERSION=2.98.0
 COPY apps/shared/install-gh.sh /usr/local/lib/install-gh.sh
 RUN sh /usr/local/lib/install-gh.sh
 
-# Cursor CLI — pinned lab release. Cursor publishes no checksum file, so the
-# SHA-256 of the exact tarball (per arch) was recorded when the pin was set
-# and is verified at build time; bump the version and both digests together.
-# The installer script (https://cursor.com/install) is just a wrapper around
-# this tarball URL; we call it directly so builds are deterministic and work
-# from datacenter IPs (the installer's own redirect chain sometimes doesn't).
-ARG CURSOR_AGENT_VERSION=2026.08.11-e8db854
-ARG CURSOR_AGENT_SHA256_X64=bfff4bf6f4e9dd30c1d0ef0a70b6077b074015dd2948e4c50685d53afdcfce5a
-ARG CURSOR_AGENT_SHA256_ARM64=ea13f92e295f523a99ce8d8f57d6894d21e5d1e2d030ffad718ccd5955ca2eed
-RUN ARCH="$(uname -m)" \
-  && case "$ARCH" in \
-       x86_64|amd64) CARCH=x64; SHA="${CURSOR_AGENT_SHA256_X64}" ;; \
-       arm64|aarch64) CARCH=arm64; SHA="${CURSOR_AGENT_SHA256_ARM64}" ;; \
-     esac \
-  && curl -fsSL "https://downloads.cursor.com/lab/${CURSOR_AGENT_VERSION}/linux/${CARCH}/agent-cli-package.tar.gz" \
-      -o /tmp/cursor-agent.tar.gz \
-  && echo "${SHA}  /tmp/cursor-agent.tar.gz" | sha256sum -c - \
-  && mkdir -p /opt/cursor-agent \
-  && tar -xzf /tmp/cursor-agent.tar.gz -C /opt/cursor-agent \
-  && ln -s /opt/cursor-agent/dist-package/cursor-agent /usr/local/bin/cursor-agent \
-  && rm /tmp/cursor-agent.tar.gz
+# Read-only cluster inspection; the pod's ServiceAccount only gets get/list.
+COPY apps/shared/install-kubectl.sh /usr/local/lib/install-kubectl.sh
+RUN sh /usr/local/lib/install-kubectl.sh
 
-# uv — work-repo pnpm installs hook into Python packaging
-# (apps/document-processor's install script is `uv sync`), so `pnpm
-# install` on a work clone fails without it. Pinned + checksum-verified
-# per the pinned-build-tools convention (Renovate proposes bumps).
+# uv: work-repo installs run `uv sync`. depot: reproduce work CI's
+# `depot bake` builds (inert without DEPOT_TOKEN).
 # renovate: datasource=github-releases depName=astral-sh/uv
 ARG UV_VERSION=0.12.23
-# Depot CLI — work CI builds images with `depot bake` on Depot-hosted
-# runners; the CLI lets runner agents reproduce/inspect those builds.
-# Inert without DEPOT_TOKEN (ExternalSecret on the work runner; absent
-# item is the documented expected state).
 # renovate: datasource=github-releases depName=depot/cli extractVersion=^v(?<version>.+)$
 ARG DEPOT_VERSION=2.102.16
 RUN ARCH="$(uname -m)" \
@@ -130,29 +50,21 @@ RUN ARCH="$(uname -m)" \
   && depot --version \
   && rm -rf /tmp/uv* /tmp/depot*
 
-# kubectl — read-only cluster inspection from t3 agent sessions
-# (Gavin direction 2026-10-06: the grafana-dashboard agent needs live
-# logs/state, not just repo manifests). The pod's ServiceAccount
-# (deploy/t3code/base/rbac.yaml) only ever gets get/list — the work
-# runner has NO ServiceAccount token and no kubectl-dependent RBAC.
-# Pinned manually: dl.k8s.io is not a Renovate datasource; kubectl is
-# backward-compatible with the cluster across a few versions, so this
-# pin rides along with occasional image bumps. Checksums are verified
-# per-arch at build time (pipeline proven 2026-10-06).
-ARG KUBECTL_VERSION=v1.37.1
-RUN ARCH="$(uname -m)" \
-  && case "$ARCH" in \
-       x86_64|amd64) KARCH=amd64 ;; \
-       arm64|aarch64) KARCH=arm64 ;; \
-       *) echo "unsupported arch ${ARCH}" >&2; exit 1 ;; \
-     esac \
-  && curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KARCH}/kubectl" -o /tmp/kubectl \
-  && curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KARCH}/kubectl.sha256" -o /tmp/kubectl.sha256 \
-  && echo "$(cat /tmp/kubectl.sha256)  kubectl" > /tmp/kubectl-check.sha256 \
-  && (cd /tmp && sha256sum -c kubectl-check.sha256) \
-  && install -m 0755 /tmp/kubectl /usr/local/bin/kubectl \
-  && kubectl version --client >/dev/null \
-  && rm -f /tmp/kubectl /tmp/kubectl.sha256 /tmp/kubectl-check.sha256
+# Floating CLIs re-resolve on every CI build: CI passes a unique CACHEBUST so
+# the layer cache cannot replay an old resolution.
+ARG CACHEBUST=1
+COPY apps/shared/install-agent-clis.sh /usr/local/lib/install-agent-clis.sh
+RUN sh /usr/local/lib/install-agent-clis.sh
+
+# t3 ships its binary as an optional npm dep that can lag a nightly publish;
+# `t3 --version` fails the build instead of crash-looping the pod.
+# renovate: datasource=npm depName=opencode-ai
+ARG OPENCODE_BETA_VERSION=0.0.0-beta-202608110357
+RUN npm install -g t3@nightly \
+  && npm install -g --prefix /opt/opencode-v2 "opencode-ai@${OPENCODE_BETA_VERSION}" \
+  && ln -sf /opt/opencode-v2/bin/opencode /usr/local/bin/opencode-beta \
+  && opencode-beta --version \
+  && t3 --version
 
 COPY apps/shared/workspace-lib.sh /usr/local/lib/workspace-lib.sh
 COPY apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh

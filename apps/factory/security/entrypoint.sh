@@ -89,7 +89,7 @@ if [ -n "${HARNESS}" ]; then append "_Harness tag (for triage): \`${HARNESS}\` â
 
 append "## Scope"
 append "- Repo: \`${REPO}\` @ \`${BASE_SHA}\`"
-append "- Scanners: gitleaks, shellcheck, hadolint, semgrep (best-effort), trivy (best-effort), kustomize verify, secret-pattern grep"
+append "- Scanners: gitleaks, shellcheck, hadolint, semgrep, trivy, kustomize verify, secret-pattern grep"
 append ""
 
 # shellcheck disable=SC2034
