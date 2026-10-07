@@ -96,11 +96,6 @@ printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
       gh api -X POST "repos/${REPO}/issues/${NUM}/labels" -f 'labels[]=factory/needs-review' >/dev/null 2>&1 || true
       echo "[reviewer] PR #${NUM}: labeled factory/needs-review"
     fi
-    if [ "$CI" = "green" ] && [ "$DECISION" = "APPROVED" ] \
-       && ! printf '%s' "$LABELS" | grep -q "factory/approved"; then
-      gh api -X POST "repos/${REPO}/issues/${NUM}/labels" -f 'labels[]=factory/approved' >/dev/null 2>&1 || true
-      echo "[reviewer] PR #${NUM}: labeled factory/approved"
-    fi
   elif [ "${AUTO_MERGE}" = "true" ] && [ "$DRY" = "true" ]; then
     echo "[reviewer] PR #${NUM}: auto-merge flag on but dry-run — would evaluate write actions"
   fi

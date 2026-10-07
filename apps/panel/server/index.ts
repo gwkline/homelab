@@ -130,27 +130,17 @@ const FACTORY_PROFILE_INFO = [
 const FACTORY_RUN_STATES: [string, string][] = [
   ["factory/queued", "queued"],
   ["factory/in-progress", "running"],
-  ["factory/pending-approval", "awaiting-approval"],
   ["factory/draft-pr", "published"],
   ["factory/needs-review", "needs-review"],
-  ["factory/approved", "approved"],
   ["factory/failed", "failed"],
   ["factory/cancelled", "cancelled"],
 ];
 const FACTORY_RUN_STATE_NAMES = new Set(FACTORY_RUN_STATES.map(([, s]) => s));
-const FACTORY_CANCELABLE = new Set(["queued", "running", "awaiting-approval"]);
+const FACTORY_CANCELABLE = new Set(["queued", "running"]);
 const FACTORY_RETRYABLE = new Set(["failed", "cancelled"]);
-const FACTORY_TERMINAL_DONE = new Set([
-  "published",
-  "needs-review",
-  "approved",
-]);
+const FACTORY_TERMINAL_DONE = new Set(["published", "needs-review"]);
 // States whose labels must be stripped when a run is cancelled or retried.
-const FACTORY_ACTIVE_LABELS = [
-  "factory/queued",
-  "factory/in-progress",
-  "factory/pending-approval",
-];
+const FACTORY_ACTIVE_LABELS = ["factory/queued", "factory/in-progress"];
 const FACTORY_FAILED_LABELS = ["factory/failed", "factory/cancelled"];
 const runStateFor = (issue: GhIssue): string | null => {
   const labels = new Set((issue.labels ?? []).map((l) => l.name));

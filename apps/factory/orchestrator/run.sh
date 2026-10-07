@@ -8,7 +8,7 @@
 #   2. Swap label to factory/in-progress + post run marker comment
 #   3. Spawn a worker Job from the profile
 #   4. Watch it to completion; extract /out artifacts from pod logs
-#   5. Publish: apply patch → push branch → approval gate → draft PR
+#   5. Publish: apply patch → push branch → draft PR
 #   6. Converge labels on every exit path (success, failure, crash)
 #
 # Stop conditions (why every path terminates):
@@ -54,9 +54,7 @@ redact() {
   fi
 }
 
-# Durable approval gates: policy table, record I/O, publish gate, resume.
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-. "${SCRIPT_DIR}/approval.sh"
 # Run marker comment template (one comment per Run, edited in place).
 . "${SCRIPT_DIR}/marker.sh"
 
@@ -132,11 +130,6 @@ PY
   fi
 done
 [ "${RECLAIMED}" = "0" ] || echo "[orch] reclaimed ${RECLAIMED} stranded issue(s)"
-
-# ---- 0b. resolve durable approval gates -----------------------------------
-# Issues on factory/pending-approval carry their approval record on the issue,
-# so any tick resolves a decision a human made in the panel.
-approval_resume "${REPO}" || true
 
 # ---- 1. find ONE queued issue ----------------------------------------------
 # One issue per tick so each run gets the full tick budget. The panel's
@@ -430,8 +423,6 @@ if gitt apply --whitespace=nowarn "/tmp/patch-${NUM}.diff" 2>/tmp/apply-err; the
 Produced by homelab software factory (${PROFILE} profile).${WORKER_MODEL:+
 Model: ${WORKER_MODEL}}
 Refs #${NUM}"
-  # Push the branch before the gate: the approval binds to its head SHA, and
-  # opening the PR is the gated transition.
   echo "[orch] publish: pushing branch ${BRANCH}..."
   # A prior tick may have pushed this factory-owned branch and died; overwrite
   # it. A fresh clone has no tracking ref, so the lease must name the remote
@@ -451,39 +442,25 @@ $(printf '%s' "$PUSH_ERR" | head -5)
 \`\`\`"
     gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
   else
-  echo "[orch] publish: branch pushed"
-  HEAD_SHA=$(git rev-parse HEAD)
-  echo "[orch] publish: approval gate..."
-  GATE=$(approval_gate_publish "${REPO}" "${NUM}" "${PROFILE}" "${BRANCH}" "main" "/tmp/patch-${NUM}.diff" "${HEAD_SHA}") || true
-  echo "[orch] publish: gate verdict: ${GATE}"
-  case "${GATE}" in
-    proceed)
-      echo "[orch] publish: opening draft PR..."
-      PR_URL=$(approval_open_pr "${REPO}" "${NUM}" "${PROFILE}" "${BRANCH}" "main")
-      approval_mark_executed "${REPO}" "${NUM}" publish "${PR_URL}" || true
-      update_status "published" "Draft PR: ${PR_URL}
+  echo "[orch] publish: branch pushed; opening draft PR..."
+  PR_URL=$(gh pr create -R "${REPO}" --draft --head "${BRANCH}" --base main \
+    --title "${TITLE}" --body "## Factory Run — ${PROFILE}
+
+Closes #${NUM}
+
+> ⚠️ **Automated draft PR** produced by the homelab software factory.
+> Requires CI green — the factory merges green runs automatically; human review welcome anytime.
+
+**Verification:** see status comment on the linked issue.")
+  update_status "published" "Draft PR: ${PR_URL}
 
 ${REPORT_BLOCK}
 
 _Comment edited by factory; CI will run on the draft branch._"
-      gh issue edit "${NUM}" -R "${REPO}" \
-          --remove-label "${LABEL_WIP}" --add-label "${LABEL_DONE}" >/dev/null
-      gh issue comment "${NUM}" -R "${REPO}" --body "🏭 Draft PR ready: ${PR_URL}" >/dev/null
-      echo "[orch] published ${PR_URL}"
-      ;;
-    awaiting)
-      update_status "awaiting approval" "_Publish paused — a durable approval request was recorded on this issue (digest \`${HEAD_SHA}\`). Approve or deny in the panel; the next tick resumes automatically._"
-      gh issue edit "${NUM}" -R "${REPO}" \
-          --remove-label "${LABEL_WIP}" --add-label "${APPROVAL_LABEL}" >/dev/null
-      echo "[orch] issue #${NUM}: publish gated — awaiting approval (digest ${HEAD_SHA})"
-      ;;
-    *)
-      update_status "failed" "Publish ${GATE} — see the approval record comment on this issue."
-      gh issue edit "${NUM}" -R "${REPO}" \
-          --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
-      echo "[orch] issue #${NUM}: publish ${GATE} — parked in ${LABEL_FAILED}"
-      ;;
-  esac
+  gh issue edit "${NUM}" -R "${REPO}" \
+      --remove-label "${LABEL_WIP}" --add-label "${LABEL_DONE}" >/dev/null
+  gh issue comment "${NUM}" -R "${REPO}" --body "🏭 Draft PR ready: ${PR_URL}" >/dev/null
+  echo "[orch] published ${PR_URL}"
   fi
 else
   ERR=$(cat /tmp/apply-err | head -10)
