@@ -1,5 +1,8 @@
+import { once } from "node:events";
+
 import { serve } from "@hono/node-server";
 
+import { createPgPool } from "../../knowledge/src/pg-pool.ts";
 import {
   KNOWLEDGE_SCHEMA_VERSION,
   migrateKnowledgeSchema,
@@ -10,7 +13,7 @@ import { createMemoryManifestStore } from "./git-sync.ts";
 import { PgKnowledgeSink } from "./knowledge-sink.ts";
 import { createJsonLogger } from "./log.ts";
 import { createMemoryIngestStore } from "./memory-store.ts";
-import { PgIngestStore, createPgPool } from "./pg-store.ts";
+import { PgIngestStore } from "./pg-store.ts";
 import {
   createMemoryPipelineSink,
   createPipelineHandler,
@@ -20,10 +23,24 @@ import { startWorker } from "./worker.ts";
 
 const logger = createJsonLogger();
 
+// Kubernetes sends SIGKILL 30s after SIGTERM. A job still running at the
+// deadline is abandoned; its lease expires and another worker retries it.
+const SHUTDOWN_DEADLINE_MS = 25_000;
+
 try {
   const config = configFromEnv(process.env);
   const pool = config.databaseUrl
-    ? await createPgPool(config.databaseUrl)
+    ? await createPgPool({
+        applicationName: "knowledge-ingest",
+        connectionString: config.databaseUrl,
+        max: config.pool.max,
+        onError: (error) => {
+          logger.warn("idle postgres connection failed", {
+            reason: error.message,
+          });
+        },
+        statementTimeoutMs: config.pool.statementTimeoutMs,
+      })
     : null;
   const store = pool
     ? new PgIngestStore(pool, {
@@ -78,14 +95,32 @@ try {
       worker: worker === null ? "disabled" : worker.workerId,
     });
   });
-  const shutdown = (signal: string): void => {
+  let stopping = false;
+  const shutdown = async (signal: string): Promise<void> => {
+    if (stopping) {
+      return;
+    }
+    stopping = true;
     logger.info("shutdown", { signal });
-    void worker?.stop();
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 5000).unref();
+    setTimeout(() => process.exit(1), SHUTDOWN_DEADLINE_MS).unref();
+    try {
+      server.close();
+      await Promise.all([worker?.stop(), once(server, "close")]);
+      await pool?.end();
+      process.exit(0);
+    } catch (error) {
+      logger.error("shutdown failed", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      process.exit(1);
+    }
   };
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => {
+    void shutdown("SIGTERM");
+  });
+  process.on("SIGINT", () => {
+    void shutdown("SIGINT");
+  });
 } catch (error) {
   logger.error("startup failed", {
     reason: error instanceof Error ? error.message : String(error),

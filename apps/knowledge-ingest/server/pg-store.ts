@@ -4,8 +4,6 @@
  * malformed rows rather than passing them through.
  */
 
-import type { Pool } from "pg";
-
 import {
   ACTIVE_SYNC_JOB_SQL,
   CLAIM_SQL,
@@ -15,6 +13,7 @@ import {
   HEARTBEAT_SQL,
   JOB_BY_ID_SQL,
   PING_SQL,
+  PRUNE_FINISHED_SQL,
   PUBLISH_DOCUMENT_SQL,
   RECOVER_STALE_SQL,
   SOURCE_BY_ID_SQL,
@@ -421,6 +420,13 @@ export class PgIngestStore implements IngestStore {
     });
   }
 
+  async pruneFinished(retentionDays: number): Promise<number> {
+    const { rows } = await this.client.query(PRUNE_FINISHED_SQL, [
+      retentionDays,
+    ]);
+    return rows.length;
+  }
+
   async recoverStale(leaseSeconds: number): Promise<number> {
     const { rows } = await this.client.query(RECOVER_STALE_SQL, [
       leaseSeconds,
@@ -497,9 +503,3 @@ export class PgIngestStore implements IngestStore {
     return rows.length > 0;
   }
 }
-
-/** Open a pg Pool; separate from the store so tests can inject stubs. */
-export const createPgPool = async (connectionString: string): Promise<Pool> => {
-  const { default: pg } = await import("pg");
-  return new pg.Pool({ connectionString });
-};

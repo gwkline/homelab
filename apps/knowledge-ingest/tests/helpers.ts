@@ -95,21 +95,15 @@ export const makeIngestBody = (
 };
 
 export const makeWorkerConfig = (
-  overrides: Partial<{
-    claimBatchSize: number;
-    heartbeatIntervalMs: number;
-    leaseSeconds: number;
-    maxAttempts: number;
-    pollIntervalMs: number;
-    retryBaseMs: number;
-    retryMaxMs: number;
-  }> = {}
+  overrides: Partial<WorkerConfig> = {}
 ): WorkerConfig => ({
   claimBatchSize: 5,
   heartbeatIntervalMs: 15_000,
+  jobRetentionDays: 14,
   leaseSeconds: 60,
   maxAttempts: 3,
   pollIntervalMs: 10,
+  pruneIntervalMs: 3_600_000,
   retryBaseMs: 1000,
   retryMaxMs: 60_000,
   ...overrides,
