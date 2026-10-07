@@ -1,6 +1,6 @@
 # Runtime secrets inventory
 
-Every runtime credential, where it comes from, and who consumes it. No secret values appear here; `scripts/verify.sh` scans the working tree for token shapes.
+Every runtime credential, where it comes from, and who consumes it. No secret values appear here; `scripts/verify.sh` scans the working tree with gitleaks (`.gitleaks.toml`).
 
 ## Contract
 

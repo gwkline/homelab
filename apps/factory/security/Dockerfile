@@ -3,6 +3,7 @@
 # publish path. Every scanner is pinned, checksum-verified where upstream
 # publishes checksums, and must install or the build fails.
 FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \

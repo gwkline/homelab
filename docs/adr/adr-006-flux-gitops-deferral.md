@@ -10,7 +10,7 @@ Continuous delivery today is `deploy/deployer`:
 
 | What | How | Cost |
 | --- | --- | --- |
-| Workloads that run homelab images (factory base, t3code, work-t3code, hermes, panel, knowledge) | CronJob every 5 min: `git clone main` → resolve each `ghcr.io/gwkline/homelab/<app>:latest` to its current digest → `kubectl apply` the target list | short Job, 50m / 64Mi request; namespaced RBAC for exactly the kinds it applies |
+| Workloads that run homelab images (factory base, t3code, work-t3code, hermes, panel, knowledge) | CronJob every 5 min: newest `main` commit with green CI → pin each `ghcr.io/gwkline/homelab/<app>:latest` to that commit's build → server-side dry run, apply, and rollout status for the target list ([deploy/deployer](../../deploy/deployer/README.md)) | short Job, 50m / 64Mi request; namespaced RBAC for exactly the kinds it applies |
 
 Everything else (namespaces, policies, services, config, operators, the deployer itself) deploys when a human runs `kubectl apply -k clusters/home` or the component base.
 

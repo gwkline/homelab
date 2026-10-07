@@ -254,7 +254,10 @@ can() {
 CAN_FAIL=0
 can "agents:deployer" patch cronjobs agents yes
 can "agents:deployer" patch statefulsets work yes
+can "agents:deployer" watch statefulsets work yes
 can "agents:deployer" create secrets agents no
+can "agents:deployer" escalate roles sandbox no
+can "agents:deployer" patch rolebindings sandbox no
 can "agents:panel" create jobs sandbox yes
 can "agents:panel" list pods "" yes
 can "agents:panel" list secrets sandbox no

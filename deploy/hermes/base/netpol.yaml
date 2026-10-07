@@ -1,42 +1,15 @@
+# Hermes is chat-driven, so its egress is an allowlist: DNS, the read-only
+# Kubernetes API, Executor, knowledge retrieval and the public internet. No
+# LAN, tailnet, link-local or other in-cluster services.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-tailscale-to-t3code
+  name: hermes-egress
   namespace: agents
 spec:
   podSelector:
     matchLabels:
-      app: t3code
-  policyTypes: [Ingress]
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: tailscale
-      ports:
-        - protocol: TCP
-          port: 3773
-    # Homepage siteMonitor.
-    - from:
-        - podSelector:
-            matchLabels:
-              app: homepage
-      ports:
-        - protocol: TCP
-          port: 3773
----
-# t3code runs agents on repo content, so its egress is an allowlist: DNS, the
-# read-only Kubernetes API (rbac.yaml), Executor, knowledge retrieval and the
-# public internet. No LAN, tailnet, link-local or other in-cluster services.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: t3code-egress
-  namespace: agents
-spec:
-  podSelector:
-    matchLabels:
-      app: t3code
+      app: hermes
   policyTypes: [Egress]
   egress:
     - to:
@@ -71,7 +44,7 @@ spec:
               app: knowledge-retrieval
       ports:
         - { protocol: TCP, port: 3000 }
-    # Model APIs, GitHub, package registries.
+    # Model APIs, messaging gateways, GitHub.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
