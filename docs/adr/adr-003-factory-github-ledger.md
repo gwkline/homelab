@@ -68,12 +68,15 @@ Re-arm a sweep by deleting the `factory:sweep:filed` comment. Dry run: `FACTORY_
 
 ## Panel API (tailnet-only)
 
+Every mutation needs a caller: an allowlisted Tailscale login arriving through the panel's own Tailscale proxy from the panel page itself, or a bearer token (one per Executor connection). Both come from Secret `panel-auth`, which maps each to a name; that name is the Run's "requested by". Cross-site requests are refused (`apps/panel/server/auth.ts`).
+
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/factory/issues`, `/runs`, `/all`, `/profiles` | read views over GitHub |
 | `POST /api/factory/run`, `/run/cancel`, `/run/retry` | queue, cancel, or retry a Run |
 | `GET /api/factory/prs?repo=` | factory PRs with draft/review/check state |
-| `POST /api/factory/review` | approve / request changes / comment |
+| `POST /api/factory/review` | approve / request changes / comment; requires a `factory/issue-*` head |
+| `POST /api/factory/ready` | mark a draft factory PR ready for review (GraphQL `markPullRequestReadyForReview`) |
 | `POST /api/factory/merge` | merge; requires a `factory/issue-*` head, APPROVED, green checks |
 | `GET /api/factory/stats?repo=`, `/stats/rollup` | 8-week issue/PR stats (cached ~120 s); rollup persists weekly snapshots on the panel-stats PVC, also written by the `factory-stats-snapshot` CronJob |
 

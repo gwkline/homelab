@@ -10,6 +10,7 @@ import type {
   MemoryDocumentInput,
   MemoryVersionInput,
 } from "../server/memory-store.ts";
+import type { RetrievalStore } from "../server/store.ts";
 
 const TOKEN = "retrieval-test-token-1234567890";
 
@@ -272,4 +273,67 @@ test("passthrough ids are validated before proxying", async () => {
     headers: bearer(),
   });
   assert.equal(badJob.status, 422);
+});
+
+test("without a real embedding model every search is BM25 and says so", async () => {
+  const memory = new MemoryStore({ documents: documents() });
+  let embedded = 0;
+  const store: RetrievalStore = {
+    embedQuery: (query) => {
+      embedded += 1;
+      return memory.embedQuery(query);
+    },
+    embeddingReport: () =>
+      Promise.resolve({
+        configuredModel: "fake/384",
+        storedModels: [
+          { chunks: 3, model: "BAAI/bge-small-en-v1.5" },
+          { chunks: 2, model: "fake/384" },
+        ],
+      }),
+    search: (options) => memory.search(options),
+    vectorSearch: false,
+  };
+  const h: Harness = {
+    app: createApp({ config: baseConfig(TOKEN), logger: noopLogger, store }),
+  };
+  for (const mode of [undefined, "hybrid", "vector"]) {
+    const { status, body } = await search(h, {
+      query: "restart postgres primary",
+      ...(mode === undefined ? {} : { mode }),
+    });
+    assert.equal(status, 200);
+    assert.equal(body["mode"], "bm25", `requested ${String(mode)}`);
+    const results = body["results"] as { scores: { vector: unknown } }[];
+    assert.ok(results.length >= 1);
+    assert.ok(results.every((result) => result.scores.vector === null));
+  }
+  assert.equal(embedded, 0, "no query is embedded for a disabled channel");
+
+  const metrics = await h.app.request("/metrics");
+  assert.equal(metrics.status, 200);
+  const text = await metrics.text();
+  assert.match(text, /^knowledge_vector_search_enabled 0$/mu);
+  assert.match(
+    text,
+    /^knowledge_embedding_model_mismatch_chunks\{configured_model="fake\/384"\} 3$/mu
+  );
+});
+
+test("metrics report an enabled vector channel and answer 503 when the store fails", async () => {
+  const { app } = harness();
+  const enabled = await (await app.request("/metrics")).text();
+  assert.match(enabled, /^knowledge_vector_search_enabled 1$/mu);
+  assert.doesNotMatch(enabled, /mismatch/u, "the memory store has no report");
+
+  const failing: RetrievalStore = {
+    embeddingReport: () => Promise.reject(new Error("database down")),
+    search: () => Promise.resolve({ bm25: [], vector: [] }),
+  };
+  const down = createApp({
+    config: baseConfig(TOKEN),
+    logger: noopLogger,
+    store: failing,
+  });
+  assert.equal((await down.request("/metrics")).status, 503);
 });

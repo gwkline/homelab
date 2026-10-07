@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
 
-import { ensureBm25Schema } from "../src/bm25.ts";
 import type { PgClient } from "../src/pg-client.ts";
-import { ensurePgvectorSchema, parseAnchors } from "../src/pgvector.ts";
+import { parseAnchors } from "../src/pgvector.ts";
 import {
   buildChunkReactivateCurrent,
   buildChunkSupersede,
@@ -13,34 +14,45 @@ import {
   buildDocumentTombstone,
   buildDocumentUpsert,
   buildDocumentVersionInsert,
-  buildIngestJobClaim,
   buildNamespaceRegistration,
-  ensureKnowledgeSchema,
+  KNOWLEDGE_MIGRATIONS,
   KNOWLEDGE_NAMESPACE_PATTERN,
-  KNOWLEDGE_SCHEMA_MIGRATION_SQL,
   KNOWLEDGE_SCHEMA_VERSION,
+  migrateKnowledgeSchema,
+  readKnowledgeSchemaVersion,
 } from "../src/schema.ts";
 import type { ChunkUpsertInput } from "../src/schema.ts";
+import { fakePool } from "./fake-pool.ts";
 
 const sha256 = (text: string): string =>
   createHash("sha256").update(text).digest("hex");
 
+const MIGRATION_SQL = KNOWLEDGE_MIGRATIONS.map(
+  (migration) => migration.sql
+).join("\n");
+
+const TABLE_DEFINITION =
+  /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?<table>\w+)/giu;
+
+const definedTables = (sql: string): string[] =>
+  [...sql.matchAll(TABLE_DEFINITION)].map(
+    (match) => match.groups?.["table"] ?? ""
+  );
+
 // --- Migration DDL shape -------------------------------------------------
 
-test("migration defines the full document/version/chunk/provenance model", () => {
-  const sql = KNOWLEDGE_SCHEMA_MIGRATION_SQL;
-  for (const table of [
-    "knowledge_namespace",
+test("migrations define the corpus, the ingest queue, and nothing twice", () => {
+  assert.deepEqual(definedTables(MIGRATION_SQL).toSorted(), [
+    "chunks",
     "document",
     "document_version",
-    "chunks",
+    "git_source_manifest",
+    "ingest_document",
     "ingest_job",
-  ]) {
-    assert.ok(
-      sql.includes(`CREATE TABLE IF NOT EXISTS ${table} (`),
-      `missing table ${table}`
-    );
-  }
+    "ingest_source",
+    "knowledge_namespace",
+  ]);
+  const sql = MIGRATION_SQL;
   // Source identity is separate from content versions.
   assert.ok(
     sql.includes("UNIQUE (namespace, source, external_id)"),
@@ -82,16 +94,24 @@ test("migration defines the full document/version/chunk/provenance model", () =>
   );
   assert.ok(sql.includes("embedding vector(384)"));
   assert.ok(sql.includes("embedding_model TEXT"));
-  assert.ok(
-    sql.includes("status TEXT NOT NULL DEFAULT 'queued'") &&
-      sql.includes("attempts INT NOT NULL DEFAULT 0") &&
-      sql.includes("heartbeat_at") &&
-      sql.includes("priority INT NOT NULL DEFAULT 0")
+  // The queue: idempotent enqueue, the live state machine, a version ledger.
+  assert.match(sql, /idempotency_key TEXT NOT NULL UNIQUE/u);
+  assert.match(
+    sql,
+    /CHECK \(kind IN \('document', 'document-version', 'source_sync'\)\)/u
+  );
+  assert.match(
+    sql,
+    /CHECK \(status IN \('pending', 'running', 'succeeded', 'retryable', 'dead'\)\)/u
+  );
+  assert.match(
+    sql,
+    /UNIQUE \(namespace, source_id, external_id, version_id\)/u
   );
 });
 
-test("migration DDL carries the advanced indexes", () => {
-  const sql = KNOWLEDGE_SCHEMA_MIGRATION_SQL;
+test("migration DDL carries the advanced and channel indexes", () => {
+  const sql = MIGRATION_SQL;
   assert.ok(
     sql.includes(
       "CREATE INDEX IF NOT EXISTS chunks_namespace_active\n  ON chunks (namespace) WHERE valid_to IS NULL"
@@ -104,16 +124,34 @@ test("migration DDL carries the advanced indexes", () => {
     ),
     "tombstones must be indexed for the GC clock"
   );
+  assert.match(
+    sql,
+    /CREATE INDEX IF NOT EXISTS ingest_job_claimable[\s\S]*WHERE status IN \('pending', 'retryable'\)/u,
+    "the SKIP LOCKED claim scan needs its partial index"
+  );
+  assert.ok(
+    sql.includes("DROP INDEX IF EXISTS ingest_job_claim;"),
+    "the claim index for the unused 'queued' status is dropped"
+  );
+  assert.ok(sql.includes("CREATE EXTENSION IF NOT EXISTS vector"));
+  assert.ok(sql.includes("CREATE EXTENSION IF NOT EXISTS pg_textsearch"));
   assert.ok(
     sql.includes(
-      "CREATE INDEX IF NOT EXISTS ingest_job_claim\n  ON ingest_job (priority DESC, enqueued_at) WHERE status = 'queued'"
+      "ON chunks USING bm25 (text)\n  WITH (text_config = 'english')\n  WHERE valid_to IS NULL"
     ),
-    "the queue must have a claim-supporting partial index"
+    "bm25 index must be partial over live chunks so corpus statistics exclude them"
+  );
+  assert.ok(
+    sql.includes(
+      "ON chunks USING hnsw (embedding vector_cosine_ops)\n  WHERE valid_to IS NULL AND embedding IS NOT NULL"
+    ),
+    "hnsw index must use the cosine metric over live, embedded chunks"
   );
 });
 
-test("migration upgrades pre-#56 chunk tables and is idempotent by construction", () => {
-  const sql = KNOWLEDGE_SCHEMA_MIGRATION_SQL;
+test("migration 1 adopts pre-ledger databases: every statement is re-runnable", () => {
+  const [first] = KNOWLEDGE_MIGRATIONS;
+  assert.ok(first !== undefined);
   for (const column of [
     "idx",
     "content_hash",
@@ -121,45 +159,138 @@ test("migration upgrades pre-#56 chunk tables and is idempotent by construction"
     "valid_from",
   ]) {
     assert.ok(
-      sql.includes(`ADD COLUMN IF NOT EXISTS ${column}`),
+      first.sql.includes(`ADD COLUMN IF NOT EXISTS ${column}`),
       `stopgap upgrade path missing for ${column}`
     );
   }
-  // Every DDL statement must be re-runnable: IF NOT EXISTS everywhere.
-  for (const statement of sql
+  for (const statement of first.sql
     .split("\n")
-    .filter((line) => line.startsWith("CREATE "))) {
-    assert.ok(
-      statement.includes("IF NOT EXISTS"),
+    .filter((line) => /^(?:CREATE|DROP) /u.test(line))) {
+    assert.match(
+      statement,
+      /IF (?:NOT )?EXISTS/u,
       `non-idempotent DDL: ${statement}`
     );
   }
 });
 
-test("ensureKnowledgeSchema runs the base migration as one script", async () => {
-  const seen: { text?: string; params?: unknown[] } = {};
-  const client: PgClient = {
-    query: (text, params) => {
-      seen.text = text;
-      seen.params = params;
-      return Promise.resolve({ rows: [] });
-    },
-  };
-  await ensureKnowledgeSchema(client);
-  assert.equal(seen.text, KNOWLEDGE_SCHEMA_MIGRATION_SQL);
-  assert.deepEqual(seen.params, []);
+test("migration ids are unique and ascending; the schema version is the newest", () => {
+  const ids = KNOWLEDGE_MIGRATIONS.map((migration) => migration.id);
+  assert.deepEqual(
+    ids,
+    ids.toSorted((a, b) => a - b)
+  );
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal(KNOWLEDGE_SCHEMA_VERSION, ids.at(-1));
+});
+
+const ledgerBackend = (appliedIds: number[], failOn?: string): PgClient => ({
+  query: (text) => {
+    if (failOn !== undefined && text.includes(failOn)) {
+      return Promise.reject(new Error("migration failed"));
+    }
+    if (text === "SELECT id FROM knowledge_schema_migration") {
+      return Promise.resolve({ rows: appliedIds.map((id) => ({ id })) });
+    }
+    return Promise.resolve({ rows: [] });
+  },
+});
+
+test("migrate applies pending migrations under an advisory lock in one transaction", async () => {
+  const { calls, pool, releases } = fakePool(ledgerBackend([]));
+  const applied = await migrateKnowledgeSchema(pool);
+  assert.deepEqual(
+    applied,
+    KNOWLEDGE_MIGRATIONS.map((migration) => migration.id)
+  );
+  assert.ok(calls.every((call) => call.checkout === 1));
+  const texts = calls.map((call) => call.text);
+  assert.equal(texts[0], "BEGIN");
+  assert.match(texts[1] ?? "", /pg_advisory_xact_lock/u);
+  assert.match(texts[2] ?? "", /knowledge_schema_migration/u);
+  assert.equal(texts[4], KNOWLEDGE_MIGRATIONS[0]?.sql);
+  assert.match(texts[5] ?? "", /^INSERT INTO knowledge_schema_migration/u);
+  assert.equal(texts.at(-1), "COMMIT");
+  assert.deepEqual(releases, [{ checkout: 1, error: undefined }]);
+});
+
+test("migrate is a no-op once every migration is recorded", async () => {
+  const { calls, pool } = fakePool(
+    ledgerBackend(KNOWLEDGE_MIGRATIONS.map((migration) => migration.id))
+  );
+  assert.deepEqual(await migrateKnowledgeSchema(pool), []);
   assert.ok(
-    KNOWLEDGE_SCHEMA_MIGRATION_SQL.includes(
-      "CREATE EXTENSION IF NOT EXISTS vector"
+    !calls.some((call) =>
+      KNOWLEDGE_MIGRATIONS.some((migration) => migration.sql === call.text)
     ),
-    "the embedding column requires the vector extension"
+    "applied migrations never re-run"
   );
 });
 
-test("channel migrations compose the core schema", () => {
-  assert.ok(
-    ensurePgvectorSchema !== undefined && ensureBm25Schema !== undefined
+test("a failing migration rolls back with its ledger row", async () => {
+  const { calls, pool } = fakePool(
+    ledgerBackend([], "CREATE EXTENSION IF NOT EXISTS vector")
   );
+  await assert.rejects(migrateKnowledgeSchema(pool), /migration failed/u);
+  const texts = calls.map((call) => call.text);
+  assert.equal(texts.at(-1), "ROLLBACK");
+  assert.ok(!texts.includes("COMMIT"));
+});
+
+test("the schema version reads 0 before the ledger exists, then its newest id", async () => {
+  const absent: string[] = [];
+  const before = await readKnowledgeSchemaVersion({
+    query: (text) => {
+      absent.push(text);
+      return Promise.resolve({ rows: [{ present: false }] });
+    },
+  });
+  assert.equal(before, 0);
+  assert.equal(absent.length, 1, "no query touches a missing ledger");
+  const after = await readKnowledgeSchemaVersion({
+    query: (text) =>
+      Promise.resolve({
+        rows: text.includes("to_regclass")
+          ? [{ present: true }]
+          : [{ version: 3 }],
+      }),
+  });
+  assert.equal(after, 3);
+});
+
+const KNOWLEDGE_DIRS = [
+  "knowledge/src",
+  "knowledge/eval",
+  "knowledge/tests",
+  "knowledge-ingest/server",
+  "knowledge-ingest/tests",
+  "knowledge-retrieval/server",
+  "knowledge-retrieval/tests",
+];
+
+test("every table is defined once, in schema.ts", () => {
+  const appsDir = path.resolve(import.meta.dirname, "../..");
+  const definitions = KNOWLEDGE_DIRS.flatMap((dir) =>
+    readdirSync(path.join(appsDir, dir), {
+      recursive: true,
+      withFileTypes: true,
+    })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
+      .flatMap((entry) => {
+        const file = path.join(entry.parentPath, entry.name);
+        return definedTables(readFileSync(file, "utf-8")).map((table) => ({
+          file: path.relative(appsDir, file),
+          table,
+        }));
+      })
+  );
+  assert.ok(definitions.length > 0);
+  assert.deepEqual(
+    [...new Set(definitions.map((definition) => definition.file))],
+    ["knowledge/src/schema.ts"]
+  );
+  const tables = definitions.map((definition) => definition.table);
+  assert.equal(new Set(tables).size, tables.length, tables.join(", "));
 });
 
 // --- Builder contracts ----------------------------------------------------
@@ -367,26 +498,6 @@ test("tombstone sets the delete marker without destroying history", () => {
   assert.ok(reactivate.text.includes("c.valid_to IS NOT NULL"));
 });
 
-test("ingest job claim takes one queued job atomically", () => {
-  const built = buildIngestJobClaim();
-  assert.deepEqual(built.params, []);
-  assert.ok(
-    built.text.includes("FOR UPDATE SKIP LOCKED"),
-    "concurrent workers must never claim the same job"
-  );
-  assert.ok(built.text.includes("WHERE status = 'queued'"));
-  assert.ok(
-    built.text.includes("attempts = attempts + 1") &&
-      built.text.includes("status = 'running'"),
-    "a claim must record the attempt"
-  );
-  assert.ok(
-    built.text.includes("ORDER BY priority DESC, enqueued_at ASC, id ASC"),
-    "claims must be deterministic (priority, then FIFO)"
-  );
-  assert.ok(built.text.includes("RETURNING id, kind, payload, attempts"));
-});
-
 // --- Integration: migrate from empty PostgreSQL 18 and exercise invariants
 
 const hasLiveDb = Boolean(process.env["DATABASE_URL"]);
@@ -435,7 +546,19 @@ test(
       // --- From-empty migration ------------------------------------------
       await pool.query(`DROP SCHEMA IF EXISTS ${SCRATCH_SCHEMA} CASCADE`);
       await pool.query(`CREATE SCHEMA ${SCRATCH_SCHEMA}`);
-      await ensureKnowledgeSchema(pool);
+      assert.deepEqual(
+        await migrateKnowledgeSchema(pool),
+        KNOWLEDGE_MIGRATIONS.map((migration) => migration.id)
+      );
+      assert.equal(
+        await readKnowledgeSchemaVersion(pool),
+        KNOWLEDGE_SCHEMA_VERSION
+      );
+      assert.deepEqual(
+        await migrateKnowledgeSchema(pool),
+        [],
+        "a second run applies nothing"
+      );
 
       const tables = await pool.query(
         `SELECT table_name FROM information_schema.tables
@@ -449,10 +572,14 @@ test(
           "chunks",
           "document",
           "document_version",
+          "git_source_manifest",
+          "ingest_document",
           "ingest_job",
+          "ingest_source",
           "knowledge_namespace",
+          "knowledge_schema_migration",
         ],
-        "migration from empty must create the full #56 model"
+        "migration from empty must create the corpus and the queue"
       );
 
       const constraints = await catalogConstraints(pool);
@@ -471,6 +598,7 @@ test(
         "chunks_version_id_fkey",
         "chunks_namespace_fkey",
         "ingest_job_status_check",
+        "ingest_job_idempotency_key_key",
       ]) {
         assert.ok(
           constraints.includes(expected),
@@ -482,20 +610,11 @@ test(
       for (const index of [
         "chunks_namespace_active",
         "document_tombstoned",
-        "ingest_job_claim",
+        "ingest_job_claimable",
+        "chunks_embedding_hnsw",
+        "chunks_text_bm25",
       ]) {
         assert.ok(indexes.includes(index), `missing index ${index}`);
-      }
-
-      // Re-running everything is a no-op that adds only the channel indexes.
-      await ensurePgvectorSchema(pool);
-      await ensureBm25Schema(pool);
-      const indexesAfterChannels = await catalogIndexes(pool);
-      for (const index of ["chunks_embedding_hnsw", "chunks_text_bm25"]) {
-        assert.ok(
-          indexesAfterChannels.includes(index),
-          `channel index ${index} missing`
-        );
       }
       const bm25Def = await pool.query(
         `SELECT indexdef FROM pg_indexes
@@ -504,7 +623,7 @@ test(
       );
       const definition = String(bm25Def.rows[0]?.["indexdef"] ?? "");
       assert.match(definition, /USING bm25/u);
-      assert.match(definition, /text_config = 'english'/u);
+      assert.match(definition, /text_config\s*=\s*'?english'?/u);
       assert.match(definition, /WHERE[\s(]*valid_to IS NULL/u);
 
       // --- Insert path (namespace → document → version → chunks) ---------
@@ -815,31 +934,6 @@ test(
       );
       assert.deepEqual(afterDelete.rows[0], { chunks: 0, versions: 0 });
 
-      // --- Ingestion queue claim (FOR UPDATE SKIP LOCKED) ------------------
-      await pool.query(
-        `INSERT INTO ingest_job (id, kind, payload, priority)
-         VALUES ('k56-job-low', 'ingest', $1::jsonb, 0)`,
-        [JSON.stringify({ document_id: "k56-doc" })]
-      );
-      await pool.query(
-        `INSERT INTO ingest_job (id, kind, payload, priority)
-         VALUES ('k56-job-high', 'ingest', $1::jsonb, 5)`,
-        [JSON.stringify({ document_id: "k56-doc" })]
-      );
-      const claim = buildIngestJobClaim();
-      const firstClaim = await pool.query(claim.text, claim.params);
-      assert.equal(firstClaim.rows[0]?.["id"], "k56-job-high");
-      assert.equal(firstClaim.rows[0]?.["attempts"], 1);
-      const secondClaim = await pool.query(claim.text, claim.params);
-      assert.equal(secondClaim.rows[0]?.["id"], "k56-job-low");
-      const thirdClaim = await pool.query(claim.text, claim.params);
-      assert.deepEqual(thirdClaim.rows, []);
-      const jobStatus = await pool.query(
-        "SELECT status FROM ingest_job WHERE id = $1",
-        ["k56-job-high"]
-      );
-      assert.equal(jobStatus.rows[0]?.["status"], "running");
-
       await pool.query(`DROP SCHEMA ${SCRATCH_SCHEMA} CASCADE`);
     } finally {
       await pool.end();
@@ -847,6 +941,64 @@ test(
   }
 );
 
-test("schema version is recorded for eval provenance", () => {
-  assert.match(KNOWLEDGE_SCHEMA_VERSION, /^\d+-/u);
-});
+test(
+  "integration: adopting a pre-ledger database re-tags its fake vectors",
+  { skip: !hasLiveDb },
+  async () => {
+    const schema = "knowledge_retag_test";
+    const { default: pg } = await import("pg");
+    const pool = new pg.Pool({
+      connectionString: process.env["DATABASE_URL"],
+      options: `-c search_path=${schema},public`,
+    });
+    try {
+      await pool.query("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public");
+      await pool.query(
+        "CREATE EXTENSION IF NOT EXISTS pg_textsearch SCHEMA public"
+      );
+      await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      await pool.query(`CREATE SCHEMA ${schema}`);
+      // The tables as they stood before the ledger, with rows the fake
+      // provider wrote under the real model's name.
+      await pool.query(KNOWLEDGE_MIGRATIONS[0]?.sql ?? "");
+      await pool.query(
+        "INSERT INTO knowledge_namespace (name) VALUES ('retag')"
+      );
+      await pool.query(
+        `INSERT INTO document (id, namespace, source, external_id, content_hash)
+         VALUES ('d1', 'retag', 'git', 'a.md', $1)`,
+        [sha256("a")]
+      );
+      await pool.query(
+        `INSERT INTO document_version (id, document_id, version, content_hash)
+         VALUES ('d1-v1', 'd1', 1, $1)`,
+        [sha256("a")]
+      );
+      const insertChunk = `INSERT INTO chunks
+  (chunk_id, document_id, version_id, namespace, text, content_hash, chunker_version, embedding, embedding_model)
+VALUES ($1, 'd1', 'd1-v1', 'retag', $1, $2, 'v1', $3::vector, $4)`;
+      await pool.query(insertChunk, [
+        "c-real-tag",
+        sha256("c1"),
+        unitVector384(0),
+        "BAAI/bge-small-en-v1.5",
+      ]);
+      await pool.query(insertChunk, ["c-unembedded", sha256("c2"), null, null]);
+
+      assert.deepEqual(
+        await migrateKnowledgeSchema(pool),
+        KNOWLEDGE_MIGRATIONS.map((migration) => migration.id)
+      );
+      const { rows } = await pool.query(
+        "SELECT chunk_id, embedding_model FROM chunks ORDER BY chunk_id"
+      );
+      assert.deepEqual(rows, [
+        { chunk_id: "c-real-tag", embedding_model: "fake/384" },
+        { chunk_id: "c-unembedded", embedding_model: null },
+      ]);
+      await pool.query(`DROP SCHEMA ${schema} CASCADE`);
+    } finally {
+      await pool.end();
+    }
+  }
+);

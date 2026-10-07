@@ -1,12 +1,11 @@
-// Panel list-and-launch e2e driver. Against a real Kubernetes API, checks that
-// a deployed panel lists sandbox state and creates locked-down Jobs that run
-// to completion:
+// Panel e2e driver. Against a real Kubernetes API, checks that a deployed
+// panel lists sandbox state and that its remaining write routes work as the
+// production ServiceAccount:
 //   1. GET /api/state returns the seeded Job and CronJob
-//   2. POST /api/jobs creates a sandbox Job carrying the requested command
-//      and the locked-down container fields (non-root, caps dropped, no SA
-//      token automount, RuntimeDefault seccomp)
-//   3. the created Job reaches a terminal state in the disposable cluster
-//   4. invalid command and issue inputs stay rejected (400)
+//   2. mutations without a bearer token are refused (401)
+//   3. PATCH /api/cronjobs/:name suspends and resumes the seeded CronJob
+//   4. DELETE /api/jobs/:name removes the seeded Job
+//   5. POST /api/jobs no longer exists and creates nothing
 //
 // Talks to the panel over PANEL_E2E_URL and reads live state with kubectl.
 // Standalone usage (see docs/panel-e2e.md):
@@ -14,7 +13,6 @@
 //     node --test apps/panel/tests/integration/panel-e2e.test.mjs
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
 import { test } from "node:test";
 
 const base = process.env.PANEL_E2E_URL ?? "";
@@ -23,16 +21,8 @@ const seedJob = process.env.PANEL_E2E_SEED_JOB ?? "panel-e2e-seed";
 // Seeded by scripts/panel-e2e-smoke.sh; never a production object.
 const seedCronJob = process.env.PANEL_E2E_CRONJOB ?? "panel-e2e-seed-cronjob";
 const seedSchedule = process.env.PANEL_E2E_SCHEDULE ?? "0 9 * * *";
-const command = process.env.PANEL_E2E_COMMAND ?? "echo panel-e2e-launch-ok";
-// The Job's pod logs carry the command's OUTPUT (the marker), not the shell
-// text itself — the default command echoes this marker.
-const commandOutput =
-  process.env.PANEL_E2E_COMMAND_OUTPUT ?? "panel-e2e-launch-ok";
-const issue = process.env.PANEL_E2E_ISSUE ?? "27";
-const jobWaitMs = Number(process.env.PANEL_E2E_JOB_WAIT ?? "300") * 1000;
-// The smoke script reads the created Job's name from here for cleanup.
-const createdFile = process.env.PANEL_E2E_CREATED_FILE ?? "";
-
+// A token from the panel's PANEL_AUTH_DIR tokens file.
+const token = process.env.PANEL_E2E_TOKEN ?? "";
 const skip =
   base === ""
     ? "PANEL_E2E_URL not set — run scripts/panel-e2e-smoke.sh"
@@ -67,14 +57,17 @@ const call = async (path, init) => {
   return { body, status: res.status };
 };
 
-const postJob = (payload) =>
-  call("/api/jobs", {
+const sendJson = (path, method, payload, { anonymous = false } = {}) =>
+  call(path, {
     body: JSON.stringify(payload),
-    headers: { "content-type": "application/json" },
-    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(anonymous ? {} : { authorization: `Bearer ${token}` }),
+    },
+    method,
   });
 
-let created = "";
+const kubectlJson = (...args) => JSON.parse(kubectl(...args, "-o", "json"));
 
 test(
   "GET /api/state returns the seeded Jobs and CronJobs",
@@ -98,104 +91,61 @@ test(
   }
 );
 
+test("mutations without a bearer token are refused", { skip }, async () => {
+  const path = `/api/cronjobs/${encodeURIComponent(seedCronJob)}`;
+  const res = await sendJson(
+    path,
+    "PATCH",
+    { suspended: false },
+    { anonymous: true }
+  );
+  assert.equal(res.status, 401, `expected 401, got ${res.status} ${res.body}`);
+  const live = kubectlJson("get", "cronjob", seedCronJob, "-n", ns);
+  assert.equal(live.spec.suspend, true);
+});
+
 test(
-  "POST /api/jobs creates a locked-down Job with the expected command",
+  "PATCH /api/cronjobs/:name toggles suspend on the live CronJob",
   { skip },
   async () => {
-    const res = await postJob({ command, issue });
-    assert.equal(res.status, 201, `launch failed: ${res.body}`);
-    const { name } = JSON.parse(res.body);
-    assert.match(name, /^panel-[a-z0-9-]+$/u);
-
-    // Assert on the live cluster object, not the panel's response.
-    const job = JSON.parse(kubectl("get", "job", name, "-n", ns, "-o", "json"));
-    assert.equal(job.metadata.namespace, ns);
-    assert.equal(job.metadata.labels["app.kubernetes.io/managed-by"], "panel");
-    assert.equal(job.spec.template.spec.automountServiceAccountToken, false);
-    assert.equal(job.spec.template.spec.restartPolicy, "Never");
-    assert.equal(
-      job.spec.template.spec.securityContext.seccompProfile.type,
-      "RuntimeDefault"
-    );
-    const [container] = job.spec.template.spec.containers;
-    const env = Object.fromEntries(container.env.map((e) => [e.name, e.value]));
-    assert.equal(env.LOOP_COMMAND, command);
-    assert.equal(env.WATCHER_ISSUE, issue);
-    assert.equal(container.securityContext.runAsUser, 1000);
-    assert.equal(container.securityContext.runAsNonRoot, true);
-    assert.equal(container.securityContext.allowPrivilegeEscalation, false);
-    assert.deepEqual(container.securityContext.capabilities.drop, ["ALL"]);
-
-    created = name;
-    if (createdFile !== "") {
-      writeFileSync(createdFile, `${name}\n`);
+    const path = `/api/cronjobs/${encodeURIComponent(seedCronJob)}`;
+    // Resume then re-suspend: the seed schedule fires once a day, so the
+    // resumed window cannot start a run.
+    for (const suspended of [false, true]) {
+      const res = await sendJson(path, "PATCH", { suspended });
+      assert.equal(res.status, 200, `patch failed: ${res.body}`);
+      const live = kubectlJson("get", "cronjob", seedCronJob, "-n", ns);
+      assert.equal(live.spec.suspend, suspended);
     }
   }
 );
 
-test("the created Job reaches a terminal state", { skip }, async () => {
-  assert.ok(created, "launch test did not create a Job");
-  const deadline = Date.now() + jobWaitMs;
-  let conditions = [];
+test("DELETE /api/jobs/:name removes the live Job", { skip }, async () => {
+  const res = await sendJson(
+    `/api/jobs/${encodeURIComponent(seedJob)}`,
+    "DELETE",
+    {}
+  );
+  assert.equal(res.status, 200, `delete failed: ${res.body}`);
+  // Garbage collection finalizes the delete asynchronously.
+  const deadline = Date.now() + 60_000;
+  let left = [];
   while (Date.now() < deadline) {
-    const job = JSON.parse(
-      kubectl("get", "job", created, "-n", ns, "-o", "json")
+    left = kubectlJson("get", "jobs", "-n", ns).items.map(
+      (j) => j.metadata.name
     );
-    conditions = job.status?.conditions ?? [];
-    const complete = conditions.some(
-      (c) => c.type === "Complete" && c.status === "True"
-    );
-    if (complete) {
-      const logs = kubectl("logs", `job/${created}`, "-n", ns);
-      assert.ok(
-        logs.includes(commandOutput),
-        `Job pod logs missing the command output: ${logs}`
-      );
-      // Capturing the name keeps the callback's reference loop-safe.
-      const launched = created;
-      const state = JSON.parse((await call("/api/state")).body);
-      const view = state.jobs.find((j) => j.name === launched);
-      assert.equal(view?.status, "complete");
+    if (!left.includes(seedJob)) {
       return;
     }
-    const failed = conditions.some(
-      (c) => c.type === "Failed" && c.status === "True"
-    );
-    assert.ok(
-      !failed,
-      `Job ${created} went Failed: ${JSON.stringify(job.status)}`
-    );
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  assert.fail(
-    `Job ${created} not terminal within ${jobWaitMs / 1000}s: ${JSON.stringify(conditions)}`
-  );
+  assert.fail(`${seedJob} still present after delete: ${left.join(", ")}`);
 });
 
-test("invalid command and issue inputs stay rejected", { skip }, async () => {
-  const bad = [
-    [{ command: "   " }, "blank command"],
-    [{ issue: "27" }, "missing command"],
-    [{ command, issue: "abc" }, "non-numeric issue"],
-    [{ command, issue: "-3" }, "negative issue"],
-    [{ command, issue: "12345678" }, "overlong issue"],
-  ];
-  for (const [payload, why] of bad) {
-    const res = await postJob(payload);
-    assert.equal(
-      res.status,
-      400,
-      `${why}: expected 400, got ${res.status} ${res.body}`
-    );
-  }
-  // None of the rejected launches may have created anything.
-  const jobs = JSON.parse(kubectl("get", "jobs", "-n", ns, "-o", "json"));
-  const launched = jobs.items.filter(
-    (j) => j.metadata.labels?.["app.kubernetes.io/managed-by"] === "panel"
-  );
-  assert.equal(
-    launched.length,
-    created === "" ? 0 : 1,
-    `rejected input created a Job (panel-launched jobs: ${launched.map((j) => j.metadata.name).join(", ")})`
-  );
+test("POST /api/jobs is gone and creates nothing", { skip }, async () => {
+  const before = kubectlJson("get", "jobs", "-n", ns).items.length;
+  const res = await sendJson("/api/jobs", "POST", { command: "echo hi" });
+  assert.equal(res.status, 404, `expected 404, got ${res.status} ${res.body}`);
+  const after = kubectlJson("get", "jobs", "-n", ns).items.length;
+  assert.equal(after, before, "POST /api/jobs created a Job");
 });

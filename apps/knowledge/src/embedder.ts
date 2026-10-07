@@ -53,14 +53,33 @@ export const isRetryableEmbeddingError = (error: unknown): boolean => {
   return false;
 };
 
-/** Deterministic sha256-derived unit vectors for tests; never for real retrieval. */
+const FAKE_MODEL_PREFIX = "fake/";
+
+/** The model tag fake vectors are stored under. */
+export const fakeEmbeddingModel = (dimensions: number): string =>
+  `${FAKE_MODEL_PREFIX}${dimensions}`;
+
+export const isFakeEmbeddingProvider = (provider: EmbeddingProvider): boolean =>
+  provider.name === "fake";
+
+/**
+ * Deterministic sha256-derived unit vectors for tests; never for real
+ * retrieval. The model tag must sit under `fake/`, so stored fake vectors can
+ * never pass for a real model's and a re-embed always replaces them.
+ */
 export const createFakeEmbeddingProvider = (
-  model = "fake/deterministic-v1",
-  dimensions = EMBEDDING_DIMENSIONS
+  model?: string,
+  dimensions: number = EMBEDDING_DIMENSIONS
 ): EmbeddingProvider => {
   if (!Number.isInteger(dimensions) || dimensions < 1) {
     throw new TypeError(
       `embedder: fake provider dimensions must be an integer >= 1, got ${String(dimensions)}`
+    );
+  }
+  const tag = model ?? fakeEmbeddingModel(dimensions);
+  if (!tag.startsWith(FAKE_MODEL_PREFIX)) {
+    throw new TypeError(
+      `embedder: fake provider model ${JSON.stringify(tag)} must start with ${FAKE_MODEL_PREFIX}`
     );
   }
   const fakeVector = (input: string): number[] => {
@@ -68,7 +87,7 @@ export const createFakeEmbeddingProvider = (
     let block = 0;
     while (vector.length < dimensions) {
       const digest = createHash("sha256")
-        .update(`${model}\u0000${input}\u0000${block}`, "utf-8")
+        .update(`${tag}\u0000${input}\u0000${block}`, "utf-8")
         .digest();
       for (let offset = 0; offset + 1 < digest.length; offset += 2) {
         if (vector.length === dimensions) {
@@ -95,7 +114,7 @@ export const createFakeEmbeddingProvider = (
     dimensions,
     embed: (inputs): Promise<number[][]> =>
       Promise.resolve(inputs.map(fakeVector)),
-    model,
+    model: tag,
     name: "fake",
   };
 };
@@ -431,7 +450,11 @@ const intFromEnv = (raw: string | undefined, fallback: number): number => {
   return Number.isInteger(value) ? value : Number.NaN;
 };
 
-/** `KNOWLEDGE_EMBEDDING_PROVIDER` is `fake` (default) or `openai`. */
+/**
+ * `KNOWLEDGE_EMBEDDING_PROVIDER` is `fake` (default) or `openai`. The fake
+ * provider ignores `KNOWLEDGE_EMBEDDING_MODEL` and tags its vectors
+ * `fake/<dims>`; retrieval serves BM25 only while it is configured.
+ */
 export const embeddingProviderFromEnv = (
   env: EmbeddingEnv = process.env
 ): EmbeddingProvider => {
@@ -442,7 +465,10 @@ export const embeddingProviderFromEnv = (
     EMBEDDING_DIMENSIONS
   );
   if (provider === "fake") {
-    return createFakeEmbeddingProvider(model, dimensions);
+    return createFakeEmbeddingProvider(
+      fakeEmbeddingModel(dimensions),
+      dimensions
+    );
   }
   if (provider === "openai") {
     const baseUrl = env.KNOWLEDGE_EMBEDDING_BASE_URL;
