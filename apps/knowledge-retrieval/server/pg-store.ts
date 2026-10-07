@@ -5,6 +5,9 @@
  * The vector channel filters on the embedding model tag so generations never
  * mix (ADR-002 D6).
  *
+ * knowledge-ingest owns the schema. Until it has applied
+ * `KNOWLEDGE_SCHEMA_VERSION`, search and readiness fail as unavailable.
+ *
  * `source.sourceId` is the version-independent `document.id`;
  * `provenance.ingestionEventId` is the cited `document_version.id`. `tags`
  * are always empty and `version.commit` is null: the schema stores neither.
@@ -27,6 +30,10 @@ import {
   buildPgvectorSearchQuery,
   parsePgvectorRows,
 } from "../../knowledge/src/pgvector.ts";
+import {
+  KNOWLEDGE_SCHEMA_VERSION,
+  readKnowledgeSchemaVersion,
+} from "../../knowledge/src/schema.ts";
 import type {
   ChannelResults,
   ChunkRecord,
@@ -99,6 +106,7 @@ WHERE c.chunk_id = ANY($1::text[])
 export class PgRetrievalStore implements RetrievalStore {
   private readonly pool: Pool;
   private readonly provider: EmbeddingProvider;
+  private schemaReady = false;
 
   constructor(pool: Pool, options: PgStoreOptions = {}) {
     this.pool = pool;
@@ -120,12 +128,27 @@ export class PgRetrievalStore implements RetrievalStore {
     }
   }
 
+  /** Once the schema is current it stays current, so only misses re-check. */
+  private async assertSchemaReady(): Promise<void> {
+    if (this.schemaReady) {
+      return;
+    }
+    const version = await readKnowledgeSchemaVersion(this.pool);
+    if (version < KNOWLEDGE_SCHEMA_VERSION) {
+      throw new StoreUnavailableError(
+        `knowledge schema is at version ${version}, this build needs ${KNOWLEDGE_SCHEMA_VERSION}; knowledge-ingest applies migrations`
+      );
+    }
+    this.schemaReady = true;
+  }
+
   async search(options: SearchOptions): Promise<ChannelResults> {
     // The schema has no tags, so a tag filter matches nothing.
     if (options.filters.tags.length > 0) {
       return { bm25: [], vector: [] };
     }
     try {
+      await this.assertSchemaReady();
       const { includeSuperseded } = options.filters;
       const bm25 = buildBm25SearchQuery(options.query, {
         includeSuperseded,
@@ -251,8 +274,9 @@ export class PgRetrievalStore implements RetrievalStore {
     }
   }
 
-  /** Readiness probe; throws (fast) when the database is unreachable. */
+  /** Readiness probe; throws (fast) when the database is unreachable or not migrated. */
   async ping(): Promise<void> {
     await this.pool.query("SELECT 1");
+    await this.assertSchemaReady();
   }
 }

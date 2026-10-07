@@ -56,7 +56,7 @@ export interface SourceSyncPayload {
 
 /**
  * A document version with inline content, as emitted by git-source and
- * consumed by `parseDocumentPayload`. Provenance is kept for audit, never logged.
+ * consumed by `parseDocumentVersionPayload`. Provenance is kept for audit, never logged.
  */
 export interface DocumentVersionPayload {
   content: string;
@@ -154,8 +154,6 @@ export class SourceNotFoundError extends Error {
 
 export interface IngestStore {
   readonly backend: "memory" | "postgres";
-  /** Idempotent DDL (no-op for the memory store). */
-  applySchema: () => Promise<void>;
   /**
    * Fail a claimed attempt. Returns `retryable` or `dead`, or null when the
    * claim was lost to stale recovery.

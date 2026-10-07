@@ -1,5 +1,5 @@
 /**
- * Durable knowledge schema (ADR-002 D3/D10).
+ * Durable knowledge schema (ADR-002 D3/D10) and the only place DDL lives.
  *
  * `document` holds the stable `(namespace, source, external_id)` identity and
  * current-version pointer; `document_version` is append-only history; `chunks`
@@ -12,21 +12,22 @@
  *
  * Ids are opaque TEXT rather than ADR-002's uuid, since every consumer treats
  * them as strings.
+ *
+ * knowledge-ingest applies migrations at boot under an advisory lock.
+ * Retrieval never issues DDL: it reads the applied version and refuses to
+ * serve until it reaches `KNOWLEDGE_SCHEMA_VERSION`.
  */
 
-import type { PgClient } from "./pg-client.ts";
-
-/** Recorded in eval provenance; bump when a migration changes what retrieval sees. */
-export const KNOWLEDGE_SCHEMA_VERSION = "1-knowledge-core";
+import type { PgClient, PgPool } from "./pg-client.ts";
+import { withTransaction } from "./pg-client.ts";
 
 export const KNOWLEDGE_NAMESPACE_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/u;
 
 /**
- * Idempotent base migration; the channel migrations compose it and add their
- * own indexes. The trailing `ADD COLUMN IF NOT EXISTS` statements upgrade
- * older `chunks` tables in place.
+ * Retrieval corpus. The trailing `ADD COLUMN IF NOT EXISTS` statements
+ * upgrade older `chunks` tables in place.
  */
-export const KNOWLEDGE_SCHEMA_MIGRATION_SQL = `CREATE EXTENSION IF NOT EXISTS vector;
+const CORPUS_SQL = `CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS knowledge_namespace (
   name TEXT PRIMARY KEY
     CHECK (name ~ '^[A-Za-z0-9_.-]{1,128}$'),
@@ -76,36 +77,179 @@ CREATE INDEX IF NOT EXISTS chunks_namespace_active
   ON chunks (namespace) WHERE valid_to IS NULL;
 CREATE INDEX IF NOT EXISTS document_tombstoned
   ON document (deleted_at) WHERE deleted_at IS NOT NULL;
-CREATE TABLE IF NOT EXISTS ingest_job (
-  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-  kind TEXT NOT NULL CHECK (length(kind) > 0),
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-  status TEXT NOT NULL DEFAULT 'queued'
-    CHECK (status IN ('queued', 'running', 'done', 'failed')),
-  attempts INT NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-  error TEXT,
-  priority INT NOT NULL DEFAULT 0,
-  enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  started_at TIMESTAMPTZ,
-  heartbeat_at TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS ingest_job_claim
-  ON ingest_job (priority DESC, enqueued_at) WHERE status = 'queued';
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS idx INT NOT NULL DEFAULT 0;
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS chunker_version TEXT NOT NULL DEFAULT '';
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ NOT NULL DEFAULT now();`;
 
+/**
+ * Ingest queue and its bookkeeping:
+ * - `ingest_job`: claimed with `FOR UPDATE SKIP LOCKED` and leased via
+ *   `heartbeat_at`; the UNIQUE `idempotency_key` makes duplicate event
+ *   delivery collide instead of enqueueing twice.
+ * - `ingest_source`: registered sources for the panel.
+ * - `ingest_document`: published-version ledger. Not named `document`, which
+ *   is the corpus table above.
+ * - `git_source_manifest`: last synced commit and blob map per git source.
+ */
+const QUEUE_SQL = `CREATE TABLE IF NOT EXISTS ingest_job (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('document', 'document-version', 'source_sync')),
+  idempotency_key TEXT NOT NULL UNIQUE,
+  source_id TEXT NOT NULL,
+  namespace TEXT NOT NULL,
+  payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'running', 'succeeded', 'retryable', 'dead')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 5,
+  priority INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  result JSONB,
+  worker_id TEXT,
+  enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  started_at TIMESTAMPTZ,
+  heartbeat_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS ingest_job_claimable
+  ON ingest_job (priority DESC, enqueued_at ASC, id ASC)
+  WHERE status IN ('pending', 'retryable');
+CREATE INDEX IF NOT EXISTS ingest_job_source_recent
+  ON ingest_job (source_id, enqueued_at DESC);
+
+CREATE TABLE IF NOT EXISTS ingest_source (
+  source_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('github', 'file', 'url', 'web')),
+  namespace TEXT NOT NULL,
+  repo TEXT,
+  ref TEXT,
+  url TEXT,
+  path TEXT,
+  registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS ingest_document (
+  document_id TEXT PRIMARY KEY,
+  namespace TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  version_id TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  title TEXT,
+  commit_ref TEXT,
+  chunk_count INTEGER NOT NULL DEFAULT 0,
+  provenance JSONB NOT NULL,
+  published_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (namespace, source_id, external_id, version_id)
+);
+CREATE INDEX IF NOT EXISTS document_source
+  ON ingest_document (source_id);
+
+CREATE TABLE IF NOT EXISTS git_source_manifest (
+  source_key TEXT PRIMARY KEY,
+  commit_sha TEXT,
+  entries JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);`;
+
+/** Both channels index live chunks only (ADR-002 D7). */
+const CHANNEL_SQL = `CREATE EXTENSION IF NOT EXISTS pg_textsearch;
+CREATE INDEX IF NOT EXISTS chunks_text_bm25
+  ON chunks USING bm25 (text)
+  WITH (text_config = 'english')
+  WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw
+  ON chunks USING hnsw (embedding vector_cosine_ops)
+  WHERE valid_to IS NULL AND embedding IS NOT NULL;`;
+
+export interface KnowledgeMigration {
+  id: number;
+  name: string;
+  sql: string;
+}
+
+/**
+ * Applied in id order, each once. Append new migrations; never edit a shipped
+ * one. Migration 1 is idempotent so it adopts databases created before the
+ * ledger existed, and drops a claim index for a queue status nothing sets.
+ */
+export const KNOWLEDGE_MIGRATIONS: readonly KnowledgeMigration[] = [
+  {
+    id: 1,
+    name: "knowledge-core",
+    sql: `${CORPUS_SQL}
+${QUEUE_SQL}
+${CHANNEL_SQL}
+DROP INDEX IF EXISTS ingest_job_claim;`,
+  },
+];
+
+/** The schema version this build needs; recorded in eval provenance. */
+export const KNOWLEDGE_SCHEMA_VERSION = Math.max(
+  ...KNOWLEDGE_MIGRATIONS.map((migration) => migration.id)
+);
+
+const MIGRATION_LEDGER_SQL = `CREATE TABLE IF NOT EXISTS knowledge_schema_migration (
+  id INT PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`;
+
+/**
+ * Applies pending migrations in one transaction. The transaction-scoped
+ * advisory lock serializes concurrent ingest replicas; a waiter then finds
+ * the winner's ledger rows and applies nothing. Returns the applied ids.
+ */
+export const migrateKnowledgeSchema = (pool: PgPool): Promise<number[]> =>
+  withTransaction(pool, async (client) => {
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext('knowledge_schema_migration'))",
+      []
+    );
+    await client.query(MIGRATION_LEDGER_SQL, []);
+    const { rows } = await client.query(
+      "SELECT id FROM knowledge_schema_migration",
+      []
+    );
+    const applied = new Set(rows.map((row) => Number(row["id"])));
+    const pending = KNOWLEDGE_MIGRATIONS.filter(
+      (migration) => !applied.has(migration.id)
+    ).toSorted((a, b) => a.id - b.id);
+    for (const migration of pending) {
+      await client.query(migration.sql, []);
+      await client.query(
+        "INSERT INTO knowledge_schema_migration (id, name) VALUES ($1, $2)",
+        [migration.id, migration.name]
+      );
+    }
+    return pending.map((migration) => migration.id);
+  });
+
+/** Highest applied migration id; 0 before ingest has migrated anything. */
+export const readKnowledgeSchemaVersion = async (
+  client: PgClient
+): Promise<number> => {
+  const ledger = await client.query(
+    "SELECT to_regclass('knowledge_schema_migration') IS NOT NULL AS present",
+    []
+  );
+  if (ledger.rows[0]?.["present"] !== true) {
+    return 0;
+  }
+  const { rows } = await client.query(
+    "SELECT COALESCE(max(id), 0) AS version FROM knowledge_schema_migration",
+    []
+  );
+  return Number(rows[0]?.["version"] ?? 0);
+};
+
 export interface SchemaQuery {
   text: string;
   params: unknown[];
 }
-
-export const ensureKnowledgeSchema = async (
-  client: PgClient
-): Promise<void> => {
-  await client.query(KNOWLEDGE_SCHEMA_MIGRATION_SQL, []);
-};
 
 const validatedId = (value: string, label: string): string => {
   if (typeof value !== "string" || value.length === 0 || value.length > 512) {
@@ -346,18 +490,3 @@ WHERE d.id = $1
 RETURNING c.chunk_id`,
   };
 };
-
-/** SKIP LOCKED keeps concurrent workers off the same row; priority, then FIFO. */
-export const buildIngestJobClaim = (): SchemaQuery => ({
-  params: [],
-  text: `UPDATE ingest_job
-SET status = 'running', started_at = now(), heartbeat_at = now(), attempts = attempts + 1
-WHERE id = (
-  SELECT id FROM ingest_job
-  WHERE status = 'queued'
-  ORDER BY priority DESC, enqueued_at ASC, id ASC
-  FOR UPDATE SKIP LOCKED
-  LIMIT 1
-)
-RETURNING id, kind, payload, attempts`,
-});

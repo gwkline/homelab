@@ -4,12 +4,9 @@ import { test } from "node:test";
 import {
   CLAIM_SQL,
   COMPLETE_SQL,
-  DOCUMENT_TABLE,
   ENQUEUE_JOB_SQL,
   FAIL_SQL,
   HEARTBEAT_SQL,
-  INGEST_SCHEMA_SQL,
-  INGEST_SCHEMA_VERSION,
   JOB_STATES,
   PUBLISH_DOCUMENT_SQL,
   RECOVER_STALE_SQL,
@@ -20,10 +17,6 @@ import {
   retryDelaySeconds,
 } from "../server/queue.ts";
 import { makeIngestInput } from "./helpers.ts";
-
-test("schema version is pinned and exported for run provenance", () => {
-  assert.equal(INGEST_SCHEMA_VERSION, "2-ingest-queue-pipeline");
-});
 
 test("claim uses FOR UPDATE SKIP LOCKED with the claimable partial-index predicate", () => {
   assert.match(CLAIM_SQL, /FOR UPDATE SKIP LOCKED/u);
@@ -76,36 +69,6 @@ test("enqueue collides on the idempotency key and returns the existing job", () 
   assert.match(ENQUEUE_JOB_SQL, /WHERE j\.idempotency_key = \$3/u);
   assert.match(ENQUEUE_JOB_SQL, /TRUE AS duplicate/u);
   assert.match(ENQUEUE_JOB_SQL, /FALSE AS duplicate/u);
-});
-
-test("schema DDL covers queue, source registry, version-unique ledger, manifests", () => {
-  assert.match(INGEST_SCHEMA_SQL, /CREATE TABLE IF NOT EXISTS ingest_job/u);
-  assert.match(INGEST_SCHEMA_SQL, /idempotency_key TEXT NOT NULL UNIQUE/u);
-  assert.match(
-    INGEST_SCHEMA_SQL,
-    /CHECK \(kind IN \('document', 'document-version', 'source_sync'\)\)/u
-  );
-  assert.match(
-    INGEST_SCHEMA_SQL,
-    /CHECK \(status IN \('pending', 'running', 'succeeded', 'retryable', 'dead'\)\)/u
-  );
-  assert.match(
-    INGEST_SCHEMA_SQL,
-    /CREATE INDEX IF NOT EXISTS ingest_job_claimable[\s\S]*WHERE status IN \('pending', 'retryable'\)/u
-  );
-  assert.match(INGEST_SCHEMA_SQL, /CREATE TABLE IF NOT EXISTS ingest_source/u);
-  assert.match(
-    INGEST_SCHEMA_SQL,
-    new RegExp(`CREATE TABLE IF NOT EXISTS ${DOCUMENT_TABLE}`, "u")
-  );
-  assert.match(
-    INGEST_SCHEMA_SQL,
-    /UNIQUE \(namespace, source_id, external_id, version_id\)/u
-  );
-  assert.match(
-    INGEST_SCHEMA_SQL,
-    /CREATE TABLE IF NOT EXISTS git_source_manifest/u
-  );
 });
 
 test("publish is a no-op on the version identity", () => {
