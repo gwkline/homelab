@@ -20,6 +20,15 @@ GitHub issues are the source of truth for both work and run state. There is no f
 
 Single-instance CronJobs are the concurrency control: no two pollers race by construction.
 
+The shell components share `apps/factory/lib/factory.sh`, so each of these has one definition:
+
+- the `gh` wrapper, with a timeout on every call and a retried auth probe;
+- check classification;
+- the per-repo verify command;
+- label and marker names.
+
+The label list itself is `apps/factory/lib/labels.json`, which the collector also reads.
+
 Each worker Job is rendered from its RunProfile ConfigMap (`deploy/factory/base/profile-*.yaml`) by `apps/factory/orchestrator/worker-job.jq`. The profile sets:
 
 - image and ServiceAccount;

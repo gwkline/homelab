@@ -11,34 +11,17 @@ REPO="${FACTORY_REPO:?FACTORY_REPO required}"
 DRY="${FACTORY_MEDIC_DRY_RUN:-false}"
 MAX_ATTEMPTS="${FACTORY_MEDIC_MAX_ATTEMPTS:-3}"
 MAX_CONCURRENT="${FACTORY_MEDIC_MAX_CONCURRENT:-1}"
-ISSUE_LABEL="factory/in-progress" # a repair is in flight under this label
-STUCK_LABEL="factory/stuck"
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+FACTORY_LIB_DIR="${FACTORY_LIB_DIR:-/usr/local/lib/factory}"
+[ -f "${FACTORY_LIB_DIR}/factory.sh" ] || FACTORY_LIB_DIR="${SCRIPT_DIR}/../lib"
+# shellcheck source=apps/factory/lib/factory.sh
+. "${FACTORY_LIB_DIR}/factory.sh"
 . "${SCRIPT_DIR}/medic-lib.sh"
+# A repair is in flight while its issue carries this label.
+ISSUE_LABEL="${LABEL_WIP}"
 
-if [ -z "${GH_AUTH_SKIP:-}" ]; then
-  gh auth status >/dev/null 2>&1 || { echo "[medic] gh auth failed"; exit 1; }
-fi
-
-# Unknown state is never red: act only on explicit failures.
-classify_checks() {
-  case "$1" in
-    *failure*|*timed_out*|*action_required*|*stale*|*cancelled*) echo red ;;
-    *) echo not-red ;;
-  esac
-}
-
-# Keep in sync with apps/factory/orchestrator/run.sh (medic runs in the
-# reviewer image, which does not ship the orchestrator).
-verify_for() {
-  case "${1:-}" in
-    *launchpad*) echo "cargo check --workspace --all-targets" ;;
-    *plantry*|*personal-site*|*pr-czar*|*kline-services-bot*|*discord-bot*) echo "npm run build" ;;
-    *homelab*) echo "for f in \$(git diff --name-only HEAD -- '*.sh'); do shellcheck -s sh \"\$f\" 2>/dev/null || dash -n \"\$f\" || exit 1; done; echo verify-ok" ;;
-    *) echo "" ;;
-  esac
-}
+factory_gh_auth || { echo "[medic] gh auth failed"; exit 1; }
 
 # ---- 1. find ci-red factory PRs ---------------------------------------------
 [ -n "${MEDIC_TRACE:-}" ] && set -x
@@ -72,9 +55,10 @@ while IFS= read -r PR; do
   HEAD_SHA="$(printf '%s' "$PR" | jq -r '.head.sha')"
   LINKED_ISSUE="$(printf '%s' "$HEAD_REF" | sed -n 's|^factory/issue-\([0-9]*\)/.*|\1|p')"
 
-  CHECKS="$(gh api "repos/${REPO}/commits/${HEAD_SHA}/check-runs" 2>/dev/null |
-    jq -r '.check_runs | map(.conclusion // .status) | join(",")')" || CHECKS=""
-  CI="$(classify_checks "${CHECKS:-none}")"
+  CHECKS_JSON="$(gh api "repos/${REPO}/commits/${HEAD_SHA}/check-runs" 2>/dev/null)" || CHECKS_JSON=""
+  CHECKS="$(printf '%s' "${CHECKS_JSON}" | jq -r '.check_runs | map(.conclusion // .status) | join(",")' 2>/dev/null)" || CHECKS=""
+  # Unknown or pending is never red: act only on explicit failures.
+  CI="$(printf '%s' "${CHECKS_JSON}" | classify_checks)"
   [ "${CI}" = "red" ] || continue
 
   echo "[medic] PR #${NUM} (${HEAD_REF}) is ci-red — checks: ${CHECKS:-unknown}"
@@ -90,12 +74,12 @@ while IFS= read -r PR; do
       echo "[medic] issue #${LINKED_ISSUE} already in-progress — skipping (one repair at a time)"
       continue
       ;;
-    *,factory/queued,*)
-      echo "[medic] issue #${LINKED_ISSUE} already factory/queued — waiting for the orchestrator handoff"
+    *,${LABEL_QUEUED},*)
+      echo "[medic] issue #${LINKED_ISSUE} already ${LABEL_QUEUED} — waiting for the orchestrator handoff"
       continue
       ;;
-    *,${STUCK_LABEL},*)
-      echo "[medic] issue #${LINKED_ISSUE} is ${STUCK_LABEL} — a human owns it now"
+    *,${LABEL_STUCK},*)
+      echo "[medic] issue #${LINKED_ISSUE} is ${LABEL_STUCK} — a human owns it now"
       continue
       ;;
   esac
@@ -116,7 +100,7 @@ while IFS= read -r PR; do
   ATTEMPTS="$(medic_count_failures "${REPO}" "${NUM}" "${HEAD_SHA}")"
   if [ "${ATTEMPTS}" -ge "${MAX_ATTEMPTS}" ]; then
     echo "[medic] PR #${NUM}: ${ATTEMPTS} failed attempts at head ${HEAD_SHA} (budget ${MAX_ATTEMPTS}) — escalating"
-    echo "[medic] PR #${NUM}: gave up — handing issue #${LINKED_ISSUE} to a human as ${STUCK_LABEL}"
+    echo "[medic] PR #${NUM}: gave up — handing issue #${LINKED_ISSUE} to a human as ${LABEL_STUCK}"
     [ "${DRY}" = "true" ] || medic_mark_stuck "${REPO}" "${LINKED_ISSUE}" "${NUM}" "${HEAD_SHA}" "${ATTEMPTS}"
     continue
   fi
@@ -168,8 +152,8 @@ Rules:
     continue
   fi
   if ! gh issue edit "${LINKED_ISSUE}" -R "${REPO}" \
-    --remove-label "${STUCK_LABEL}" --add-label "factory/queued" >/dev/null 2>&1; then
-    if ! gh issue edit "${LINKED_ISSUE}" -R "${REPO}" --add-label "factory/queued" >/dev/null; then
+    --remove-label "${LABEL_STUCK}" --add-label "${LABEL_QUEUED}" >/dev/null 2>&1; then
+    if ! gh issue edit "${LINKED_ISSUE}" -R "${REPO}" --add-label "${LABEL_QUEUED}" >/dev/null; then
       echo "[medic] WARN: could not queue issue #${LINKED_ISSUE} — skipping this tick" >&2
       continue
     fi
