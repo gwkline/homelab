@@ -12,7 +12,8 @@ import { chunkDocumentVersion, CHUNKER_VERSION, sha256Hex } from "./chunk.ts";
 import type { ChunkFormat, NormalizedDocumentVersion } from "./chunk.ts";
 import { embedChunkTexts } from "./embedder.ts";
 import type { EmbeddingWorkerConfig } from "./embedder.ts";
-import type { PgClient } from "./pg-client.ts";
+import type { PgClient, PgPool } from "./pg-client.ts";
+import { withTransaction } from "./pg-client.ts";
 import type { CitationAnchor } from "./pgvector.ts";
 import { toPgvectorLiteral } from "./pgvector.ts";
 import {
@@ -421,7 +422,7 @@ export interface IngestRunOptions {
  * do not, and are reported per chunk as `status: "partial"`.
  */
 export const processDocumentVersion = async (
-  client: PgClient,
+  pool: PgPool,
   doc: IngestDocumentVersion,
   options: IngestRunOptions
 ): Promise<DocumentIngestOutcome> => {
@@ -454,103 +455,105 @@ export const processDocumentVersion = async (
     provider: config.provider.name,
     versionId: doc.versionId,
   });
-  await client.query("BEGIN", []);
-  let { documentId, versionId } = doc;
-  try {
-    const registerNamespace = buildNamespaceRegistration(doc.namespace);
-    await client.query(registerNamespace.text, registerNamespace.params);
-    const documentUpsert = buildDocumentUpsert({
-      content_hash: contentHash,
-      external_id: doc.externalId,
-      id: doc.documentId,
-      namespace: doc.namespace,
-      source: doc.source,
-      ...(doc.title === undefined ? {} : { title: doc.title }),
-      ...(doc.url === undefined ? {} : { url: doc.url }),
-    });
-    const upserted = await client.query(
-      documentUpsert.text,
-      documentUpsert.params
-    );
-    let documentVersion: number;
-    const [documentRow] = upserted.rows;
-    if (documentRow === undefined) {
-      // Unchanged content: the DO UPDATE guard filtered the upsert.
-      const current = buildDocumentCurrentVersionQuery(
-        doc.namespace,
-        doc.source,
-        doc.externalId
-      );
-      const selected = await client.query(current.text, current.params);
-      const [row] = selected.rows;
-      if (row === undefined) {
-        throw new Error(
-          `ingest: document ${doc.namespace}/${doc.source}/${doc.externalId} vanished between upsert and read`
-        );
-      }
-      documentId = readRowString(row["id"], "document id");
-      documentVersion = readRowVersion(row["version"], "document version");
-    } else {
-      documentId = readRowString(documentRow["id"], "document upsert id");
-      documentVersion = readRowVersion(
-        documentRow["version"],
-        "document upsert version"
-      );
-    }
-    const versionInsert = buildDocumentVersionInsert({
-      content_hash: contentHash,
-      document_id: documentId,
-      id: doc.versionId,
-      version: documentVersion,
-    });
-    const inserted = await client.query(
-      versionInsert.text,
-      versionInsert.params
-    );
-    const [versionRow] = inserted.rows;
-    if (versionRow === undefined) {
-      // Version already recorded; cite the existing row.
-      const existing = buildDocumentVersionIdQuery(documentId, documentVersion);
-      const selected = await client.query(existing.text, existing.params);
-      const [row] = selected.rows;
-      if (row === undefined) {
-        throw new Error(
-          `ingest: document ${documentId} version ${documentVersion} vanished between insert and read`
-        );
-      }
-      versionId = readRowString(row["id"], "document version id");
-    }
-    for (const [index, chunk] of chunks.entries()) {
-      const embedding = embeddings.get(index) ?? null;
-      const built = buildChunkUpsertQuery({
-        anchors: chunk.anchors,
-        chunkId: chunk.chunkId,
-        chunkerVersion: chunk.chunkerVersion,
-        contentHash: chunk.contentHash,
-        documentId,
-        embedding,
-        embeddingModel: embedding === null ? null : config.provider.model,
-        idx: chunk.idx,
-        namespace: chunk.namespace,
-        text: chunk.text,
-        versionId,
+  const { documentId, versionId } = await withTransaction(
+    pool,
+    async (client) => {
+      const registerNamespace = buildNamespaceRegistration(doc.namespace);
+      await client.query(registerNamespace.text, registerNamespace.params);
+      const documentUpsert = buildDocumentUpsert({
+        content_hash: contentHash,
+        external_id: doc.externalId,
+        id: doc.documentId,
+        namespace: doc.namespace,
+        source: doc.source,
+        ...(doc.title === undefined ? {} : { title: doc.title }),
+        ...(doc.url === undefined ? {} : { url: doc.url }),
       });
-      await client.query(built.text, built.params);
+      const upserted = await client.query(
+        documentUpsert.text,
+        documentUpsert.params
+      );
+      let storedDocumentId: string;
+      let documentVersion: number;
+      const [documentRow] = upserted.rows;
+      if (documentRow === undefined) {
+        // Unchanged content: the DO UPDATE guard filtered the upsert.
+        const current = buildDocumentCurrentVersionQuery(
+          doc.namespace,
+          doc.source,
+          doc.externalId
+        );
+        const selected = await client.query(current.text, current.params);
+        const [row] = selected.rows;
+        if (row === undefined) {
+          throw new Error(
+            `ingest: document ${doc.namespace}/${doc.source}/${doc.externalId} vanished between upsert and read`
+          );
+        }
+        storedDocumentId = readRowString(row["id"], "document id");
+        documentVersion = readRowVersion(row["version"], "document version");
+      } else {
+        storedDocumentId = readRowString(
+          documentRow["id"],
+          "document upsert id"
+        );
+        documentVersion = readRowVersion(
+          documentRow["version"],
+          "document upsert version"
+        );
+      }
+      const versionInsert = buildDocumentVersionInsert({
+        content_hash: contentHash,
+        document_id: storedDocumentId,
+        id: doc.versionId,
+        version: documentVersion,
+      });
+      const inserted = await client.query(
+        versionInsert.text,
+        versionInsert.params
+      );
+      let storedVersionId = doc.versionId;
+      const [versionRow] = inserted.rows;
+      if (versionRow === undefined) {
+        // Version already recorded; cite the existing row.
+        const existing = buildDocumentVersionIdQuery(
+          storedDocumentId,
+          documentVersion
+        );
+        const selected = await client.query(existing.text, existing.params);
+        const [row] = selected.rows;
+        if (row === undefined) {
+          throw new Error(
+            `ingest: document ${storedDocumentId} version ${documentVersion} vanished between insert and read`
+          );
+        }
+        storedVersionId = readRowString(row["id"], "document version id");
+      }
+      for (const [index, chunk] of chunks.entries()) {
+        const embedding = embeddings.get(index) ?? null;
+        const built = buildChunkUpsertQuery({
+          anchors: chunk.anchors,
+          chunkId: chunk.chunkId,
+          chunkerVersion: chunk.chunkerVersion,
+          contentHash: chunk.contentHash,
+          documentId: storedDocumentId,
+          embedding,
+          embeddingModel: embedding === null ? null : config.provider.model,
+          idx: chunk.idx,
+          namespace: chunk.namespace,
+          text: chunk.text,
+          versionId: storedVersionId,
+        });
+        await client.query(built.text, built.params);
+      }
+      const supersede = buildSupersedeChunksQuery(
+        storedDocumentId,
+        chunks.map((chunk) => chunk.contentHash)
+      );
+      await client.query(supersede.text, supersede.params);
+      return { documentId: storedDocumentId, versionId: storedVersionId };
     }
-    const supersede = buildSupersedeChunksQuery(
-      documentId,
-      chunks.map((chunk) => chunk.contentHash)
-    );
-    await client.query(supersede.text, supersede.params);
-    await client.query("COMMIT", []);
-  } catch (error) {
-    try {
-      await client.query("ROLLBACK", []);
-    } catch {
-      // The original failure is the one worth surfacing.
-    }
-    throw error;
-  }
+  );
   const failedChunks = [...failures.entries()]
     .toSorted(([a], [b]) => a - b)
     .map(([index, reason]) => {
@@ -592,23 +595,23 @@ export interface IngestJobResult {
 
 /** Per-chunk embedding failures are a `partial` outcome, not a job failure. */
 export const runIngestJob = async (
-  client: PgClient,
+  pool: PgPool,
   job: IngestJobRecord,
   options: IngestRunOptions
 ): Promise<IngestJobResult> => {
   try {
     const doc = parseDocumentPayload(job);
-    const outcome = await processDocumentVersion(client, doc, {
+    const outcome = await processDocumentVersion(pool, doc, {
       ...options,
       jobId: job.jobId,
     });
     const complete = buildCompleteJobQuery(job.jobId);
-    await client.query(complete.text, complete.params);
+    await pool.query(complete.text, complete.params);
     return { outcome, status: "done" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const fail = buildFailJobQuery(job.jobId, message);
-    await client.query(fail.text, fail.params);
+    await pool.query(fail.text, fail.params);
     return { error: truncateJobError(message), status: "failed" };
   }
 };
@@ -624,7 +627,7 @@ export const claimIngestJob = async (
 
 /** Claims and runs jobs until the queue is empty or `maxJobs` have run. */
 export const drainIngestJobs = async (
-  client: PgClient,
+  pool: PgPool,
   options: IngestRunOptions,
   limits: { maxJobs?: number } = {}
 ): Promise<IngestJobResult[]> => {
@@ -636,11 +639,11 @@ export const drainIngestJobs = async (
   }
   const results: IngestJobResult[] = [];
   while (results.length < maxJobs) {
-    const job = await claimIngestJob(client);
+    const job = await claimIngestJob(pool);
     if (job === null) {
       break;
     }
-    results.push(await runIngestJob(client, job, options));
+    results.push(await runIngestJob(pool, job, options));
   }
   return results;
 };
