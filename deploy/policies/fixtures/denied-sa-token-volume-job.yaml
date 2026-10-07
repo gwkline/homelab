@@ -1,0 +1,28 @@
+# Deliberately malicious: mounts a ServiceAccount token via a projected
+# volume even though automount is off.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-denied-sa-token-volume
+  namespace: sandbox
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: loop
+          image: ghcr.io/gwkline/homelab/loop-agent:latest
+          volumeMounts:
+            - { name: sa-token, mountPath: /var/run/secrets/tokens }
+          resources:
+            limits: { memory: 4Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+      volumes:
+        - name: sa-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token

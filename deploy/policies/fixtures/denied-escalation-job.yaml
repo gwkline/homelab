@@ -1,0 +1,19 @@
+# Deliberately malicious: allows privilege escalation via setuid.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-denied-escalation
+  namespace: sandbox
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: loop
+          image: ghcr.io/gwkline/homelab/loop-agent:latest
+          resources:
+            limits: { memory: 4Gi }
+          securityContext:
+            allowPrivilegeEscalation: true

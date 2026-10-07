@@ -1,0 +1,40 @@
+# The Job the chaos-monkey CronJob materializes: agent-created it would be
+# denied (it automounts its token), but the request that actually makes it
+# comes from kube-controller-manager and is exempt. Proves the CronJob path.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-exempt-chaos-cronjob
+  namespace: sandbox
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: chaos-monkey
+    spec:
+      serviceAccountName: chaos-monkey
+      automountServiceAccountToken: true
+      restartPolicy: Never
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: chaos
+          image: ghcr.io/gwkline/homelab/loop-agent:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          command: ["true"]
+          volumeMounts:
+            - { name: chaos-config, mountPath: /etc/chaos, readOnly: true }
+            - { name: github-token, mountPath: /secrets, readOnly: true }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }
+      volumes:
+        - name: chaos-config
+          configMap: { name: chaos-config }
+        - name: github-token
+          secret: { secretName: github-token, optional: true }

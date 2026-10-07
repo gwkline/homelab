@@ -1,0 +1,141 @@
+# Constrains every Job created in the sandbox namespace at admission
+# (ValidatingAdmissionPolicy/CEL, no extra controller). The policy inspects
+# spec.template.spec directly — relying only on Pod admission would let a
+# hostile PodSpec through with its accepted Job. Contract, exemptions and the
+# operator break-glass path are documented in deploy/policies/README.md.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sandbox-job-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        resources: ["jobs"]
+        operations: ["CREATE"]
+  matchConditions:
+    - name: requester-not-exempt
+      # Two exemptions, neither reachable by an agent ServiceAccount:
+      # operators authenticate with the system:masters kubeconfig, and
+      # kube-controller-manager materializes Jobs from the operator-managed
+      # CronJobs (factory, chaos).
+      expression: >-
+        request.userInfo.username != 'system:kube-controller-manager'
+        && !request.userInfo.username.startsWith('system:serviceaccount:kube-system:')
+        && !request.userInfo.groups.exists(g, g == 'system:masters' || g == 'system:kube-controller-manager')
+  variables:
+    - name: podSpec
+      expression: object.spec.template.spec
+    - name: secretVolumes
+      expression: variables.podSpec.volumes.filter(v, has(v.secret)).map(v, v.name)
+  validations:
+    - message: >-
+        sandbox Jobs must not share host network, PID, or IPC namespaces
+      expression: >-
+        !variables.podSpec.hostNetwork
+        && !variables.podSpec.hostPID
+        && !variables.podSpec.hostIPC
+    - message: >-
+        sandbox Job containers must not declare host ports
+      expression: >-
+        !variables.podSpec.containers.exists(c, c.ports.exists(p, p.hostPort > 0))
+        && !variables.podSpec.initContainers.exists(c, c.ports.exists(p, p.hostPort > 0))
+        && !variables.podSpec.ephemeralContainers.exists(c, c.ports.exists(p, p.hostPort > 0))
+    - message: >-
+        sandbox Jobs must use an approved ServiceAccount (default,
+        factory-worker, factory-collector, factory-orchestrator,
+        factory-reviewer, factory-security, factory-reclaimer, chaos-monkey)
+      expression: >-
+        !has(variables.podSpec.serviceAccountName)
+        || variables.podSpec.serviceAccountName in
+          ['default', 'factory-worker', 'factory-collector', 'factory-orchestrator',
+           'factory-reviewer', 'factory-security', 'factory-reclaimer', 'chaos-monkey']
+    - message: >-
+        sandbox Jobs must set automountServiceAccountToken: false
+      expression: >-
+        has(variables.podSpec.automountServiceAccountToken)
+        && !variables.podSpec.automountServiceAccountToken
+    - message: >-
+        sandbox Jobs must not mount projected ServiceAccount tokens
+      expression: >-
+        !variables.podSpec.volumes.exists(v,
+          has(v.projected) && v.projected.sources.exists(s, has(s.serviceAccountToken)))
+    - message: >-
+        sandbox Job containers must not be privileged
+      expression: >-
+        !variables.podSpec.containers.exists(c, c.securityContext.privileged)
+        && !variables.podSpec.initContainers.exists(c, c.securityContext.privileged)
+        && !variables.podSpec.ephemeralContainers.exists(c, c.securityContext.privileged)
+    - message: >-
+        sandbox Job containers must not set allowPrivilegeEscalation: true
+      expression: >-
+        !variables.podSpec.containers.exists(c, c.securityContext.allowPrivilegeEscalation)
+        && !variables.podSpec.initContainers.exists(c, c.securityContext.allowPrivilegeEscalation)
+        && !variables.podSpec.ephemeralContainers.exists(c, c.securityContext.allowPrivilegeEscalation)
+    - message: >-
+        sandbox Jobs must use ghcr.io/gwkline/homelab images
+      expression: >-
+        !variables.podSpec.containers.exists(c, !c.image.startsWith('ghcr.io/gwkline/homelab/'))
+        && !variables.podSpec.initContainers.exists(c, !c.image.startsWith('ghcr.io/gwkline/homelab/'))
+        && !variables.podSpec.ephemeralContainers.exists(c, !c.image.startsWith('ghcr.io/gwkline/homelab/'))
+    - message: >-
+        sandbox Jobs may only use emptyDir, secret, configMap, projected, or
+        downwardAPI volumes
+      expression: >-
+        !variables.podSpec.volumes.exists(v,
+          !has(v.emptyDir) && !has(v.secret) && !has(v.configMap)
+          && !has(v.projected) && !has(v.downwardAPI))
+    - message: >-
+        sandbox Jobs must mount secret volumes readOnly
+      expression: >-
+        !variables.podSpec.containers.exists(c, c.volumeMounts.exists(m,
+          m.name in variables.secretVolumes && (!has(m.readOnly) || !m.readOnly)))
+        && !variables.podSpec.initContainers.exists(c, c.volumeMounts.exists(m,
+          m.name in variables.secretVolumes && (!has(m.readOnly) || !m.readOnly)))
+        && !variables.podSpec.ephemeralContainers.exists(c, c.volumeMounts.exists(m,
+          m.name in variables.secretVolumes && (!has(m.readOnly) || !m.readOnly)))
+    - message: >-
+        sandbox Job containers must set a memory limit of 16Gi or less
+      expression: >-
+        variables.podSpec.containers.all(c,
+          'memory' in c.resources.limits
+          && quantity(c.resources.limits['memory']) <= quantity('16Gi'))
+        && variables.podSpec.initContainers.all(c,
+          'memory' in c.resources.limits
+          && quantity(c.resources.limits['memory']) <= quantity('16Gi'))
+        && variables.podSpec.ephemeralContainers.all(c,
+          'memory' in c.resources.limits
+          && quantity(c.resources.limits['memory']) <= quantity('16Gi'))
+    - message: >-
+        sandbox Job cpu limits must be 4 or less
+      expression: >-
+        variables.podSpec.containers.all(c,
+          !('cpu' in c.resources.limits)
+          || quantity(c.resources.limits['cpu']) <= quantity('4'))
+        && variables.podSpec.initContainers.all(c,
+          !('cpu' in c.resources.limits)
+          || quantity(c.resources.limits['cpu']) <= quantity('4'))
+        && variables.podSpec.ephemeralContainers.all(c,
+          !('cpu' in c.resources.limits)
+          || quantity(c.resources.limits['cpu']) <= quantity('4'))
+    - message: >-
+        sandbox Jobs must set an emptyDir sizeLimit of 10Gi or less
+      expression: >-
+        !variables.podSpec.volumes.exists(v, has(v.emptyDir) && !has(v.emptyDir.sizeLimit))
+        && !variables.podSpec.volumes.exists(v,
+          has(v.emptyDir) && has(v.emptyDir.sizeLimit)
+          && quantity(v.emptyDir.sizeLimit) > quantity('10Gi'))
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: sandbox-job-guard
+spec:
+  policyName: sandbox-job-guard
+  validationActions: [Deny, Audit]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: sandbox

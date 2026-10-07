@@ -1,0 +1,21 @@
+# Deliberately malicious: shares host PID and network namespaces.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-denied-host-namespaces
+  namespace: sandbox
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      hostPID: true
+      hostNetwork: true
+      containers:
+        - name: loop
+          image: ghcr.io/gwkline/homelab/loop-agent:latest
+          resources:
+            limits: { memory: 4Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
