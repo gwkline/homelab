@@ -12,6 +12,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - netpol.yaml
+  - admin-secret.yaml
   - ntfy-secret.yaml
 
 # Hash-suffixed names, so any dashboard or provisioning change rolls Grafana.

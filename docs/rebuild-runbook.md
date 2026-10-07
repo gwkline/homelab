@@ -61,7 +61,7 @@ kubectl apply -k deploy/namespaces
 ./scripts/create-onepassword-service-account.sh   # external-secrets only; the ClusterSecretStore reads it
 ```
 
-Postgres owner-role Secrets in `database` (generate fresh passwords, then set the `knowledge-db` 1Password item's password to match): see [deploy/postgres/README.md](../deploy/postgres/README.md#prerequisites).
+That is the only hand-entered secret. Everything else, including the Postgres owner-role passwords (items `knowledge-db`, `factory-db`), syncs from 1Password with the core set ([secrets-inventory.md](secrets-inventory.md)).
 
 ### 3.4 Image admission
 
@@ -121,18 +121,17 @@ Apply as needed; each README lists its prerequisites:
 ```sh
 kubectl apply -k deploy/victoriametrics/base
 kubectl apply -k deploy/loki/base
-kubectl apply -k deploy/grafana/base      # needs Secret grafana-admin
+kubectl apply -k deploy/grafana/base      # needs 1Password grafana-admin, grafana-ntfy
 kubectl apply -k deploy/executor/base     # optional Secret executor-admin
 kubectl apply -k deploy/knowledge/base    # needs 1Password knowledge-db / knowledge-api-token
 ```
 
 Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart && scripts/pg-smoke.sh verify`.
 
-### 3.10 Hand-created secrets and recreated state
+### 3.10 Recreated state
 
 | Item | Action |
 | --- | --- |
-| `factory-opencode-auth`, `github-app`, `executor-client` | create per [secrets-inventory.md](secrets-inventory.md#created-by-hand) |
 | t3code | pairing URL from `kubectl logs t3code-0 -n agents \| head`; pair from desktop/phone; repos re-clone |
 | hermes | `kubectl exec -it hermes-0 -n agents -- hermes setup --portal`, then `kubectl rollout restart statefulset hermes -n agents`; message it and get a reply |
 | CLI logins (Claude, Codex) | log in again inside hermes/t3code (PVC homes start empty) |
@@ -144,7 +143,7 @@ Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart &&
 ./scripts/recovery-drill.sh --from "$DRILL_START"   # prompts for the 1Password token unless OP_SERVICE_ACCOUNT_TOKEN is set
 ```
 
-Runs and times: ESO → namespaces + 1Password token → image policy → CNPG → core set → Tailscale operator → pods ready → tailnet HTTPS → `rebuild-check.sh`, then prints per-stage times and total RTO. Any failed stage fails the drill. The postgres owner Secrets (3.3) must already exist or postgres will not come up.
+Runs and times: ESO → namespaces + 1Password token → image policy → CNPG → core set → Tailscale operator → pods ready → tailnet HTTPS → `rebuild-check.sh`, then prints per-stage times and total RTO. Any failed stage fails the drill.
 
 ## 5. Drill log
 
@@ -158,4 +157,4 @@ No completed runs yet. After two clean runs, set **target RTO = median × 1.5, r
 
 ## 6. Manual interventions
 
-Every undocumented step during a drill becomes a step in this runbook or a tracked issue before the next run. Known manual steps: hermes portal setup and t3code pairing (3.10), Postgres owner Secrets (3.3), and `factory-opencode-auth` (no ExternalSecret yet).
+Every undocumented step during a drill becomes a step in this runbook or a tracked issue before the next run. Known manual steps: the 1Password token (3.3), and hermes portal setup and t3code pairing (3.10).

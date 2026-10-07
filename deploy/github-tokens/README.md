@@ -7,10 +7,10 @@ ExternalSecrets that sync GitHub PATs from the `homelab` 1Password vault, plus `
 | Item | Field(s) | Secret | Namespaces | PAT scope |
 | --- | --- | --- | --- | --- |
 | `github-readonly` | `token` | `github-token` | agents, sandbox | Contents: read on private repos agents read |
-| `github-writer` | `token` | `github-token-writer` | sandbox | Contents + Pull requests: write on target repos only. Optional; consumers mount it `optional: true` |
 | `work-github-writer` | `token`, `repos` | `work-github-token` | work | Contents + Pull requests: read/write on selected work repos only. `repos` holds clone URLs, one per line |
+| `factory-github-app` | `app-id`, `installation-id`, `private-key` | `github-app` | sandbox | GitHub App, not a PAT ([docs/github-app.md](../../docs/github-app.md)). The collector mints short-lived installation tokens with it |
 
-The read and write tokens are separate items with separate permissions.
+The read-only and work tokens are separate items with separate permissions.
 
 ## Prerequisites
 
@@ -23,7 +23,7 @@ Part of `clusters/home`. Standalone: `kubectl apply -k deploy/github-tokens/base
 ## Verify
 
 ```sh
-kubectl get clustersecretstore,externalsecret -A    # all Ready (github-token-writer may be False if the item is absent)
+kubectl get clustersecretstore,externalsecret -A    # all Ready
 kubectl -n agents exec hermes-0 -- gh api user -q .login
 ```
 

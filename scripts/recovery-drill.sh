@@ -81,8 +81,6 @@ end_stage
 stage secrets
 kubectl apply -k deploy/namespaces
 ./scripts/create-onepassword-service-account.sh
-kubectl -n database get secret pg-primary-knowledge-owner >/dev/null 2>&1 ||
-  echo "WARN: postgres owner Secrets missing (deploy/postgres/README.md) — pg-primary will not bootstrap" >&2
 end_stage
 
 # ---------------------------------------------------------------------------
