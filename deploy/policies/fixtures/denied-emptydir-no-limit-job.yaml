@@ -1,0 +1,23 @@
+# Deliberately malicious: unbounded emptyDir can fill the node disk.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-denied-emptydir-no-limit
+  namespace: sandbox
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: loop
+          image: ghcr.io/gwkline/homelab/loop-agent:latest
+          volumeMounts:
+            - { name: scratch, mountPath: /scratch }
+          resources:
+            limits: { memory: 4Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+      volumes:
+        - { name: scratch, emptyDir: {} }

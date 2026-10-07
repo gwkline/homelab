@@ -1,0 +1,19 @@
+# Deliberately malicious: image outside the approved registry path.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-denied-foreign-image
+  namespace: sandbox
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: cryptominer
+          image: docker.io/library/nginx:1.27
+          resources:
+            limits: { memory: 4Gi }
+          securityContext:
+            allowPrivilegeEscalation: false

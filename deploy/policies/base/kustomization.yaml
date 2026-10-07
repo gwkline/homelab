@@ -9,3 +9,4 @@ labels:
 
 resources:
   - networkpolicy.yaml
+  - job-admission.yaml

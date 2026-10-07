@@ -1,0 +1,19 @@
+# Deliberately malicious: no memory limit, so it can be an OOM hazard.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-denied-no-mem-limit
+  namespace: sandbox
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: loop
+          image: ghcr.io/gwkline/homelab/loop-agent:latest
+          resources:
+            limits: { cpu: "1" }
+          securityContext:
+            allowPrivilegeEscalation: false

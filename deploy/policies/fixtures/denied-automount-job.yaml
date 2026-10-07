@@ -1,0 +1,18 @@
+# Deliberately malicious: relies on the default (automount) ServiceAccount token.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-denied-automount
+  namespace: sandbox
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: loop
+          image: ghcr.io/gwkline/homelab/loop-agent:latest
+          resources:
+            limits: { memory: 4Gi }
+          securityContext:
+            allowPrivilegeEscalation: false

@@ -1,0 +1,41 @@
+# The shape panel spawns (apps/panel/server/jobs.ts) and scripts/new-job.sh prints.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: policy-allowed-loop-agent
+  namespace: sandbox
+  labels:
+    app: loop-agent
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: loop-agent
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: loop
+          image: ghcr.io/gwkline/homelab/loop-agent:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          env:
+            - { name: LOOP_COMMAND, value: "true" }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: github-token, mountPath: /secrets, readOnly: true }
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { memory: 4Gi }
+      volumes:
+        - { name: data, emptyDir: { sizeLimit: 5Gi } }
+        - name: github-token
+          secret: { secretName: github-token, optional: true }
