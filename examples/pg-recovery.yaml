@@ -1,0 +1,69 @@
+# Restore the latest backup of pg-primary into a throwaway Cluster.
+# Not part of clusters/home: apply, verify, delete.
+#
+#   kubectl apply -f examples/pg-recovery.yaml
+#   kubectl -n database get cluster pg-restore -w
+#   kubectl -n database delete cluster pg-restore
+#
+# Recovers the latest completed base backup plus every archived WAL after it
+# (full crash recovery). For point-in-time recovery, use examples/pg-pitr.yaml
+# instead. Role passwords come back with the backup, so pg-primary's owner
+# Secrets still authenticate against the restored cluster (see
+# deploy/postgres/README.md "Restore and PITR").
+#
+# No spec.plugins: a recovery Cluster does not archive WAL.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-restore
+  namespace: database
+spec:
+  instances: 1
+
+  imageCatalogRef:
+    apiGroup: postgresql.cnpg.io
+    kind: ClusterImageCatalog
+    name: postgresql-minimal-trixie
+    major: 18
+
+  enableSuperuserAccess: false
+
+  # Same preload and ImageVolume as the source: the restored PGDATA has
+  # pg_textsearch preloaded, and the ABI must match the operand.
+  postgresql:
+    shared_preload_libraries:
+      - pg_textsearch
+    extensions:
+      - name: pgvector
+      - name: pg-textsearch
+        image:
+          reference: ghcr.io/gwkline/homelab/pg-textsearch@sha256:8076cc6902d6ebadbd66419988bd0612a3ca93ed0601eb6a5edd21857bca2790
+
+  bootstrap:
+    recovery:
+      # externalClusters name below; the plugin's serverName parameter is the
+      # pg-primary prefix on the ObjectStore (deploy/postgres/base/cluster.yaml).
+      source: pg-primary-b2
+
+  externalClusters:
+    - name: pg-primary-b2
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: b2-store
+          serverName: pg-primary
+
+  storage:
+    size: 20Gi
+    storageClass: local-path
+
+  affinity:
+    nodeSelector:
+      node-role.kubernetes.io/control-plane: "true"
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      memory: 2Gi

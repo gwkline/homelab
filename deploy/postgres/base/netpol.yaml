@@ -8,6 +8,8 @@ spec:
   policyTypes: [Ingress, Egress]
 ---
 # CNPG operator: instance manager status API (8000) and metrics (9187).
+# Selects every Cluster in the namespace: pg-primary and the throwaway
+# recovery Clusters (pg-restore, pg-pitr in examples/).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -15,8 +17,9 @@ metadata:
   namespace: database
 spec:
   podSelector:
-    matchLabels:
-      cnpg.io/cluster: pg-primary
+    matchExpressions:
+      - key: cnpg.io/cluster
+        operator: Exists
   policyTypes: [Ingress]
   ingress:
     - from:
@@ -51,7 +54,10 @@ spec:
       ports:
         - { protocol: TCP, port: 5432 }
 ---
-# Instance egress: DNS, the Kubernetes API, and peers for replication.
+# CNPG instance egress: DNS, the Kubernetes API, peers for replication, and
+# the backup object store. Selects every Cluster pod in the namespace —
+# instance pods, the barman-cloud sidecar, and the recovery jobs that restore
+# from B2 (examples/pg-recovery.yaml, examples/pg-pitr.yaml).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -59,8 +65,9 @@ metadata:
   namespace: database
 spec:
   podSelector:
-    matchLabels:
-      cnpg.io/cluster: pg-primary
+    matchExpressions:
+      - key: cnpg.io/cluster
+        operator: Exists
   policyTypes: [Egress]
   egress:
     - to:
@@ -87,3 +94,17 @@ spec:
         - podSelector: {}
       ports:
         - { protocol: TCP, port: 5432 }
+    # Backblaze B2 publishes no IP ranges, so this follows the repo's
+    # public-internet-minus-private-ranges posture (docs/egress-policy.md),
+    # scoped to HTTPS and the CNPG pods.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+              - 100.64.0.0/10
+      ports:
+        - { protocol: TCP, port: 443 }

@@ -1,6 +1,6 @@
 # CloudNativePG operator
 
-CNPG 1.30.0 in `cnpg-system`; it manages the `pg-primary` cluster in `deploy/postgres` (whose `pg-textsearch` ImageVolume extension needs CNPG 1.29+). `base/upstream.yaml` is the verbatim release bundle; `base/kustomization.yaml` carries the only local changes.
+CNPG 1.30.0 in `cnpg-system`; it manages the `pg-primary` cluster in `deploy/postgres` (whose `pg-textsearch` ImageVolume extension needs CNPG 1.29+). The Barman Cloud CNPG-I plugin that provides its backups lives beside it in [barman/](barman/README.md). `base/upstream.yaml` is the verbatim release bundle; `base/kustomization.yaml` carries the only local changes.
 
 ## Apply
 

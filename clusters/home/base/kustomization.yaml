@@ -1,7 +1,8 @@
 # Core set, in dependency order. Applied after these server-side/helm
 # pre-applies (CRDs too large for client-side apply; see
-# docs/rebuild-runbook.md): ESO (deploy/eso/base), CNPG (deploy/cnpg/base),
-# policy-controller. tailscale-operator is helm-installed after this root.
+# docs/rebuild-runbook.md): ESO (deploy/eso/base), CNPG (deploy/cnpg/base)
+# plus its Barman Cloud plugin (deploy/cnpg/barman), policy-controller.
+# tailscale-operator is helm-installed after this root.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 

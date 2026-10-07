@@ -2,7 +2,7 @@
 
 ESO syncs Kubernetes Secrets from the `homelab` 1Password vault via the 1Password SDK provider (no Connect server). `base/eso.yaml` is a vendored `helm template --include-crds` render of chart `external-secrets` 2.10.0 with the image digest-pinned and resource bounds set at render time.
 
-This base holds only the operator. The `onepassword` SecretStores live next to their consumers: `deploy/github-tokens/base/secretstore.yaml` (agents, sandbox, work) and `deploy/tailscale/secretstore.yaml`.
+This base holds only the operator. The `onepassword` SecretStores live next to their consumers: `deploy/github-tokens/base/secretstore.yaml` (agents, sandbox, work), `deploy/tailscale/secretstore.yaml`, and `deploy/postgres/base/secretstore.yaml` (database).
 
 ## Prerequisites
 

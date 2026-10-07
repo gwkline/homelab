@@ -1,0 +1,71 @@
+# Point-in-time recovery of pg-primary into a throwaway Cluster.
+# Not part of clusters/home: apply, verify, delete.
+#
+#   date -u +"%Y-%m-%d %H:%M:%S+00"        # targetTime, captured BEFORE the
+#                                          # destructive transaction, then
+#                                          # `select pg_switch_wal();` on
+#                                          # pg-primary so the instant is on B2
+#   sed -i 's|targetTime: .*|targetTime: "<the captured time>"|' examples/pg-pitr.yaml
+#   kubectl apply -f examples/pg-pitr.yaml
+#   kubectl -n database get cluster pg-pitr -w
+#   kubectl -n database delete cluster pg-pitr
+#
+# The restored cluster replays WAL from the latest base backup through
+# targetTime (inclusive by default: the transaction AT the timestamp is
+# applied). Format: PostgreSQL timestamp with time zone; without a zone it is
+# read as UTC.
+#
+# No spec.plugins: a recovery Cluster does not archive WAL.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-pitr
+  namespace: database
+spec:
+  instances: 1
+
+  imageCatalogRef:
+    apiGroup: postgresql.cnpg.io
+    kind: ClusterImageCatalog
+    name: postgresql-minimal-trixie
+    major: 18
+
+  enableSuperuserAccess: false
+
+  postgresql:
+    shared_preload_libraries:
+      - pg_textsearch
+    extensions:
+      - name: pgvector
+      - name: pg-textsearch
+        image:
+          reference: ghcr.io/gwkline/homelab/pg-textsearch@sha256:8076cc6902d6ebadbd66419988bd0612a3ca93ed0601eb6a5edd21857bca2790
+
+  bootstrap:
+    recovery:
+      source: pg-primary-b2
+      recoveryTarget:
+        targetTime: "2026-01-01 00:00:00+00" # placeholder: set to the captured pre-damage time
+
+  externalClusters:
+    - name: pg-primary-b2
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: b2-store
+          serverName: pg-primary
+
+  storage:
+    size: 20Gi
+    storageClass: local-path
+
+  affinity:
+    nodeSelector:
+      node-role.kubernetes.io/control-plane: "true"
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      memory: 2Gi

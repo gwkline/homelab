@@ -102,6 +102,14 @@ kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io \
   --timeout=180s
 kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager \
   --timeout="$POD_TIMEOUT"
+
+# Barman Cloud CNPG-I plugin (deploy/cnpg/barman). The mTLS Secrets must
+# exist before the plugin pods start.
+./scripts/create-barman-tls.sh
+kubectl apply --server-side -k deploy/cnpg/barman
+kubectl wait --for=condition=Established crd/objectstores.barmancloud.cnpg.io \
+  --timeout=180s
+kubectl -n cnpg-system rollout status deploy/barman-cloud --timeout="$POD_TIMEOUT"
 end_stage
 
 # ---------------------------------------------------------------------------
@@ -109,6 +117,8 @@ stage workloads
 kubectl apply -k clusters/home
 kubectl -n agents wait --for=condition=Ready externalsecret/github-token --timeout=120s ||
   echo "WARN: github-token not synced yet (1Password item github-readonly present?)" >&2
+kubectl -n database wait --for=condition=Ready externalsecret/pg-primary-b2 --timeout=120s ||
+  echo "WARN: pg-primary-b2 not synced yet (1Password item pg-primary-b2 present?) — WAL archiving stays down until it is" >&2
 end_stage
 
 # ---------------------------------------------------------------------------

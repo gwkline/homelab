@@ -3,7 +3,7 @@
 # needs. Idempotent; never logs the token.
 #
 # Usage (token from env, stdin, or a hidden prompt; default namespaces:
-# agents sandbox work tailscale):
+# agents sandbox work tailscale database):
 #   ./create-onepassword-service-account.sh [ns]...
 #   op read op://.../token | ./create-onepassword-service-account.sh [ns]...
 set -euo pipefail
@@ -42,7 +42,7 @@ case "${TOKEN}" in
 esac
 
 if [ "$#" -eq 0 ]; then
-  set -- agents sandbox work tailscale
+  set -- agents sandbox work tailscale database
 fi
 
 # Byte-exact token via a temp file: never in argv, the process list, or echoed

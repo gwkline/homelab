@@ -23,6 +23,7 @@ Only documented sources; anything else you need is a drill finding (section 6).
 | tailscaled | `1.102.4` | `bootstrap/bootstrap.sh` (`TAILSCALE_VERSION`, sha256-verified installer) |
 | External Secrets Operator | chart 2.10.0 (vendored render) | `deploy/eso/base/eso.yaml` |
 | CloudNativePG | 1.30.0 | `deploy/cnpg/base` |
+| Barman Cloud plugin | 0.15.1 | `deploy/cnpg/barman` |
 | Sigstore policy-controller chart | `0.10.7` | this runbook, `scripts/recovery-drill.sh` |
 | Tailscale operator chart | `1.102.3` | this runbook, `scripts/recovery-drill.sh`, `deploy/tailscale/values.yaml` |
 
@@ -58,7 +59,7 @@ kubectl -n external-secrets rollout status deploy/external-secrets
 
 ```sh
 kubectl apply -k deploy/namespaces
-./scripts/create-onepassword-service-account.sh   # agents, sandbox, work, tailscale
+./scripts/create-onepassword-service-account.sh   # agents, sandbox, work, tailscale, database
 ```
 
 Postgres owner-role Secrets in `database` (generate fresh passwords, then set the `knowledge-db` 1Password item's password to match): see [deploy/postgres/README.md](../deploy/postgres/README.md#prerequisites).
@@ -80,6 +81,15 @@ kubectl -n cosign-system rollout status deploy/policy-controller-webhook
 kubectl apply --server-side -k deploy/cnpg/base
 kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io --timeout=180s
 kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
+```
+
+Backups (WAL archiving to Backblaze B2) ride along: the mTLS Secrets and the plugin go in before the core set, and the B2 credentials must already be in 1Password (item `pg-primary-b2`; bucket setup in [deploy/postgres/README.md](../deploy/postgres/README.md#backblaze-b2-bucket)):
+
+```sh
+./scripts/create-barman-tls.sh
+kubectl apply --server-side -k deploy/cnpg/barman
+kubectl wait --for=condition=Established crd/objectstores.barmancloud.cnpg.io --timeout=180s
+kubectl -n cnpg-system rollout status deploy/barman-cloud
 ```
 
 ### 3.6 Core set
@@ -121,7 +131,7 @@ kubectl apply -k deploy/knowledge/base    # needs 1Password knowledge-db / knowl
 kubectl apply -k deploy/cloudbeaver/base  # then ./scripts/create-cloudbeaver-secret.sh
 ```
 
-Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart && scripts/pg-smoke.sh verify`.
+Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart && scripts/pg-smoke.sh verify`. The new cluster starts a fresh WAL archive under the same B2 prefix; trigger the first base backup right after (`kubectl cnpg backup -n database pg-primary --method=plugin --plugin-name=barman-cloud.cloudnative-pg.io`) so the 30-day window starts on the rebuilt data.
 
 ### 3.10 Hand-created secrets and recreated state
 
@@ -139,7 +149,7 @@ Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart &&
 ./scripts/recovery-drill.sh --from "$DRILL_START"   # prompts for the 1Password token unless OP_SERVICE_ACCOUNT_TOKEN is set
 ```
 
-Runs and times: ESO → namespaces + 1Password token → image policy → CNPG → core set → Tailscale operator → pods ready → tailnet HTTPS → `rebuild-check.sh`, then prints per-stage times and total RTO. Any failed stage fails the drill. The postgres owner Secrets (3.3) must already exist or postgres will not come up.
+Runs and times: ESO → namespaces + 1Password token → image policy → CNPG (operator, then the Barman plugin and its mTLS Secrets) → core set → Tailscale operator → pods ready → tailnet HTTPS → `rebuild-check.sh`, then prints per-stage times and total RTO. Any failed stage fails the drill. The postgres owner Secrets (3.3) must already exist or postgres will not come up.
 
 ## 5. Drill log
 
