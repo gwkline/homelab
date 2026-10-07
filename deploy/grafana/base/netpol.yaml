@@ -17,7 +17,8 @@ spec:
         - protocol: TCP
           port: 3000
 ---
-# Egress: DNS, Loki, VictoriaMetrics only.
+# Egress: DNS, Loki, VictoriaMetrics, and HTTPS to public addresses for the
+# ntfy contact point.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -53,3 +54,15 @@ spec:
       ports:
         - protocol: TCP
           port: 8428
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8 # LAN + k3s pod/service CIDRs, incl. the API
+              - 172.16.0.0/12
+              - 192.168.0.0/16 # node/LAN
+              - 169.254.0.0/16 # link-local metadata
+              - 100.64.0.0/10 # tailnet
+      ports:
+        - protocol: TCP
+          port: 443

@@ -23,6 +23,7 @@ Every runtime credential, where it comes from, and who consumes it. No secret va
 | `cloudbeaver-admin` (`username`, `password`) | agents | `cloudbeaver-admin` → `username`, `password` | cloudbeaver (`CB_ADMIN_NAME`, `CB_ADMIN_PASSWORD`) | Seeds the admin of an empty workspace only; on rotation also change it in the admin UI |
 | `knowledge-api-token` (`token`) | agents, sandbox | `knowledge-api-token` → `token` | knowledge services, panel (optional), factory orchestrator | Shared internal bearer (`openssl rand -base64 32`) |
 | `panel-auth` (`users`, `tokens`) | agents | `panel-auth` → `users`, `tokens` | panel (optional; read-only without it) | `name=credential` pairs: Tailscale logins allowed to act through the UI, and one bearer token per machine caller (each Executor connection). The name is recorded as "requested by" |
+| `grafana-ntfy` (`url`) | agents | `grafana-ntfy` → `url` | Grafana (`NTFY_URL`, the alert contact point) | `https://ntfy.sh/<topic>`; the topic name is the credential. Restart Grafana after rotating |
 | `operator-oauth` (`client_id`, `client_secret`) | tailscale | `tailscale-operator-oauth` → `client_id`, `client_secret` | tailscale-operator | OAuth client created with `tag:k8s-operator`; rotation in `deploy/tailscale/README.md` |
 
 ## Created by hand
