@@ -118,7 +118,7 @@ assert k["citations"][0]["retrieved_by"] == ["title", "body"]  # retrieved by bo
 assert k["citations"][0]["source"]["path"] == "docs/adr.md"
 assert k["citations"][0]["version"]["version_id"] == "v1"
 assert k["citations"][2]["chunk_id"] == "low-1"  # min_score=0 keeps everything
-assert len(k["service_run_ids"]) == 2  # one per derived query that matched
+assert len(k["service_run_ids"]) == 3  # one per retrieval request
 assert len(k["queries"]) == 3, k["queries"]  # title + body + paths
 assert k["queries"][2]["kind"] == "paths"
 assert k["queries"][0]["results"] > 0
