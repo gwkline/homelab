@@ -88,13 +88,18 @@ spec:
   podSelector: {}
   policyTypes: [Egress]
 ---
+# Excludes the egress canary, which must have no egress at all.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: work-egress-public-only
   namespace: work
 spec:
-  podSelector: {}
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: NotIn
+        values: [egress-canary]
   policyTypes: [Egress]
   egress:
     - to:
@@ -128,7 +133,8 @@ spec:
   policyTypes: [Egress]
 ---
 # Excludes factory profile pods: policies are additive, and their own
-# stricter netpols would otherwise widen to all-public.
+# stricter netpols would otherwise widen to all-public. Also excludes the
+# egress canary, which must have no egress at all.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -139,6 +145,9 @@ spec:
     matchExpressions:
       - key: factory.gwkline.io/profile
         operator: DoesNotExist
+      - key: app.kubernetes.io/name
+        operator: NotIn
+        values: [egress-canary]
   policyTypes: [Egress]
   egress:
     - to:
