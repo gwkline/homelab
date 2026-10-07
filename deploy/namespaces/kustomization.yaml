@@ -8,4 +8,5 @@ labels:
     includeSelectors: false
 
 resources:
+  - system-namespaces.yaml
   - namespaces.yaml
