@@ -69,6 +69,15 @@ update_status() {  # $1=status, $2=extra detail markdown
   fi
 }
 
+# Hand the issue to a human: failed plus stuck, because the reclaimer would
+# only retry a run that must fail the same way. $1 = the label it leaves.
+park_for_human() {
+  gh label create "${LABEL_STUCK}" -R "${REPO}" --color ededed \
+    --description "factory: needs human review" >/dev/null 2>&1 || true
+  gh issue edit "${NUM}" -R "${REPO}" --remove-label "$1" \
+    --add-label "${LABEL_FAILED}" --add-label "${LABEL_STUCK}" >/dev/null
+}
+
 NUM=""
 # shellcheck disable=SC2329  # invoked via `trap cleanup EXIT` below
 # Crash convergence: if we die while the issue is still in-progress, move it
@@ -187,6 +196,19 @@ case "${WORKER_IMAGE:-}" in
     exit 1
     ;;
 esac
+
+# ---- 2b. capabilities ---------------------------------------------------------
+# An issue labelled needs:<capability> that its profile lacks (e.g.
+# needs:cluster on code-pr, which has no Kubernetes API) cannot succeed: park
+# it on the first pick instead of churning through retries.
+NEEDS=$(gh api "repos/${REPO}/issues/${NUM}" --jq '[.labels[].name | select(startswith("needs:")) | ltrimstr("needs:")] | join(" ")' 2>/dev/null || echo "")
+MISSING=$(printf '%s' "${PROFILE_JSON}" | jq -r --arg needs "${NEEDS}" '($needs | split(" ") | map(select(. != ""))) - (.capabilities // []) | join(", ")')
+if [ -n "${MISSING}" ]; then
+  park_for_human "${LABEL_QUEUED}"
+  gh issue comment "${NUM}" -R "${REPO}" --body "🚫 Not attemptable in profile \`${PROFILE}\`: this issue needs ${MISSING}, which the profile does not provide (it has: $(printf '%s' "${PROFILE_JSON}" | jq -r '(.capabilities // []) | join(", ")')). Parked on \`${LABEL_STUCK}\` instead of retrying: do it by hand, or relabel \`${LABEL_QUEUED}\` once a profile can." >/dev/null
+  echo "[orch] issue #${NUM}: needs ${MISSING}, which profile ${PROFILE} lacks — parked"
+  exit 0
+fi
 
 # ---- 3. swap labels + post marker comment --------------------------------
 gh issue edit "${NUM}" -R "${REPO}" \
@@ -322,6 +344,28 @@ for _i in $(seq 1 "${WAIT_TICKS}"); do
 done
 if [ "${WAIT_OK}" != "1" ]; then
   LOGTAIL=$(kubectl logs "job/${JOB_NAME}" -n sandbox --all-containers --tail=40 2>/dev/null | redact || true)
+  # Exit 78 from the clone step or the worker is "cannot attempt": a required
+  # input or setting is missing (private skills, the model key, the run brief),
+  # so a retry would fail the same way. Park it with the reason instead.
+  EXIT_CODES=$(kubectl get pods -n sandbox -l job-name="${JOB_NAME}" -o jsonpath='{.items[0].status.initContainerStatuses[*].state.terminated.exitCode} {.items[0].status.containerStatuses[*].state.terminated.exitCode}' 2>/dev/null || true)
+  case " ${EXIT_CODES} " in
+    *" 78 "*)
+      REASON=$(printf '%s\n' "${LOGTAIL}" | sed -n 's/.*CANNOT ATTEMPT: //p' | tail -n 1)
+      update_status "cannot attempt" "**Cannot attempt:** ${REASON:-the worker exited 78; see the log tail}.
+
+Fix that, then remove \`${LABEL_STUCK}\` and \`${LABEL_FAILED}\` and relabel \`${LABEL_QUEUED}\`. Not retried automatically: it would fail the same way.
+
+<details><summary>log tail</summary>
+
+\`\`\`
+${LOGTAIL}
+\`\`\`
+</details>"
+      park_for_human "${LABEL_WIP}"
+      echo "[orch] issue #${NUM}: cannot attempt (${REASON:-exit 78}) — parked, not retried"
+      exit 0
+      ;;
+  esac
   # Bounded auto-retry: one extra attempt for transient failures (flaky
   # provider, netpol blip). 2 run markers max, then park in failed for a human.
   ATTEMPTS=$(gh api "repos/${REPO}/issues/${NUM}/comments?per_page=100" --jq "[.[] | select(.body | contains(\"<!-- ${FACTORY_RUN_MARKER}\"))] | length" 2>/dev/null || echo 2)
@@ -417,11 +461,7 @@ ${PROTECTED}
 \`\`\`
 
 ${REPORT_BLOCK}"
-    # Stuck, not just failed: the reclaimer would only retry the same change.
-    gh label create "${LABEL_STUCK}" -R "${REPO}" --color ededed \
-      --description "factory: needs human review" >/dev/null 2>&1 || true
-    gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" \
-      --add-label "${LABEL_FAILED}" --add-label "${LABEL_STUCK}" >/dev/null
+    park_for_human "${LABEL_WIP}"
     echo "[orch] issue #${NUM}: patch touches protected paths, not published: $(printf '%s' "${PROTECTED}" | tr '\n' ' ')"
     exit 0
   fi

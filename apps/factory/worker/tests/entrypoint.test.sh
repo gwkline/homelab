@@ -288,4 +288,32 @@ env GH_TOKEN=fixture-secret-token WORKER_CMD=fake-cli WORKER_TIMEOUT=30 \
 [ "$RC" -eq 78 ] || { echo "FAIL: token beside a prepared clone should exit 78, got ${RC}"; cat "${FIX}/prepared/log-tok"; exit 1; }
 echo "PASS: a GitHub token beside a prepared clone is refused"
 
+# --- 9. cannot attempt: a missing required input is its own status --------------
+# The generated OpenCode config is valid JSON under `set -u`.
+run_case ocjson fake-cli OPENCODE_AUTH_B64="$(printf '{"openrouter":{"key":"sk-fixture"}}' | base64 -w0)"
+[ "$RC" -eq 0 ] || { echo "FAIL: run with a model key exited ${RC}"; cat "${FIX}/ocjson/log"; exit 1; }
+python3 -m json.tool "${FIX}/ocjson/home/.config/opencode/opencode.jsonc" > /dev/null \
+  || { echo "FAIL: generated OpenCode config is not valid JSON"; exit 1; }
+
+# An opencode profile without its model key stops before the agent runs.
+run_case nokey fake-cli WORKER_CMD="opencode run"
+[ "$RC" -eq 78 ] || { echo "FAIL: missing model key should exit 78, got ${RC}"; cat "${FIX}/nokey/log"; exit 1; }
+grep -q '"tests": "cannot-attempt"' "${FIX}/nokey/out/report.json" \
+  || { echo "FAIL: missing model key not reported as cannot-attempt"; cat "${FIX}/nokey/out/report.json"; exit 1; }
+grep -q "CANNOT ATTEMPT: no model credential" "${FIX}/nokey/log" \
+  || { echo "FAIL: no actionable reason for the missing key"; cat "${FIX}/nokey/log"; exit 1; }
+
+# Required private skills that fail to sync stop the clone step with a reason.
+mkdir -p "${FIX}/skills/work"
+RC=0
+FACTORY_REPO=example/fixture CLONE_URL="file://${FIX}/origin" WORK_DIR="${FIX}/skills/work" \
+  HOME="${FIX}/skills/home" SKILLS_REF=0123456789abcdef0123456789abcdef01234567 \
+  SKILLS_REPO_URL="file://${FIX}/no-such-skills-repo" SKILLS_TARGET="${FIX}/skills/target" \
+  SKILLS_WORKDIR="${FIX}/skills/sync" SKILLS_STATUS_FILE="${FIX}/skills/status.json" \
+  sh "${PREPARE}" > "${FIX}/skills/log" 2>&1 || RC=$?
+[ "$RC" -eq 78 ] || { echo "FAIL: failed skills sync should exit 78, got ${RC}"; cat "${FIX}/skills/log"; exit 1; }
+grep -q "CANNOT ATTEMPT: private skills sync failed" "${FIX}/skills/log" \
+  || { echo "FAIL: no actionable reason for the skills failure"; cat "${FIX}/skills/log"; exit 1; }
+echo "PASS: a missing model key or failed skills sync is cannot-attempt (exit 78), with a reason"
+
 echo "ALL FIXTURE TESTS PASSED"

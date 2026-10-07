@@ -7,7 +7,9 @@
 #   /out/report.json   structured result {success, summary, tests, base_sha, run_id, profile}
 #   exit 0             success; non-zero = failed attempt
 #   exit 65            patch rejected: it adds agent state or exceeds the size cap
-#   exit 78            invalid run input / misconfiguration
+#   exit 78            cannot attempt: invalid run input, or a required input
+#                      (model key, private skills) is missing. Report
+#                      `tests: cannot-attempt`; the orchestrator parks, never retries
 #
 # Credentials arrive only at runtime (Secret env or mounted files), never touch
 # /out or the repo, and are scrubbed on every exit path.
@@ -180,6 +182,16 @@ reject_patch() { # $1 = reason
   exit 65
 }
 
+# A required input or setting is missing, so no agent run can succeed: the
+# orchestrator parks the issue for a human with this reason instead of
+# retrying (exit 78).
+cannot_attempt() { # $1 = reason
+  echo "[worker] CANNOT ATTEMPT: $1" >&2
+  write_report "cannot-attempt" "$1" "${BASE_SHA:-}" "${RUN_ID:-}" "${PROFILE:-}"
+  emit_artifacts
+  exit 78
+}
+
 trap on_signal TERM INT
 trap scrub_credentials EXIT
 
@@ -189,10 +201,7 @@ mkdir -p "${OUT_DIR}"
 # pointed into the clone.
 for _state_dir in "${HOME}" "${XDG_CONFIG_HOME:-}" "${XDG_DATA_HOME:-}" "${XDG_STATE_HOME:-}" "${XDG_CACHE_HOME:-}"; do
   case "${_state_dir}/" in
-    "${WORK_DIR}/repo/"*)
-      echo "[worker] FATAL: agent state dir ${_state_dir} is inside the clone" >&2
-      exit 78
-      ;;
+    "${WORK_DIR}/repo/"*) cannot_attempt "agent state dir ${_state_dir} is inside the clone" ;;
   esac
 done
 
@@ -206,8 +215,7 @@ PREPARED=0
 if [ -d "${WORK_DIR}/repo/.git" ]; then
   PREPARED=1
   if [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}${GITHUB_TOKEN_FILE:-}" ]; then
-    echo "[worker] FATAL: repo was cloned by the initContainer, but this container still holds a GitHub credential" >&2
-    exit 78
+    cannot_attempt "the repo was cloned by the initContainer, but this container still holds a GitHub credential"
   fi
 fi
 
@@ -262,6 +270,13 @@ except json.JSONDecodeError:
 }
 OCEOF
 fi
+# Without its model key the CLI would only run to "no changes".
+case "${WORKER_CMD:-}" in
+  opencode*)
+    [ -n "${OC_AUTH_INPUT}" ] \
+      || cannot_attempt "no model credential: OPENCODE_AUTH_FILE and OPENCODE_AUTH_B64 are empty (Secret factory-opencode-auth, key auth-b64)"
+    ;;
+esac
 
 # --- typed run input ----------------------------------------------------------
 BRIEF="${TASK_DIR}/brief.json"
@@ -279,7 +294,7 @@ if [ -n "${FACTORY_BRIEF_B64:-}" ] && [ ! -f "${BRIEF}" ]; then
   fi
 fi
 
-[ -f "${BRIEF}" ] || { echo "[worker] FATAL: no ${BRIEF}" >&2; exit 78; }
+[ -f "${BRIEF}" ] || cannot_attempt "no run brief at ${BRIEF}"
 
 # Validate the brief against the schema before doing any work.
 if ! python3 - "${SCHEMA}" "${BRIEF}" << 'EOF'
@@ -344,8 +359,7 @@ if errs:
     sys.exit(1)
 EOF
 then
-  echo "[worker] FATAL: run input failed schema validation (see stderr above)" >&2
-  exit 78
+  cannot_attempt "run input failed schema validation (see stderr above)"
 fi
 
 REPO=$(python3 -c "import json;print(json.load(open('${BRIEF}'))['repository'])")
@@ -369,27 +383,34 @@ mkdir -p "${WORK_DIR}/scratch" || {
 }
 export TMPDIR="${WORK_DIR}/scratch" TEMP="${WORK_DIR}/scratch" TMP="${WORK_DIR}/scratch"
 if [ "${PREPARED}" = "0" ]; then
-  FACTORY_REPO="${REPO}" sh "${PREPARE}" || {
+  PREPARE_RC=0
+  FACTORY_REPO="${REPO}" sh "${PREPARE}" || PREPARE_RC=$?
+  if [ "${PREPARE_RC}" -eq 78 ]; then
+    cannot_attempt "the clone step reported a missing input (see [prepare] above)"
+  elif [ "${PREPARE_RC}" -ne 0 ]; then
     echo "[worker] FATAL: clone failed (or stalled >30s)" >&2
     write_report "clone-failed" "clone failed or stalled"
     emit_artifacts
     exit 1
-  }
+  fi
   # The clone was the only authenticated step: drop the token before the
   # agent runs. Publishing happens in the orchestrator.
   unset GH_TOKEN GITHUB_TOKEN GITHUB_TOKEN_FILE CLONE_URL
 fi
 
-# Pinned private skills, synced by `prepare`; on failure the run continues
-# without them.
+# Pinned private skills, synced by `prepare`. With SKILLS_REF set (the image
+# default) they are required: `prepare` already stops on a failed sync, so a
+# missing status here means the sync never ran.
 # shellcheck source=apps/shared/skills-lib.sh
 . "${SKILLS_LIB}"
 if [ -s "${SKILLS_STATUS_FILE:-}" ] && grep -q '"ok":true' "${SKILLS_STATUS_FILE}"; then
   skills_link_generated "${SKILLS_TARGET}" "${HOME}/.claude/skills" \
     || echo "[worker] WARNING: skills link into ${HOME}/.claude/skills incomplete" >&2
   echo "[worker] skills-sync: $(cat "${SKILLS_STATUS_FILE}")"
+elif [ -n "${SKILLS_REF:-}" ]; then
+  cannot_attempt "private skills ${SKILLS_REF} are not available (no successful sync in ${SKILLS_STATUS_FILE:-SKILLS_STATUS_FILE})"
 else
-  echo "[worker] WARNING: skills sync FAILED — continuing WITHOUT private skills (see ${SKILLS_STATUS_FILE:-the log above})" >&2
+  echo "[worker] no private skills configured (SKILLS_REF unset)"
 fi
 
 # Checkpoint: SIGTERM while cloning → bail out gracefully from here.
@@ -504,8 +525,7 @@ EOF
     exit 1
   fi
 else
-  echo "[worker] FATAL: WORKER_CMD not set by profile" >&2
-  exit 78
+  cannot_attempt "WORKER_CMD not set by the profile"
 fi
 
 # --- capture patch --------------------------------------------------------
