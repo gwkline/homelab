@@ -12,6 +12,6 @@ COPY apps/shared/install-gh.sh /usr/local/lib/install-gh.sh
 RUN sh /usr/local/lib/install-gh.sh
 
 WORKDIR /orch
-COPY apps/factory/orchestrator/run.sh apps/factory/orchestrator/approval.sh apps/factory/orchestrator/marker.sh apps/factory/orchestrator/knowledge-context.sh apps/factory/orchestrator/run-reclaimer.sh /orch/
+COPY apps/factory/orchestrator/run.sh apps/factory/orchestrator/approval.sh apps/factory/orchestrator/marker.sh apps/factory/orchestrator/knowledge-context.sh apps/factory/orchestrator/run-reclaimer.sh apps/factory/orchestrator/worker-job.jq /orch/
 RUN chmod +x /orch/run.sh /orch/approval.sh /orch/knowledge-context.sh /orch/run-reclaimer.sh
 ENTRYPOINT ["/orch/run.sh"]

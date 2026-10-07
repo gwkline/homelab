@@ -173,32 +173,28 @@ if [ "${EXISTING}" != "0" ]; then
   exit 0
 fi
 
-# ---- 2. resolve profile stack (image/SA/resources) ------------------------
-case "${PROFILE}" in
-  security)
-    PROFILE_CM="factory-profile-security"
-    WORKER_SA="factory-security"
-    WORKER_CPU="500m"; WORKER_MEM="4Gi"
-    ;;
-  code-pr|*)
-    PROFILE_CM="factory-profile-code-pr"
-    WORKER_SA="factory-worker"
-    WORKER_CPU="500m"; WORKER_MEM="12Gi"
-    ;;
-esac
-
-# Worker image comes from the profile ConfigMap; WORKER_IMAGE_OVERRIDE wins
-# (tests, manual dispatches). An unresolvable image parks the issue.
-if [ -n "${WORKER_IMAGE_OVERRIDE:-}" ]; then
-  WORKER_IMAGE="${WORKER_IMAGE_OVERRIDE}"
-else
-  WORKER_IMAGE=$(kubectl get configmap "${PROFILE_CM}" -n sandbox -o jsonpath='{.data.profile\.json}' 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['image'])") || WORKER_IMAGE=""
-fi
+# ---- 2. resolve the RunProfile ---------------------------------------------
+# The profile ConfigMap renders the whole worker Job (worker-job.jq);
+# WORKER_IMAGE_OVERRIDE swaps only its image (tests, manual dispatches). An
+# unknown profile or an incomplete one parks the issue.
+PROFILE_CM="factory-profile-${PROFILE}"
+PROFILE_JSON=$(kubectl get configmap "${PROFILE_CM}" -n sandbox -o jsonpath='{.data.profile\.json}' 2>/dev/null) || PROFILE_JSON=""
+WORKER_IMAGE=$(printf '%s' "${PROFILE_JSON}" | jq -r --arg name "${PROFILE}" --arg override "${WORKER_IMAGE_OVERRIDE:-}" '
+  select(.name == $name
+    and (.serviceAccount | type) == "string"
+    and (.activeDeadlineSeconds | type) == "number"
+    and (.backoffLimit | type) == "number"
+    and (.ttlSecondsAfterFinished | type) == "number"
+    and (.resources.limits["ephemeral-storage"] | type) == "string"
+    and (.workSizeLimit | type) == "string")
+  | if $override != "" then $override else .image end' 2>/dev/null) || WORKER_IMAGE=""
 case "${WORKER_IMAGE:-}" in
-  ghcr.io/*) ;;
+  ghcr.io/*)
+    PROFILE_JSON=$(printf '%s' "${PROFILE_JSON}" | jq -c --arg image "${WORKER_IMAGE}" '.image = $image')
+    ;;
   *)
-    echo "[orch] FATAL: cannot resolve worker image from configmap ${PROFILE_CM} (RBAC? profile not applied?)" >&2
-    update_status "failed" "Orchestrator could not resolve the worker image from configmap \`${PROFILE_CM}\` — check RBAC and that the profile is applied."
+    echo "[orch] FATAL: cannot resolve a complete RunProfile from configmap ${PROFILE_CM} (RBAC? profile not applied?)" >&2
+    update_status "failed" "Orchestrator could not resolve a complete RunProfile from configmap \`${PROFILE_CM}\` — check RBAC and that the profile is applied."
     gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
     exit 1
     ;;
@@ -318,85 +314,11 @@ print(json.dumps({
 PYEOF
 BRIEF_B64=$(base64 -w0 /tmp/brief.json)
 
-# Single-shot creation via generated manifest (kubectl create job has no
-# --env/--labels flags; a here-doc manifest needs no patch verbs).
-kubectl apply -f - << EOF2
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: ${JOB_NAME}
-  namespace: sandbox
-  labels:
-    factory.gwkline.io/issue: "${NUM}"
-    factory.gwkline.io/profile: ${PROFILE}
-spec:
-  backoffLimit: 0
-  activeDeadlineSeconds: 3600
-  # 24h: worker Jobs GCd automatically; live ledger is GitHub labels, not Jobs.
-  ttlSecondsAfterFinished: 86400
-  template:
-    metadata:
-      labels:
-        factory.gwkline.io/profile: ${PROFILE}
-    spec:
-      restartPolicy: Never
-      serviceAccountName: ${WORKER_SA}
-      automountServiceAccountToken: false
-      # The clone runs in its own container, the only one given the GitHub
-      # token (ADR-001 D6): the agent reads untrusted text, and anything in its
-      # container's env stays readable in /proc/1/environ.
-      initContainers:
-        - name: clone
-          image: ${WORKER_IMAGE}
-          imagePullPolicy: Always
-          command: ["/usr/local/bin/prepare"]
-          env:
-            - { name: FACTORY_REPO, value: "${REPO}" }
-            - name: GH_TOKEN
-              valueFrom:
-                secretKeyRef: { name: github-token, key: token }
-          resources:
-            requests: { cpu: 100m, memory: 256Mi }
-            limits:   { cpu: "1", memory: 1Gi }
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities: { drop: ["ALL"] }
-          volumeMounts:
-            - { name: work, mountPath: /work }
-            - { name: out, mountPath: /out }
-      containers:
-        - name: worker
-          image: ${WORKER_IMAGE}
-          imagePullPolicy: Always
-          env:
-            - { name: FACTORY_REPO,  value: "${REPO}" }
-            - { name: FACTORY_ISSUE, value: "${NUM}" }
-            - { name: FACTORY_PROFILE, value: "${PROFILE}" }
-            - { name: WORKER_CMD,    value: "${WORKER_CMD:-claude --dangerously-skip-permissions}" }
-            # A file, not env, so the model key stays out of /proc/1/environ.
-            - { name: OPENCODE_AUTH_FILE, value: /secrets/opencode/auth-b64 }
-            - name: FACTORY_BRIEF_B64
-              value: '${BRIEF_B64}'            # shell substitutes
-            - { name: FACTORY_SECURITY_MODE, value: "per-issue" }
-          resources:
-            requests: { cpu: ${WORKER_CPU}, memory: 512Mi }
-            limits:   { cpu: "2",   memory: ${WORKER_MEM} }
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities: { drop: ["ALL"] }
-          volumeMounts:
-            - { name: work, mountPath: /work }
-            - { name: out, mountPath: /out }
-            - { name: opencode-auth, mountPath: /secrets/opencode, readOnly: true }
-      volumes:
-        - { name: work, emptyDir: {} }
-        - { name: out, emptyDir: {} }
-        - name: opencode-auth
-          secret:
-            secretName: factory-opencode-auth
-            optional: true
-            items: [{ key: auth-b64, path: auth-b64 }]
-EOF2
+jq -n --argjson profile "${PROFILE_JSON}" --arg job "${JOB_NAME}" --arg issue "${NUM}" \
+  --arg repo "${REPO}" --arg brief_b64 "${BRIEF_B64}" \
+  --arg worker_cmd "${WORKER_CMD:-claude --dangerously-skip-permissions}" \
+  -f "${SCRIPT_DIR}/worker-job.jq" > /tmp/worker-job.json
+kubectl apply -f /tmp/worker-job.json
 echo "[orch] job ${JOB_NAME} created"
 
 update_status "running" "_Job \`${JOB_NAME}\` running._
@@ -409,9 +331,10 @@ ${KNOWLEDGE_BLOCK}
 
 # ---- 4. wait for completion -----------------------------------------------
 # Poll instead of `kubectl wait`, whose exit status dash + set -e can swallow.
-# 340 x 10s = the 3600s worker budget minus image pull/startup.
+# Stop 200s short of the profile's Job deadline (image pull/startup).
+WAIT_TICKS=$(( $(printf '%s' "${PROFILE_JSON}" | jq '.activeDeadlineSeconds') / 10 - 20 ))
 WAIT_OK=0
-for _i in $(seq 1 340); do
+for _i in $(seq 1 "${WAIT_TICKS}"); do
   PHASE=$(kubectl get job "${JOB_NAME}" -n sandbox -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
   if [ "${PHASE}" = "True" ]; then WAIT_OK=1; break; fi
   FAILED=$(kubectl get job "${JOB_NAME}" -n sandbox -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || echo "")

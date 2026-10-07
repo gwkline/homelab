@@ -20,6 +20,15 @@ GitHub issues are the source of truth for both work and run state. There is no f
 
 Single-instance CronJobs are the concurrency control: no two pollers race by construction.
 
+Each worker Job is rendered from its RunProfile ConfigMap (`deploy/factory/base/profile-*.yaml`) by `apps/factory/orchestrator/worker-job.jq`. The profile sets:
+
+- image and ServiceAccount;
+- resources, including `ephemeral-storage`;
+- the `/work` emptyDir `sizeLimit`;
+- `activeDeadlineSeconds`, `backoffLimit` and `ttlSecondsAfterFinished`.
+
+Worker pods run at the `restricted` Pod Security level.
+
 ## Run identity and idempotency
 
 - One Run = one issue + one profile. The branch `factory/issue-<N>/<profile>` is the dedupe key: before creating anything the orchestrator looks for an existing branch/PR with that head and updates or skips instead of duplicating.

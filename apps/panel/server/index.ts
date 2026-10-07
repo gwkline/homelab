@@ -99,6 +99,8 @@ const knowledgeCfg = loadKnowledgeConfig();
 const knowledge = createKnowledgeClient(knowledgeCfg);
 
 const FACTORY_NS = "sandbox";
+// Matches the factory CronJobs' ttlSecondsAfterFinished.
+const FACTORY_JOB_TTL_SECONDS = 86_400;
 // Each factory repo and the orchestrator CronJob that serves it
 // (deploy/factory/base/orchestrator-*cronjob.yaml). A run clones that CronJob,
 // so a repo without one could never leave factory/queued.
@@ -1110,6 +1112,8 @@ const triggerFactoryJob = async (
     const jobName = `factory-issue-${issueNum}-${ts}`.slice(0, 63);
     // Inject FACTORY_ISSUE directly to avoid racing GitHub label propagation.
     const spec = structuredClone(template.spec ?? {}) as JobTemplateSpec;
+    // Finished Jobs never linger, even if the CronJob template loses its TTL.
+    spec.ttlSecondsAfterFinished ??= FACTORY_JOB_TTL_SECONDS;
     const containers = spec.template?.spec?.containers ?? [];
     if (containers[0]) {
       containers[0].env = withEnv(containers[0].env ?? [], {
