@@ -85,6 +85,8 @@ rbac_checks() {
   can create cronjobs no
   can list secrets no
   can get services yes "$NS_AGENTS"
+  can get ingresses.networking.k8s.io/panel yes "$NS_AGENTS"
+  can list ingresses.networking.k8s.io no "$NS_AGENTS"
   [ "$CAN_FAIL" -eq 0 ]
 }
 
@@ -227,6 +229,10 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["services"]
+    verbs: ["get"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    resourceNames: ["panel"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

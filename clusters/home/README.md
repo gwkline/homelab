@@ -25,7 +25,7 @@ The resource list in `base/kustomization.yaml` is a topological order of the dep
 | 2 | network policies | `deploy/policies/base` | default-deny ingress/egress in force before workload pods exist (no admit window) |
 | 3 | image admission policy | `deploy/image-policy/base` | the ClusterImagePolicy needs the policy-controller CRD (pre-apply) and the webhook must be in force before any workload pod below is admitted (ADR-004) |
 | 4 | secret plumbing | `deploy/github-tokens/base` | per-namespace `onepassword` SecretStores + GitHub token ExternalSecrets — before every workload that mounts `github-token`(+writer)/`work-github-token` (t3code, hermes, factory jobs, panel, work-t3code) |
-| 5 | tailscale stack | `deploy/tailscale` | tailscale namespace + SecretStore + operator-oauth ExternalSecret + t3code/panel/work serve-fixers; the serve-fixer RBAC reaches into `agents` (needs layer 1) |
+| 5 | tailscale stack | `deploy/tailscale` | tailscale namespace + SecretStore + operator-oauth ExternalSecret (the operator itself is helm, post-apply) |
 | 6 | postgres | `deploy/postgres/base` | CNPG `Cluster`/`Database` CRs — the API server rejects them until the cnpg CRDs are Established (pre-apply); its clients are the factory/knowledge workloads in layer 7 |
 | 7 | workloads | t3code, hermes, homepage, panel, headlamp, factory, deployer, work-t3code | depend on layers 1–4 (namespaces, netpols, admission, mounted secrets), never on each other's apply order |
 | 8 | operational CronJobs | `deploy/chaos/base`, `deploy/node-cleanup/base` | chaos deletes pods (never races bring-up by being last; kill switch: its configmap `enabled` key); node-cleanup prunes node disk pressure (#253) — both need only their namespace + RBAC |

@@ -173,6 +173,12 @@ export const api = (cfg: K8sConfig) => ({
       "GET",
       `/apis/batch/v1/namespaces/${NS}/cronjobs/${encodeURIComponent(name)}`
     ),
+  getIngress: (name: string, namespace: string): Promise<K8sObject> =>
+    k8sFetch<K8sObject>(
+      cfg,
+      "GET",
+      `/apis/networking.k8s.io/v1/namespaces/${encodeURIComponent(namespace)}/ingresses/${encodeURIComponent(name)}`
+    ),
   getService: (name: string, namespace: string): Promise<K8sObject> =>
     k8sFetch<K8sObject>(
       cfg,

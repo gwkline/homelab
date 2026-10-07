@@ -14,24 +14,36 @@ spec:
       port: 3773
       targetPort: http
 ---
-# Tailnet exposure via the Tailscale operator, same pattern as t3code-0:
-# https://work-t3code-0.<tailnet>.ts.net with automatic certs. The OAuth
-# client is only allowed tag:k8s-operator (deploy/tailscale/README.md).
+# Tailnet exposure, same pattern as t3code-0:
+# https://work-t3code-0.<tailnet>.ts.net via a Tailscale Ingress.
 apiVersion: v1
 kind: Service
 metadata:
   name: work-t3code-0
   namespace: work
-  annotations:
-    tailscale.com/hostname: work-t3code-0
-    tailscale.com/tags: tag:k8s-operator
 spec:
-  type: LoadBalancer
-  loadBalancerClass: tailscale
+  type: ClusterIP
   selector:
     app: work-t3code
     statefulset.kubernetes.io/pod-name: work-t3code-0
   ports:
-    - name: https
-      port: 443
+    - name: http
+      port: 3773
       targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: work-t3code-0
+  namespace: work
+  annotations:
+    tailscale.com/tags: tag:k8s-operator
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: work-t3code-0
+      port:
+        number: 3773
+  tls:
+    - hosts: [work-t3code-0]

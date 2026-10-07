@@ -112,11 +112,9 @@ kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io --timeo
 kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
 
 # 3. the root entry point (issue #20): one render, one apply — namespaces +
-#     policies (kubectl apply orders Namespaces first, so they precede the
-#     tailscale serve-fixer RBAC that reaches into agents), the
+#     policies (kubectl apply orders Namespaces first), the
 #     ClusterImagePolicy, the github-tokens sync, the tailscale stack
-#     (namespace, SecretStore, operator-oauth ExternalSecret,
-#     serve-fixers), postgres (pg-primary — its cnpg CRDs were
+#     (namespace, SecretStore, operator-oauth ExternalSecret), postgres (pg-primary — its cnpg CRDs were
 #     Established in 2b), and every normal workload: t3code, hermes,
 #     homepage, panel, headlamp, factory, deployer, work-t3code, then the operational CronJobs (chaos, node-cleanup)
 #     last so their first run cannot race the bring-up. Full inventory +
@@ -133,31 +131,18 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
 kubectl -n tailscale set env deploy/operator PROXY_TAGS=tag:k8s-operator  # chart bug workaround (documented)
 kubectl rollout restart deploy/operator -n tailscale
 
-# 4b. HTTPS for tailscale-proxied services (one-time tailnet approval already
-# granted; re-run after operator reinstall or proxy pod replacement)
-./scripts/serve-https.sh                   # t3code: converges https://... (443) at the current pod IP
-# Automatic self-healing: the t3code serve-fixer (deploy/tailscale/) runs a
-# loop in the tailscale namespace that execs that same script every ~30s, so
-# a pod replacement re-points the HTTPS handler at the new pod IP within
-# ~60s; every check logs one line, failures included
-# (`kubectl logs -n tailscale deploy/t3code-serve-fixer`). panel — or any
-# exposed app: serve-refresh.sh <app> <namespace>.
-# Also the one-command fix whenever a replaced app pod leaves its serve
-# entry pointing at a dead IP (502s): it re-points the HTTPS entry at the
-# current pod IP, idempotently.
-# Acceptance test for that automatic recovery (issue #24; disruptive — it
-# replaces the t3code-0 pod and never runs a repair script itself):
-./scripts/serve-recovery-test.sh           # expects HTTPS 200 and the proxy's 443 handler re-pointed at the new IP within the 120s objective (expected ~30-60s)
-./scripts/serve-refresh.sh panel agents
+# 4b. HTTPS: t3code-0, work-t3code-0 and panel are Tailscale Ingresses; the
+# operator provisions their proxies and tailnet certs once it is running.
+kubectl get ingress -A   # ADDRESS column = <host>.<tailnet>.ts.net
 
 # 5. wait & verify
 kubectl get pods -A -w
 # TAILNET_NAME is the one documented tailnet config value
-# (deploy/tailscale/README.md); scripts/serve-https.sh auto-discovers it.
+# (deploy/tailscale/README.md).
 curl -s -o /dev/null -w "%{http_code}\n" "https://t3code-0.${TAILNET_NAME:-<tailnet>}/"
 ```
 
-Render the whole normal set without applying anything: `kubectl kustomize clusters/home` — the inventory (158 resources across 5 namespaces) is deterministic and contains no duplicate resource IDs (CI re-checks this in `scripts/verify.sh`).
+Render the whole normal set without applying anything: `kubectl kustomize clusters/home` — the inventory (134 resources across 5 namespaces) is deterministic and contains no duplicate resource IDs (CI re-checks this in `scripts/verify.sh`).
 
 Fetch the kubeconfig to the driver (server runbook §4), confirm `kubectl get nodes` is Ready, and export the three credentials from section 1.
 
@@ -167,7 +152,7 @@ Fetch the kubeconfig to the driver (server runbook §4), confirm `kubectl get no
 ./scripts/recovery-drill.sh --from "$DRILL_START"
 ```
 
-The script runs and times every stage — operator (pinned chart + PROXY_TAGS workaround), namespaces/policies, image policy (policy-controller + ClusterImagePolicy, before workloads), external secrets (pinned ESO from `deploy/eso/base` + fake-provider smoke, before any ExternalSecret applies), cnpg (pinned CloudNativePG operator from `deploy/cnpg/base`, the explicit prerequisite for the `database` workloads — issue #49), secrets (1Password SA token + github-tokens sync), workloads (postgres, tailscale, t3code, hermes, homepage, panel, headlamp, factory, deployer, work-t3code, then chaos + node-cleanup last — the same set and dependency order the root Kustomization composes), pods-ready, HTTPS (serve-https + serve-refresh + curl checks for t3code-0 and panel), and the `scripts/rebuild-check.sh` smoke sweep — then prints per-stage times and the total RTO. A failed stage fails the drill; the fix must land as a runbook step or follow-up issue before the next attempt (known warnings it emits are listed in section 6).
+The script runs and times every stage — operator (pinned chart + PROXY_TAGS workaround), namespaces/policies, image policy (policy-controller + ClusterImagePolicy, before workloads), external secrets (pinned ESO from `deploy/eso/base` + fake-provider smoke, before any ExternalSecret applies), cnpg (pinned CloudNativePG operator from `deploy/cnpg/base`, the explicit prerequisite for the `database` workloads — issue #49), secrets (1Password SA token + github-tokens sync), workloads (postgres, tailscale, t3code, hermes, homepage, panel, headlamp, factory, deployer, work-t3code, then chaos + node-cleanup last — the same set and dependency order the root Kustomization composes), pods-ready, HTTPS (wait for the t3code-0 and panel Ingress hostnames, then curl each), and the `scripts/rebuild-check.sh` smoke sweep — then prints per-stage times and the total RTO. A failed stage fails the drill; the fix must land as a runbook step or follow-up issue before the next attempt (known warnings it emits are listed in section 6).
 
 ### Step 2 — PVC state: recreate
 

@@ -1,10 +1,18 @@
-# Tailscale deployment in the homelab cluster
+# Tailscale
 
-Two components: the **Tailscale Kubernetes operator** (provisions proxy pods for LoadBalancer services) and the **serve-fixer** (works around an operator limitation).
+The [Tailscale Kubernetes operator](https://tailscale.com/kb/1236/kubernetes-operator) puts cluster services on the tailnet. Tailnet identity is the auth layer for every UI here.
 
-## Operator install (rebuild)
+## What's here
 
-The operator's OAuth credential lives in 1Password and is synced into the cluster by External Secrets — the helm command carries references only, never OAuth values (issue #43). Prerequisite: External Secrets Operator is running and the hand-entered `onepassword-service-account` token exists in this namespace (issue #41).
+| File | Purpose |
+| --- | --- |
+| `namespace.yaml` | `tailscale` namespace (operator + its `ts-*` proxy pods) |
+| `secretstore.yaml`, `operator-oauth.yaml` | 1Password SecretStore + ExternalSecret producing Secret `operator-oauth` |
+| `values.yaml` | pinned helm values for the operator chart |
+
+## Install the operator
+
+Prerequisite: External Secrets Operator is running and the hand-entered `onepassword-service-account` Secret exists in this namespace.
 
 ```sh
 kubectl apply -k deploy/tailscale # namespace + SecretStore + ExternalSecret -> Secret operator-oauth
@@ -15,116 +23,54 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
   -f deploy/tailscale/values.yaml
 ```
 
-Mechanisms confirmed against the chart v1.102.3 source (`cmd/k8s-operator/deploy/chart`):
+- OAuth values are never passed to helm. With `oauth.clientId`/`clientSecret` empty, the chart mounts the pre-created Secret `operator-oauth` at `/oauth`.
+- `proxyConfig.defaultTags` sets the operator's `PROXY_TAGS` to `tag:k8s-operator`. Do not set `PROXY_TAGS` via `operatorConfig.extraEnv` — it duplicates the env entry and the release fails.
+- The chart creates the `tailscale` IngressClass by default.
 
-- **Existing-Secret mode**: with `oauth.clientId`/`oauth.clientSecret` unset, the chart creates no Secret and mounts the pre-created Secret `operator-oauth` (name hardcoded in `templates/deployment.yaml`) at `/oauth`, read via `CLIENT_ID_FILE=/oauth/client_id` and `CLIENT_SECRET_FILE=/oauth/client_secret`. The ExternalSecret produces exactly that shape; the chart would only create `operator-oauth` itself if `oauth.clientId` were set.
-- **Proxy tags**: `templates/deployment.yaml` sets `PROXY_TAGS` directly from `proxyConfig.defaultTags` (chart default `"tag:k8s"`), so `deploy/tailscale/values.yaml` pins `tag:k8s-operator` — the old out-of-band `kubectl set env` workaround is removed.
+1Password item: vault `homelab`, item `tailscale-operator-oauth`, fields `client_id` and `client_secret`. Scopes: Devices/Core + Auth Keys read-or-modify, Routes read. The OAuth client must be created **with** `tag:k8s-operator` (it cannot be added later).
 
-## 1Password item contract (issue #43)
+Tailnet policy: `tagOwners` must own `tag:k8s-operator`, ACLs must let tailnet users reach devices with that tag, and MagicDNS + HTTPS certificates must be enabled.
 
-|  |  |
-| --- | --- |
-| vault | `homelab` |
-| item | `tailscale-operator-oauth` — fields `client_id`, `client_secret` |
-| scopes | Devices/Core + Auth Keys read-or-modify, Routes read |
-| tags | the OAuth client must be created WITH `tag:k8s-operator` (cannot be added later — regenerate if missed) |
+Rotating the credential: create a new OAuth client with the same tag and scopes, update the 1Password fields, then `kubectl -n tailscale annotate externalsecret operator-oauth external-secrets.io/force-sync="$(date +%s)" --overwrite` and `kubectl -n tailscale rollout restart deploy/operator`. Existing proxies are keyed by hostname and keep working; delete the old client once `scripts/rebuild-check.sh` passes.
 
-Reinstalling the operator from a clean cluster requires only the 1Password bootstrap token (`onepassword-service-account`, issue #41); everything else here is declarative.
+## How exposure works
 
-## Tailnet policy requirements (tag owners / ACLs)
+**HTTP UIs (t3code-0, work-t3code-0, panel): Tailscale Ingress.** The Ingress proxy terminates HTTPS with a tailnet cert and forwards (websockets included) to the backend Service's ClusterIP, so pod restarts need no proxy changes. The tailnet hostname is `spec.tls[0].hosts[0]`.
 
-The policy file must own the operator tag and let tag-carrying proxies serve:
-
-```jsonc
-"tagOwners": {
-  // who may assign the tag; the OAuth client itself must be created WITH
-  // this tag (cannot be added later — regenerate if missed)
-  "tag:k8s-operator": ["autogroup:member"]
-}
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-app
+  annotations:
+    tailscale.com/tags: tag:k8s-operator # required by our OAuth client
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: my-app # ClusterIP Service (not headless)
+      port:
+        number: 8080
+  tls:
+    - hosts: [my-app] # -> https://my-app.<tailnet>.ts.net
 ```
 
-- ACLs must allow devices tagged `tag:k8s-operator` (the operator's proxy pods) to reach the exposed services' ports; tailnet identity is the auth layer for every UI here.
-- Exposed Services tag their proxies via the required `tailscale.com/tags: tag:k8s-operator` annotation (below).
-
-## Operator credential rotation (tested drill, issue #43)
-
-1. Create a NEW OAuth client with the same tag + scopes (the old one keeps working until deleted) and update the `tailscale-operator-oauth` fields in 1Password. Do not delete the old client until step 4 passes.
-2. Sync now instead of waiting out the 1h refresh: `kubectl -n tailscale annotate externalsecret operator-oauth external-secrets.io/force-sync="$(date +%s)" --overwrite`
-3. Restart the operator to re-read the mounted Secret: `kubectl -n tailscale rollout restart deploy/operator`
-4. Verify nothing was orphaned: `kubectl get statefulset -n tailscale` — existing proxy StatefulSets (`ts-*`) are NOT recreated or deleted; the operator pod goes Ready on the new credential; the exposed LB URL still returns 200 (`scripts/rebuild-check.sh` section 5) and the operator still reports `PROXY_TAGS=tag:k8s-operator` (section 7).
-
-Why rotation does not orphan proxies: rotation only swaps the operator's control-plane credential. Proxy devices are long-lived StatefulSets keyed by each Service's `tailscale.com/hostname` annotation and tagged `tag:k8s-operator`; as long as the new client can assume the same tag (same tagOwners), the operator reconnects to and keeps reconciling the existing devices. Orphaning only happens if the tag ownership changes or the Secret/item/field names drift — keep the contract above fixed.
-
-## Known chart constraints (1.102.3, verified from chart source)
-
-- `PROXY_TAGS` comes from `proxyConfig.defaultTags` — pinned in `deploy/tailscale/values.yaml`; no out-of-band patch.
-- `operatorConfig.defaultTags` maps to `OPERATOR_INITIAL_TAGS` (the operator device's own tag) and does NOT touch proxy tags.
-- `operatorConfig.extraEnv` is appended after the fixed env block, so putting `PROXY_TAGS` there creates a duplicate env entry → server-side apply fails with "expected string, got unstructured list", leaving the Helm release in `failed`. This was the origin of the old "chart bug" report.
-
-Additionally, any Service exposed via the operator should carry `tailscale.com/tags: tag:k8s-operator` (see `deploy/t3code/base/service.yaml`) so its proxy devices are tagged correctly regardless of the env default.
-
-This stays pinned and enforced, not optional:
-
-- `scripts/verify.sh` fails if any built Service with `loadBalancerClass: tailscale` is missing the annotations below, so the service-level tags stay the source of truth in git.
-- `scripts/rebuild-check.sh` asserts the live operator still runs with `PROXY_TAGS=tag:k8s-operator` (section 7) and that every exposed Service in the cluster carries the annotations (section 6).
-
-## Exposing a service
-
-Both annotations are **required** on every LoadBalancer Service with `loadBalancerClass: tailscale` (enforced by `scripts/verify.sh`):
+**LoadBalancer Services (grafana, headlamp, homepage, executor, cloudbeaver, knowledge).** `type: LoadBalancer` + `loadBalancerClass: tailscale` gives a tailnet device that forwards TCP to the Service; the operator does not terminate TLS for these.
 
 ```yaml
 metadata:
   annotations:
     tailscale.com/hostname: my-service # -> my-service.<tailnet>.ts.net
-    tailscale.com/tags: tag:k8s-operator # required by our OAuth client
+    tailscale.com/tags: tag:k8s-operator
 spec:
   type: LoadBalancer
   loadBalancerClass: tailscale
 ```
 
-## The one tailnet configuration value
+`scripts/verify.sh` fails if a tailscale Ingress lacks the tags annotation or a TLS host, or a tailscale LoadBalancer Service lacks the hostname or tags annotation. `scripts/rebuild-check.sh` checks the same on the live cluster and curls each Ingress over HTTPS.
 
-The tailnet DNS suffix (e.g. `tailabc1234.ts.net`) is never hard-coded in scripts, manifests, or UI configs — `scripts/verify.sh` rejects any committed `*.ts.net` name. It comes from exactly one of:
+Proxy pods carry `tailscale.com/parent-resource=<name>` and `tailscale.com/parent-resource-type=ingress|svc`. App NetworkPolicies admit them by namespace (`kubernetes.io/metadata.name: tailscale`), which covers both proxy kinds.
 
-1. **Discovered**: the operator-assigned LB hostname of an exposed Service (`kubectl get svc t3code-0 -n agents -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'` — strip the leading `<hostname>.`). `scripts/serve-https.sh` does this automatically.
-2. **Provided**: set `TAILNET_NAME` in the environment (shell) or `homepage-env` ConfigMap key `tailnet-name` (deployed, wired into Homepage as `HOMEPAGE_VAR_TAILNET_NAME` so its service links resolve without editing per-service hrefs).
+## Tailnet DNS suffix
 
-Retry-with-fix after a failed upgrade: because SSA recorded the failed attempt, prefer `helm uninstall` + fresh `--install` with `-f deploy/tailscale/values.yaml`. Do NOT inject `PROXY_TAGS` via `operatorConfig.extraEnv` (duplicate env entry, see above).
-
-## serve-fixer (deploy/tailscale/serve-fixer*.yaml)
-
-The operator writes the proxy's serve config once with the app pod's IP and does not refresh it when the StatefulSet pod is replaced → 502s after every rollout. The serve-fixer Deployments notice pod-IP drift within ~30s and re-apply `tailscale serve` in the proxy (`scripts/serve-retest.sh` checks whether a newer operator still needs this).
-
-HTTPS 443 is the supported endpoint (issue #11): the t3code fixer loop execs the ConfigMap copy of `scripts/serve-https.sh`, which converges the **https** handler's backend to the current pod IP and drift-checks only that handler (a matching backend under a leftover http:// handler does not count). `scripts/rebuild-check.sh` section 5 verifies the same `https://` URL users open.
-
-One implementation, no drift: the manual command, the recovery drill, and the fixer loop all run `scripts/serve-https.sh`; the ConfigMap must carry byte-exact copies of the repo files, enforced statically by `scripts/serve-fixer-check.sh` (and by `scripts/verify.sh` in CI).
-
-### Least privilege (issue #32)
-
-Each fixer has its **own** ServiceAccount and Role so the two mechanisms are independently revocable:
-
-- **t3code** (`serve-fixer`): the loop selects the proxy pod via the operator's own `tailscale.com/parent-resource` labels plus a name guard, so it can only ever exec into the t3code proxy — never the operator pod or another service's proxy. Its `agents`-namespace read is `resourceNames`-pinned to the `t3code-0` pod.
-- **panel** (`panel-serve-fixer`): same scoping for the panel proxy; its app IP is read from the `panel` Service's Endpoints object (name-pinned) instead of listing pods.
-- **work-t3code** (`work-serve-fixer`, own ServiceAccount): same workaround for the isolated work runner's proxy. `serve-https.sh` is env-parameterized — this fixer sets `HOST=work-t3code-0`, `SVC_NS=work` over the shared ConfigMap scripts (still one implementation). Its `work`-namespace read is `resourceNames`-pinned to the `work-t3code-0` pod, and the identity can read no personal workload (asserted by `serve-fixer-check.sh`).
-- Both Roles dropped `pods/log`; the only write verb is `pods/exec create`. Both containers run non-root (uid 1000) with a read-only root filesystem, dropped capabilities, RuntimeDefault seccomp, and a digest-pinned image (tag-swap compromise impossible).
-
-**Residual risk (documented, deliberate):** `create pods/exec` in the `tailscale` namespace cannot be scoped by RBAC to one pod — the operator names proxy StatefulSets via `GenerateName` (`ts-<parent>-<rand>`, see `reconcileHeadlessService` in the operator source), so RBAC `resourceNames` cannot pin the exec target. A compromised fixer image could therefore exec into unrelated operator/proxy pods in that namespace (it cannot create/delete/patch pods, touch secrets, read `pods/log`, or read any pod outside `tailscale` beyond the pinned app pod). Compensating controls: digest-pinned image, non-root + read-only rootfs, label+name-guarded selection, and the split SAs above. The image is the repo's loop-agent build rather than a minimal kubectl image; swapping in a minimal image later only requires bumping the digest.
-
-### Recovery acceptance test (issue #24)
-
-`scripts/serve-recovery-test.sh` turns the stale-backend recovery into a repeatable acceptance test. It records the t3code-0 pod IP, requires `https://t3code-0.<tailnet>/` to return 200, deletes the pod, waits for a different IP, then requires the proxy's serve config to point the **https 443** handler at the new IP and HTTPS to return 200 again — with the serve-fixer running normally. The test never invokes a repair script; if a manual repair were needed, it would fail.
-
-- **Expected recovery: ~30–60s** (the fixer's 30s loop plus one converge pass). **Objective: 120s** (override with `RECOVERY_OBJECTIVE=<seconds>`); exceeding it fails the test.
-- Any failure prints the serve-fixer logs and the proxy's serve status and logs before exiting 1.
-- Disruptive: replaces the t3code-0 pod once; run from the recovery drill's environment (admin kubeconfig + tailnet access).
-
-```sh
-./scripts/serve-recovery-test.sh
-```
-
-### Retesting whether the workaround is still necessary
-
-- `scripts/serve-retest.sh` — disables the fixer, replaces the t3code-0 pod, and watches the proxy's serve config: exit 0 = operator self-heals (workaround obsolete — delete this directory), exit 3 = workaround still necessary, exit 1 = environment failure. It restores the fixer and re-verifies HTTPS 200 either way.
-- `scripts/serve-fixer-check.sh` — static manifest checks (digest pins, no `pods/log`, non-root settings, name-pinned reads) plus, against a live cluster with an impersonating kubeconfig, the RBAC matrix (may touch only its own target; denied elsewhere).
-
-**Removal trigger:** when an operator release refreshes serve config on pod replacement (test: `scripts/serve-retest.sh` exits 0), delete this directory.
+The suffix (e.g. `tailabc1234.ts.net`) is never committed — `scripts/verify.sh` rejects real `*.ts.net` names. Read it from any Ingress (`kubectl get ingress panel -n agents -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'`), or set `TAILNET_NAME` in the shell and the `homepage-env` ConfigMap key `tailnet-name`. The panel reads it from its own Ingress status unless `PANEL_TAILNET_NAME` is set.

@@ -196,25 +196,21 @@ end_stage
 
 # ---------------------------------------------------------------------------
 stage https
-TAILNET_NAME="${TAILNET_NAME:-}"
-if [ -z "$TAILNET_NAME" ]; then
-  _lb=$(kubectl get svc t3code-0 -n agents -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-  TAILNET_NAME=${_lb#"t3code-0."}
-fi
-[ -n "$TAILNET_NAME" ] || fail "cannot determine tailnet suffix (set TAILNET_NAME)"
-
-_proxy_tries=0
-until ./scripts/serve-https.sh && ./scripts/serve-refresh.sh panel agents; do
-  _proxy_tries=$((_proxy_tries + 1))
-  [ "$_proxy_tries" -lt 20 ] || fail "tailscale proxy pods never became ready"
-  sleep 15
-done
-
-for _host in "t3code-0" "panel"; do
-  _code=$(curl -s -m 10 -o /dev/null -w "%{http_code}" "https://${_host}.${TAILNET_NAME}/")
+# Tailscale Ingresses get their tailnet hostname once the proxy is up; poll
+# each status, then require the HTTPS URL to answer.
+for _ing in "t3code-0" "panel"; do
+  _tries=0
+  while :; do
+    _host=$(kubectl get ingress "$_ing" -n agents -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null) || true
+    [ -n "$_host" ] && break
+    _tries=$((_tries + 1))
+    [ "$_tries" -lt 20 ] || fail "ingress agents/${_ing} never got a tailnet hostname"
+    sleep 15
+  done
+  _code=$(curl -s -m 30 -o /dev/null -w "%{http_code}" "https://${_host}/") || true
   case "$_code" in
-    2?? | 3??) echo "https://${_host}.${TAILNET_NAME}/ -> ${_code}" ;;
-    *) fail "https://${_host}.${TAILNET_NAME}/ -> ${_code}" ;;
+    2?? | 3??) echo "https://${_host}/ -> ${_code}" ;;
+    *) fail "https://${_host}/ -> ${_code}" ;;
   esac
 done
 end_stage

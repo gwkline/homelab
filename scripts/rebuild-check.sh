@@ -50,51 +50,42 @@ else
 fi
 
 echo "== 5. tailscale exposure =="
-# HTTPS 443 is the supported endpoint (issue #11): verify the URL users
-# actually open, and fail on certificate/TLS errors (curl exit != 0) and on
-# 502s (the signature of a stale serve backend the fixer should have
-# re-pointed). An HTTP-only check reported success while HTTPS served a
-# stale backend — that is the drift this section closes.
-host=$(kubectl get svc t3code-0 -n agents -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
-if [ -n "$host" ]; then
-  code=$(curl -s -m 10 -o /dev/null -w "%{http_code}" "https://${host}/")
+# HTTPS 443 is the supported endpoint: check the URL users open. TLS errors
+# (curl exit != 0) and non-200s both fail. Hostnames come from each Tailscale
+# Ingress's status.
+check_https() { # <namespace> <ingress> <required: 1|0>
+  h=$(kubectl get ingress "$2" -n "$1" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+  if [ -z "$h" ]; then
+    if [ "$3" = 1 ]; then
+      echo "  FAIL: ingress $1/$2 has no tailnet hostname yet"
+      fail=1
+    else
+      echo "  WARN: ingress $1/$2 has no tailnet hostname (not deployed?)"
+    fi
+    return
+  fi
+  code=$(curl -s -m 10 -o /dev/null -w "%{http_code}" "https://${h}/")
   curl_rc=$?
   if [ "$curl_rc" -ne 0 ]; then
-    echo "  FAIL: https://$host request failed (curl exit $curl_rc — certificate/TLS or connection error; code $code)"
+    echo "  FAIL: https://$h request failed (curl exit $curl_rc — certificate/TLS or connection error; code $code)"
     fail=1
   elif [ "$code" = "200" ]; then
-    echo "  ok: https://$host -> 200"
+    echo "  ok: https://$h -> 200"
   else
-    echo "  FAIL: https://$host -> $code (502 = stale serve backend; fixer logs: kubectl logs -n tailscale deploy/t3code-serve-fixer)"
+    echo "  FAIL: https://$h -> $code (proxy logs: kubectl logs -n tailscale -l tailscale.com/parent-resource=$2)"
     fail=1
   fi
-else
-  echo "  FAIL: t3code-0 LB address pending"
-  fail=1
-fi
-# Work runner (work-t3code): same supported-endpoint contract, its own fixer.
-whost=$(kubectl get svc work-t3code-0 -n work -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
-if [ -n "$whost" ]; then
-  code=$(curl -s -m 10 -o /dev/null -w "%{http_code}" "https://${whost}/")
-  curl_rc=$?
-  if [ "$curl_rc" -ne 0 ]; then
-    echo "  FAIL: https://$whost request failed (curl exit $curl_rc — certificate/TLS or connection error; code $code)"
-    fail=1
-  elif [ "$code" = "200" ]; then
-    echo "  ok: https://$whost -> 200"
-  else
-    echo "  FAIL: https://$whost -> $code (502 = stale serve backend; fixer logs: kubectl logs -n tailscale deploy/work-t3code-serve-fixer)"
-    fail=1
-  fi
-else
-  echo "  WARN: work-t3code-0 LB address pending (work runner not deployed?)"
-fi
+}
+check_https agents t3code-0 1
+check_https agents panel 1
+check_https work work-t3code-0 0
 
-echo "== 6. tailscale service annotations =="
-# Every exposed Service must declare its hostname and required tags in the
-# live cluster (mirrors the static check in scripts/verify.sh). The list is
-# read into a variable + here-doc (not process substitution) so the file
-# stays POSIX-parseable (dash -n).
+echo "== 6. tailscale exposure annotations =="
+# Every tailscale LoadBalancer Service must declare its hostname, and every
+# tailscale-exposed Service or Ingress must carry tags=tag:k8s-operator
+# (mirrors the static check in scripts/verify.sh). The lists are read into
+# variables + here-docs (not process substitution) so the file stays
+# POSIX-parseable (dash -n).
 svcs=$(kubectl get svc -A \
   -o jsonpath='{range .items[?(@.spec.loadBalancerClass=="tailscale")]}{.metadata.namespace} {.metadata.name}{"\n"}{end}' 2>/dev/null)
 while IFS=' ' read -r ns name; do
@@ -104,13 +95,28 @@ while IFS=' ' read -r ns name; do
   tags=$(kubectl get svc "$name" -n "$ns" \
     -o jsonpath='{.metadata.annotations.tailscale\.com/tags}' 2>/dev/null)
   if [ -n "$host" ] && [ "$tags" = "tag:k8s-operator" ]; then
-    echo "  ok: $ns/$name ($host, $tags)"
+    echo "  ok: svc $ns/$name ($host, $tags)"
   else
-    echo "  FAIL: $ns/$name missing tailscale.com/hostname or tags=tag:k8s-operator (got host='$host' tags='$tags')"
+    echo "  FAIL: svc $ns/$name missing tailscale.com/hostname or tags=tag:k8s-operator (got host='$host' tags='$tags')"
     fail=1
   fi
 done <<EOF
 $svcs
+EOF
+ings=$(kubectl get ingress -A \
+  -o jsonpath='{range .items[?(@.spec.ingressClassName=="tailscale")]}{.metadata.namespace} {.metadata.name}{"\n"}{end}' 2>/dev/null)
+while IFS=' ' read -r ns name; do
+  [ -n "$name" ] || continue
+  tags=$(kubectl get ingress "$name" -n "$ns" \
+    -o jsonpath='{.metadata.annotations.tailscale\.com/tags}' 2>/dev/null)
+  if [ "$tags" = "tag:k8s-operator" ]; then
+    echo "  ok: ingress $ns/$name ($tags)"
+  else
+    echo "  FAIL: ingress $ns/$name missing tailscale.com/tags=tag:k8s-operator (got '$tags')"
+    fail=1
+  fi
+done <<EOF
+$ings
 EOF
 
 echo "== 7. operator default tag (pinned workaround) =="
