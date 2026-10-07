@@ -38,6 +38,8 @@ sudo grep -c nomodeset /boot/grub/grub.cfg   # must be >= 1
 
 `bootstrap/bootstrap.sh` installs pinned, sha256-verified Tailscale (with Tailscale SSH) and k3s. It requires Ubuntu 24.04 on amd64/arm64 and a non-root sudo user.
 
+Every k3s setting (disabled add-ons, kubelet reservations, eviction thresholds, image GC, PID limit, graceful shutdown) is in `bootstrap/k3s-config.yaml`, which the script installs as `/etc/rancher/k3s/config.yaml`; it also raises the inotify limits. To change a setting on a running node, edit the file in git and re-run the script with the same role: it is idempotent and restarts k3s.
+
 Server (first machine only):
 
 ```sh

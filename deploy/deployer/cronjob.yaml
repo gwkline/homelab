@@ -40,7 +40,6 @@ spec:
                     deploy/knowledge/base/deployment-knowledge-ingest.yaml
                     deploy/knowledge/base/deployment-knowledge-retrieval.yaml
                     deploy/knowledge/base/netpol-knowledge.yaml
-                    deploy/node-cleanup/base/cronjob.yaml
                     deploy/panel/base/deployment.yaml
                     deploy/panel/base/stats-cronjob.yaml
                     deploy/t3code/base/statefulset.yaml
