@@ -1,0 +1,9 @@
+{
+  "queued": "factory/queued",
+  "in_progress": "factory/in-progress",
+  "draft_pr": "factory/draft-pr",
+  "needs_review": "factory/needs-review",
+  "failed": "factory/failed",
+  "cancelled": "factory/cancelled",
+  "stuck": "factory/stuck"
+}

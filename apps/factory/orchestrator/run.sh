@@ -20,6 +20,13 @@
 #     issue in factory/failed for a human.
 set -eu
 
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+# Shared gh wrapper, labels, markers, check and verify rules.
+FACTORY_LIB_DIR="${FACTORY_LIB_DIR:-/usr/local/lib/factory}"
+[ -f "${FACTORY_LIB_DIR}/factory.sh" ] || FACTORY_LIB_DIR="${SCRIPT_DIR}/../lib"
+# shellcheck source=apps/factory/lib/factory.sh
+. "${FACTORY_LIB_DIR}/factory.sh"
+
 REPO="${FACTORY_REPO:?FACTORY_REPO required (owner/name)}"
 # Repo allowlist (mirrors the panel's /api/factory/run allowlist).
 WHITELIST="${FACTORY_REPOS:-gwkline/homelab,gwkline/launchpad,gwkline/plantry,gwkline/personal-site,gwkline/kline-services-bot,gwkline/discord-bot,gwkline/pr-czar}"
@@ -27,10 +34,6 @@ case ",${WHITELIST}," in
   *",${REPO},"*) ;;
   *) echo "[orch] repo ${REPO} not whitelisted for factory runs" >&2; exit 78 ;;
 esac
-LABEL_QUEUED="factory/queued"
-LABEL_WIP="factory/in-progress"
-LABEL_DONE="factory/draft-pr"
-LABEL_FAILED="factory/failed"
 PROFILE="${FACTORY_PROFILE:-${PROFILE:-code-pr}}"
 # Workflow identity recorded on the run (marker comment + worker brief):
 # profile@version pins which orchestrator behavior stack produced the Run.
@@ -39,8 +42,7 @@ WORKFLOW_VERSION="${FACTORY_WORKFLOW_VERSION:-v1}"
 STALE_HOURS="${FACTORY_STALE_HOURS:-2}"
 
 # Hard timeouts: a hung connection must fail the step, not burn the tick's
-# activeDeadline.
-gh() { timeout 60 /usr/local/bin/gh "$@"; }
+# activeDeadline (gh's is in factory.sh).
 kubectl() { timeout 120 /usr/local/bin/kubectl "$@"; }
 gitt() { timeout 300 /usr/bin/git "$@"; }
 timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -54,7 +56,6 @@ redact() {
   fi
 }
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # Run marker comment template (one comment per Run, edited in place).
 . "${SCRIPT_DIR}/marker.sh"
 
@@ -85,13 +86,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# DNS/netpol warm-up can fail the first auth probe; retry briefly.
-AUTH_OK=0
-for _a in 1 2 3 4 5 6; do
-  if timeout 10 gh auth status >/dev/null 2>&1; then AUTH_OK=1; break; fi
-  sleep 3
-done
-[ "${AUTH_OK}" = "1" ] || { echo "[orch] no gh auth" >&2; exit 1; }
+factory_gh_auth || { echo "[orch] no gh auth" >&2; exit 1; }
 
 # ---- 0. reclaim stranded in-progress issues --------------------------------
 # A tick that died between the label swap and the Job spawn orphans the
@@ -110,8 +105,8 @@ for LNUM in $(gh api "repos/${REPO}/issues?labels=${LABEL_WIP}&state=open&per_pa
     gh issue edit "${LNUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" >/dev/null 2>&1 || true
     continue
   fi
-  MARK_TS=$(gh api "repos/${REPO}/issues/${LNUM}/comments?per_page=100" --jq '[.[] | select(.body | contains("<!-- factory:run:"))] | last | .body // ""' 2>/dev/null \
-    | sed -n 's/.*factory:run:[0-9]*:\([0-9T:Z-]*\).*/\1/p' || true)
+  MARK_TS=$(gh api "repos/${REPO}/issues/${LNUM}/comments?per_page=100" --jq "[.[] | select(.body | contains(\"<!-- ${FACTORY_RUN_MARKER}\"))] | last | .body // \"\"" 2>/dev/null \
+    | sed -n "s/.*${FACTORY_RUN_MARKER}[0-9]*:\([0-9T:Z-]*\).*/\1/p" || true)
   AGE_H=$(python3 - "${MARK_TS}" << 'PY'
 import sys, datetime
 ts = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
@@ -205,16 +200,7 @@ MARKER_ID=${COMMENT_URL##*issuecomment-}
 JOB_NAME="factory-issue-${NUM}-$(date +%s)"
 gh issue view "${NUM}" -R "${REPO}" --json number,title,body,url > /tmp/issue.json
 
-# Per-repo verify command: the worker's stop condition. Pipe-free on purpose:
-# dash reports a pipeline's last exit status, so `cmd | tail` always passes.
-# Keep in sync with apps/factory/medic/run-medic.sh.
-VERIFY_CMD=""
-case "${REPO}" in
-  *launchpad*)    VERIFY_CMD="cargo check --workspace --all-targets" ;;
-  *plantry*|*personal-site*|*pr-czar*|*kline-services-bot*|*discord-bot*) VERIFY_CMD="npm run build" ;;
-  # Syntax-check every changed .sh (shellcheck when present, else dash -n).
-  *homelab*)      VERIFY_CMD="for f in \$(git diff --name-only HEAD -- '*.sh'); do shellcheck -s sh \"\$f\" 2>/dev/null || dash -n \"\$f\" || exit 1; done; echo verify-ok" ;;
-esac
+VERIFY_CMD="$(verify_for "${REPO}")"
 
 # ---- 3b. knowledge context ------------------------------------------------
 # Fail-open: knowledge-context.sh always writes a status record and exits 0,
@@ -338,7 +324,7 @@ if [ "${WAIT_OK}" != "1" ]; then
   LOGTAIL=$(kubectl logs "job/${JOB_NAME}" -n sandbox --all-containers --tail=40 2>/dev/null | redact || true)
   # Bounded auto-retry: one extra attempt for transient failures (flaky
   # provider, netpol blip). 2 run markers max, then park in failed for a human.
-  ATTEMPTS=$(gh api "repos/${REPO}/issues/${NUM}/comments?per_page=100" --jq '[.[] | select(.body | contains("<!-- factory:run:"))] | length' 2>/dev/null || echo 2)
+  ATTEMPTS=$(gh api "repos/${REPO}/issues/${NUM}/comments?per_page=100" --jq "[.[] | select(.body | contains(\"<!-- ${FACTORY_RUN_MARKER}\"))] | length" 2>/dev/null || echo 2)
   if [ "${ATTEMPTS}" -lt 2 ]; then
     update_status "retrying" "Job failed (attempt ${ATTEMPTS}) — auto-retry queued.
 
