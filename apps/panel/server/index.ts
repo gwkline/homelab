@@ -5,7 +5,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 
 import { DEV_TOOLS, discoverTailnet, evaluateTools } from "./devtools.js";
-import { jobNameFor, jobManifest, viewJob } from "./jobs.js";
+import { viewJob } from "./jobs.js";
 import { loadConfig, api } from "./k8s.js";
 import type { K8sObject, JobTemplateSpec } from "./k8s.js";
 import {
@@ -1797,34 +1797,6 @@ app.delete("/api/jobs/:name", async (c) => {
   } catch (error: unknown) {
     const status = errStatus(error);
     return c.json({ error: errMessage(error) }, status === 404 ? 404 : 502);
-  }
-});
-
-app.post("/api/jobs", async (c) => {
-  let body: { command?: string; issue?: string; repo?: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  const command = body.command?.trim();
-  if (!command) {
-    return c.json({ error: "command is required" }, 400);
-  }
-  if (command.length > 2000) {
-    return c.json({ error: "command too long" }, 400);
-  }
-  const issue = body.issue === undefined ? undefined : String(body.issue);
-  if (issue !== undefined && !/^\d{1,7}$/u.test(issue)) {
-    return c.json({ error: "issue must be a number" }, 400);
-  }
-  const name = jobNameFor(command);
-  try {
-    await k8s.createJob(jobManifest({ command, issue, name, repo: body.repo }));
-    return c.json({ name }, 201);
-  } catch (error: unknown) {
-    const status = errStatus(error);
-    return c.json({ error: errMessage(error) }, status === 409 ? 409 : 502);
   }
 });
 

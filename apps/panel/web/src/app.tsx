@@ -1,12 +1,4 @@
-import {
-  Brain,
-  RefreshCw,
-  Rocket,
-  Hash,
-  Factory,
-  GitPullRequest,
-  Play,
-} from "lucide-react";
+import { Brain, RefreshCw, Factory, GitPullRequest, Play } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ClusterCard } from "./components/cluster-card";
@@ -16,14 +8,7 @@ import { JobsTable } from "./components/jobs-table";
 import { KnowledgeCard } from "./components/knowledge-card";
 import { KnowledgeExplorer } from "./components/knowledge-explorer";
 import { ScheduleRow } from "./components/schedule-row";
-import {
-  Card,
-  CardHeader,
-  Badge,
-  Button,
-  Input,
-  Select,
-} from "./components/ui";
+import { Card, CardHeader, Badge, Button, Select } from "./components/ui";
 
 interface Job {
   name: string;
@@ -95,10 +80,6 @@ export default function App() {
   const [view, setView] = useState<"factory" | "knowledge">("factory");
   const [state, setState] = useState<State>({ cronjobs: [], jobs: [] });
   const [loading, setLoading] = useState(true);
-  const [command, setCommand] = useState("");
-  const [issue, setIssue] = useState("");
-  const [launching, setLaunching] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [allIssues, setAllIssues] = useState<
     { repo: string; issues: FactoryIssue[]; error?: string }[]
   >([]);
@@ -112,7 +93,6 @@ export default function App() {
   const [reviewBusy, setReviewBusy] = useState<string | null>(null);
   const [reviewMsg, setReviewMsg] = useState<string | null>(null);
   const [openRepo, setOpenRepo] = useState<string | null>("gwkline/launchpad");
-  const [launchRepo, setLaunchRepo] = useState("gwkline/homelab");
 
   const refresh = async () => {
     try {
@@ -223,34 +203,6 @@ export default function App() {
       setReviewMsg(String(error));
     } finally {
       setReviewBusy(null);
-    }
-  };
-
-  const launch = async () => {
-    if (!command.trim()) {
-      return;
-    }
-    setLaunching(true);
-    setMessage(null);
-    try {
-      const res = await fetch("/api/jobs", {
-        body: JSON.stringify({
-          command,
-          issue: issue || undefined,
-          repo: issue ? launchRepo : undefined,
-        }),
-        headers: { "content-type": "application/json" },
-        method: "POST",
-      });
-      const body = await res.json();
-      setMessage(res.ok ? `dispatched ${body.name}` : body.error);
-      if (res.ok) {
-        setCommand("");
-        setIssue("");
-        refresh();
-      }
-    } finally {
-      setLaunching(false);
     }
   };
 
@@ -597,55 +549,6 @@ export default function App() {
                 <p className="text-muted-foreground px-5 py-2 text-xs">
                   {reviewMsg}
                 </p>
-              )}
-            </div>
-          </Card>
-
-          <Card>
-            <CardHeader
-              title="launch a run"
-              subtitle="runs the loop-agent image in sandbox; results export themselves"
-            />
-            <div className="space-y-3 p-5">
-              <Input
-                placeholder="command, e.g. npm test"
-                value={command}
-                onChange={(e) => setCommand(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && launch()}
-              />
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <Hash
-                    size={14}
-                    className="text-muted-foreground absolute top-1/2 left-3 -translate-y-1/2"
-                  />
-                  <Input
-                    placeholder="issue # (optional)"
-                    value={issue}
-                    onChange={(e) =>
-                      setIssue(e.target.value.replaceAll(/\D/gu, ""))
-                    }
-                    className="pl-8"
-                  />
-                </div>
-                <Select
-                  ariaLabel="watcher repo"
-                  value={launchRepo}
-                  onChange={setLaunchRepo}
-                  options={allIssues.map(({ repo }) => ({
-                    label: repo.split("/")[1] ?? repo,
-                    value: repo,
-                  }))}
-                />
-                <Button
-                  onClick={launch}
-                  disabled={launching || !command.trim()}
-                >
-                  <Rocket size={14} /> {launching ? "dispatching" : "dispatch"}
-                </Button>
-              </div>
-              {message && (
-                <p className="text-muted-foreground text-xs">{message}</p>
               )}
             </div>
           </Card>
