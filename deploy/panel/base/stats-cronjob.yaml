@@ -37,8 +37,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: snapshot
-              image: ghcr.io/gwkline/homelab/panel@sha256:a9c6c439713556b5138fe87a0b4922d3d5beae47f07eb81af83be3843385f0a2
-              imagePullPolicy: Always
+              image: ghcr.io/gwkline/homelab/panel:latest
               command:
                 - node
                 - -e

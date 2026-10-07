@@ -1,0 +1,84 @@
+# Apply rights for exactly the kinds the deployer's targets contain, per
+# namespace. No secrets, no pods/exec, nothing cluster-scoped.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployer
+  namespace: agents
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployer
+  namespace: agents
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployer
+  namespace: agents
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: deployer }
+subjects:
+  - { kind: ServiceAccount, name: deployer, namespace: agents }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployer
+  namespace: work
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployer
+  namespace: work
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: deployer }
+subjects:
+  - { kind: ServiceAccount, name: deployer, namespace: agents }
+---
+# sandbox: the whole factory base (CronJobs, profiles, their RBAC and
+# NetworkPolicies, the knowledge-context ExternalSecret) plus chaos.
+# escalate/bind let it write the factory Roles, which grant verbs the
+# deployer itself doesn't hold; this makes it admin of sandbox, which merging
+# to main already is.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployer
+  namespace: sandbox
+rules:
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps", "serviceaccounts"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "create", "patch", "escalate", "bind"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets"]
+    verbs: ["get", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployer
+  namespace: sandbox
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: deployer }
+subjects:
+  - { kind: ServiceAccount, name: deployer, namespace: agents }

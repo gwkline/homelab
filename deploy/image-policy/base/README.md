@@ -7,7 +7,7 @@ Sigstore policy-controller verifies, at pod-admission time, that every `ghcr.io/
 - `clusterimagepolicy.yaml` — the only trusted authority is the CI workflow identity (`https://github.com/gwkline/homelab/.github/workflows/ci.yaml@refs/heads/main`) verified against public Fulcio + Rekor.
 - `deploy/namespaces` — `agents`, `sandbox`, and `work` carry the `policy.sigstore.dev/include: "true"` label: the webhook intercepts only labeled namespaces (API-server-side `namespaceSelector`), so `database`, `tailscale`, and system namespaces are out of scope by construction.
 - Third-party images (postgres, grafana, busybox, …) match no policy and are admitted — explicit default-allow (ADR-004 D3). Their guarantee is the digest pin (`tag@sha256`), not a signature.
-- CI (`scripts/check-image-pins.sh`) rejects any homelab image ref that is not an `@sha256` digest — verification binds to digests, never tags.
+- Manifests reference homelab images by tag; the webhook resolves each tag to its digest at admission and verifies the signature on that digest.
 
 ## Install and ordering (recovery/bootstrap)
 

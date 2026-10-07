@@ -14,7 +14,7 @@ data:
     {
       "name": "medic",
       "version": 1,
-      "image": "ghcr.io/gwkline/homelab/factory/worker@sha256:885bd3f4dd1bfb382eb8c5e7140c2c2c8585a033a1440ba64fc19d32dbca2fb4",
+      "image": "ghcr.io/gwkline/homelab/factory/worker:latest",
       "serviceAccount": "factory-worker",
       "activeDeadlineSeconds": 1200,
       "backoffLimit": 0,

@@ -12,7 +12,7 @@ Constraints: two old k3s nodes (8 GB+ RAM, shared with dind/Chromium/agent works
 
 ### A. CI-only verification (interim, not enough alone)
 
-Run `cosign verify` in CI against every digest a manifest deploys. Zero cluster cost, but the control never reaches the cluster: any path that creates pods outside CI (a compromised deploy script, a manually applied manifest, an agent with Job-creation RBAC — panel, dispatcher, hermes via executor) runs images with no signature check. Rejected as the end state; kept as the complementary gate (`scripts/check-image-pins.sh` in the CI validate job) that keeps every homelab ref digest-pinned so admission verification has a stable object to verify.
+Run `cosign verify` in CI against every digest a manifest deploys. Zero cluster cost, but the control never reaches the cluster: any path that creates pods outside CI (a compromised deploy script, a manually applied manifest, an agent with Job-creation RBAC — panel, dispatcher, hermes via executor) runs images with no signature check. Rejected.
 
 ### B. sigstore policy-controller (chosen)
 
@@ -55,7 +55,7 @@ The policy must be in force before workloads are applied, so the drill stage `im
 
 ### D6. What remains in CI
 
-`scripts/check-image-pins.sh` (validate job) fails any new non-digest homelab image ref: signatures and admission verification both bind to digests, so a tag ref would be un-verifyable at admission. CI does not run `cosign verify` itself — the admission webhook is the enforcement point, and duplicating it in CI would only re-verify what the cluster refuses to run unsigned.
+Manifests reference homelab images by tag; the webhook resolves the tag to a digest at admission and verifies that digest. CI does not run `cosign verify` itself — the admission webhook is the enforcement point, and duplicating it in CI would only re-verify what the cluster refuses to run unsigned.
 
 ## Consequences
 

@@ -47,7 +47,7 @@
 #   - backup (overlays/backup) — production backup execution is excluded
 #     until its B2 credentials exist
 #   - gvisor (overlays/gvisor) — replaces the stock loop-agent runtime
-#   - grafana, loki, cloudbeaver, executor, auto-deploy — applied
+#   - grafana, loki, cloudbeaver, executor — applied
 #     per-component when wanted
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -89,6 +89,7 @@ resources:
   - ../../../deploy/headlamp/base
   - ../../../deploy/dispatcher/base
   - ../../../deploy/factory/base
+  - ../../../deploy/deployer
   - ../../../deploy/work-t3code/base
   # 8. operational CronJobs, last so their first run can never race the
   #    bring-up: chaos deletes pods (agents+sandbox, kill switch in its

@@ -71,8 +71,7 @@ export const jobManifest = ({ command, issueNumber, name, repo }) => ({
               { name: "WATCHER_ISSUE", value: String(issueNumber) },
               { name: "WATCHER_REPO", value: repo },
             ],
-            image:
-              "ghcr.io/gwkline/homelab/loop-agent@sha256:e941bae94d9a59ea1c3034c3529ba633b3074ef0be5480b580a415c0e1fdfa70",
+            image: "ghcr.io/gwkline/homelab/loop-agent:latest",
             name: "loop",
             resources: {
               limits: { memory: "4Gi" },

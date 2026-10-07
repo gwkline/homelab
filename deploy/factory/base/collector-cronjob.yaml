@@ -38,11 +38,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: collector
-              # Declarative collector config lives in the env block below;
-              # the image pin is re-stamped after image rebuilds with
-              # scripts/pin-factory-image.sh factory/collector <digest>.
-              image: ghcr.io/gwkline/homelab/factory/collector@sha256:37ebc75207aca82cdb824dd6ee685b0f662ce795499b928b4aa19ac95dcbcd9a
-              imagePullPolicy: Always
+              image: ghcr.io/gwkline/homelab/factory/collector:latest
               env:
                 # ── Declarative work selection (#78) ──────────────────────
                 - name: FACTORY_REPOS
@@ -126,3 +122,22 @@ roleRef:
   name: factory-collector
 subjects:
   - { kind: ServiceAccount, name: factory-collector, namespace: sandbox }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-factory-collector
+  namespace: sandbox
+spec:
+  podSelector:
+    matchLabels:
+      factory.gwkline.io/profile: collector
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - ipBlock: { cidr: 140.82.112.0/20 }
+        - ipBlock: { cidr: 185.199.108.0/22 }
+        - ipBlock: { cidr: 104.16.0.0/12 }
+      ports: [{ protocol: TCP, port: 443 }]
+    - ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]

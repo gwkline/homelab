@@ -35,8 +35,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: reviewer
-              image: ghcr.io/gwkline/homelab/factory/reviewer@sha256:0cc59f54b273d9ead7075b35718b778aec0d18a37c27f52b0a0c0617a3e93dca
-              imagePullPolicy: Always
+              image: ghcr.io/gwkline/homelab/factory/reviewer:latest
               env:
                 - name: FACTORY_REPO
                   value: gwkline/homelab

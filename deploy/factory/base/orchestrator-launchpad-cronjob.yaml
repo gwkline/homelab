@@ -15,11 +15,9 @@ spec:
   schedule: "7,17,27,37,47,57 * * * *" # every 10 min, offset from homelab (:00,:10,…)
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
-  # Same TTL as the homelab orchestrator (#252): without it every finished
-  # job pod parks on the node disk until the next manual sweep.
-  ttlSecondsAfterFinished: 86400
   jobTemplate:
     spec:
+      ttlSecondsAfterFinished: 86400
       activeDeadlineSeconds: 3900 # 65 min: covers 3600s worker + publish overhead
       backoffLimit: 0 # a failed tick stays failed — visible
       template:
@@ -36,8 +34,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: orchestrator
-              image: ghcr.io/gwkline/homelab/factory/orchestrator@sha256:daa8ec28b34775e5f203c50ec4db0cfd85039bc1347cebb3b822d567b9fb5cf5
-              imagePullPolicy: Always
+              image: ghcr.io/gwkline/homelab/factory/orchestrator:latest
               env:
                 - name: FACTORY_REPO
                   value: gwkline/launchpad

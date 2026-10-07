@@ -33,8 +33,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: orchestrator
-              image: ghcr.io/gwkline/homelab/factory/orchestrator@sha256:daa8ec28b34775e5f203c50ec4db0cfd85039bc1347cebb3b822d567b9fb5cf5
-              imagePullPolicy: Always
+              image: ghcr.io/gwkline/homelab/factory/orchestrator:latest
               env:
                 - name: FACTORY_REPO
                   value: gwkline/homelab # self-iteration target per operator
@@ -128,7 +127,7 @@ roleRef:
 subjects:
   - { kind: ServiceAccount, name: factory-orchestrator, namespace: sandbox }
 ---
-# Orchestrator egress: same shape as allow-factory-reconciler. Without a
+# Orchestrator egress. Without a
 # profile label the orchestrator pod fell into sandbox-egress-public-only,
 # which excepts 10.0.0.0/8 — so once netpol enforcement settled on the pod,
 # EVERY kubectl call (worker-image resolution, Job spawn, patch extraction)

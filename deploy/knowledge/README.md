@@ -9,32 +9,11 @@ The deployed knowledge vertical: two services in `agents` over the `knowledge` d
 
 `apps/knowledge-mcp` is **not** deployed: it is a local stdio CLI (run by t3code/agents against `KNOWLEDGE_API_BASE=https://knowledge.<tailnet>`); no Dockerfile by design.
 
-## Bootstrap order (the two-step image pin)
-
-The manifests ship **all-zero placeholder digests** — the same bootstrap pattern `deploy/postgres` used for the pg-textsearch image (documented in its README): CI builds and publishes the images only after this lands on `main`, so a real digest cannot exist in this commit. `scripts/check-image-pins.sh` accepts the placeholder (it is a valid 64-hex pin); the pods will not start against it.
-
-Once main CI has published both images, pin them — one command per service:
-
-```sh
-scripts/pin-factory-image.sh knowledge/ingest    <digest-from-ghcr>
-scripts/pin-factory-image.sh knowledge/retrieval <digest-from-ghcr>
-```
-
-Digest sources:
-
-```sh
-gh api 'users/gwkline/packages/container/homelab%2Fknowledge-ingest/versions?per_page=1' --jq '.[0].name'
-gh api 'users/gwkline/packages/container/homelab%2Fknowledge-retrieval/versions?per_page=1' --jq '.[0].name'
-```
-
-(Or the `docker buildx imagetools inspect …:latest --format '{{.Manifest.Digest}}'` shape the t3code repin job uses.) That repin PR is the immediate follow-up to this vertical; after it merges, the auto-deploy watcher rolls the pods out.
-
 ## Prerequisites
 
 1. The postgres cluster (deploy/postgres) healthy, with the `knowledge` database + extensions (`pg-primary-knowledge` `Database` resource).
 2. The `knowledge-db` 1Password item (username `knowledge_owner` + the same password as the `pg-primary-knowledge-owner` basic-auth Secret in the `database` namespace) and the `knowledge-api-token` item — see `base/externalsecret.yaml` for the item contracts and `docs/secrets-inventory.md` for rotation ownership.
 3. The `onepassword` SecretStore in `agents` (deploy/eso).
-4. Image digests pinned (above).
 
 ## Bring-up
 

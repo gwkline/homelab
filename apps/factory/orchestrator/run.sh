@@ -203,10 +203,8 @@ if [ "${EXISTING}" != "0" ]; then
 fi
 
 # ---- 2. resolve profile stack (image/SA/resources) ------------------------
-# Resolved before the marker comment so the Run records the exact stack that
-# will execute it (acceptance: RunProfile + workflow/version recorded).
-# Images are digest-pinned (issue #35): the orchestrator spawns exactly the
-# worker build this commit's manifests pin, never a moving tag.
+# Resolved before the marker comment so the Run records the stack that will
+# execute it.
 case "${PROFILE}" in
   security)
     PROFILE_CM="factory-profile-security"
@@ -220,19 +218,15 @@ case "${PROFILE}" in
     ;;
 esac
 
-# Worker image: single source of truth is the profile ConfigMap
-# (deploy/factory/base/profile-*.yaml). The digest lives in exactly one place
-# and is resolved here at runtime, so a profile re-pin can never disagree with
-# a second hardcoded copy. WORKER_IMAGE_OVERRIDE wins when set (unit tests,
-# manual dispatches). Fails closed: an unresolvable image parks the issue
-# instead of spawning a broken Job.
+# Worker image comes from the profile ConfigMap; WORKER_IMAGE_OVERRIDE wins
+# (tests, manual dispatches). An unresolvable image parks the issue.
 if [ -n "${WORKER_IMAGE_OVERRIDE:-}" ]; then
   WORKER_IMAGE="${WORKER_IMAGE_OVERRIDE}"
 else
   WORKER_IMAGE=$(kubectl get configmap "${PROFILE_CM}" -n sandbox -o jsonpath='{.data.profile\.json}' 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['image'])") || WORKER_IMAGE=""
 fi
 case "${WORKER_IMAGE:-}" in
-  ghcr.io/*@sha256:*) ;;
+  ghcr.io/*) ;;
   *)
     echo "[orch] FATAL: cannot resolve worker image from configmap ${PROFILE_CM} (RBAC? profile not applied?)" >&2
     update_status "failed" "Orchestrator could not resolve the worker image from configmap \`${PROFILE_CM}\` — check RBAC and that the profile is applied."
