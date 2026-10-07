@@ -1,5 +1,6 @@
-# Credential-free connection seeded only into an empty workspace. To re-seed,
-# delete GlobalConfiguration/.dbeaver/data-sources.json and restart.
+# Credential-free connection to the CNPG primary, copied into the workspace
+# only on first start (when workspace/.metadata does not exist yet). An
+# existing workspace keeps its connections; edit them in the admin UI.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,17 +11,17 @@ data:
     {
       "folders": {},
       "connections": {
-        "factory-postgres": {
+        "pg-primary-knowledge": {
           "provider": "postgresql",
           "driver": "postgres-jdbc",
-          "name": "Factory PostgreSQL",
-          "description": "Factory state/queue DB - least-privilege read-only role",
+          "name": "Postgres (knowledge)",
+          "description": "pg-primary, read-only role cloudbeaver_ro",
           "save-password": true,
           "read-only": true,
           "configuration": {
-            "host": "postgres-rw.postgres.svc.cluster.local",
+            "host": "pg-primary-rw.database.svc",
             "port": "5432",
-            "database": "factory",
+            "database": "knowledge",
             "configurationType": "MANUAL",
             "auth-model": "native"
           }

@@ -40,6 +40,21 @@ spec:
               value: "false"
             - name: JAVA_OPTS
               value: "-Xms128m -Xmx768m"
+            # Configure an empty workspace on first start, so the setup wizard
+            # is never open to the tailnet. Not optional: without the Secret
+            # the pod waits instead of booting unconfigured.
+            - name: CB_SERVER_NAME
+              value: homelab
+            - name: CB_ADMIN_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: cloudbeaver-admin
+                  key: username
+            - name: CB_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cloudbeaver-admin
+                  key: password
           volumeMounts:
             - name: workspace
               mountPath: /opt/cloudbeaver/workspace
