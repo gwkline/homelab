@@ -147,7 +147,8 @@ spec:
           persistentVolumeClaim:
             claimName: t3state-t3code-0
   volumeClaimTemplates:
-    # Repo workspaces; disposable, they re-clone.
+    # Repo clones (they re-clone) and the agent CLIs' saved state: logins,
+    # config and the OpenCode database. Losing it logs every CLI out.
     - metadata:
         name: data
       spec:

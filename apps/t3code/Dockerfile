@@ -1,10 +1,11 @@
 FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
 
 # python3/make/g++ build node-pty (a native dep of t3) when no prebuild
-# matches the platform; g++ also links cargo builds.
+# matches the platform; g++ also links cargo builds. rsync and python3's
+# sqlite3 save agent state to the PVC (agent-state.sh).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-      git ca-certificates openssh-client python3 make g++ curl unzip \
+      git ca-certificates openssh-client python3 make g++ curl unzip rsync \
   && rm -rf /var/lib/apt/lists/*
 
 ENV RUSTUP_HOME=/usr/local/rustup \
@@ -68,6 +69,7 @@ RUN npm install -g t3@nightly \
 
 COPY apps/shared/workspace-lib.sh /usr/local/lib/workspace-lib.sh
 COPY apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
+COPY apps/t3code/agent-state.sh /usr/local/lib/agent-state.sh
 COPY apps/t3code/init-workspace.sh /usr/local/bin/init-workspace
 RUN chmod +x /usr/local/bin/init-workspace
 
