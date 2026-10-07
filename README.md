@@ -31,7 +31,7 @@ Every UI is reachable only on the tailnet, through the Tailscale operator.
 
 CI builds an image only when its inputs change: the image's directory plus whatever its Dockerfile copies. A weekly run rebuilds everything. Each build is signed with cosign and published to `ghcr.io/gwkline/homelab/<app>` as `latest` and `sha-<commit>`.
 
-Manifests reference `:latest`. Every five minutes `deploy/deployer` clones `main`, resolves each `:latest` to its current digest, and applies the homelab workloads. A merge reaches the cluster within one pass of its image build. To roll back, use `kubectl rollout undo` or revert the commit.
+Manifests reference `:latest`. Every five minutes `deploy/deployer` takes the newest `main` commit whose CI is green and pins each `:latest` to the signed build of that commit's inputs. It then dry-runs the homelab workloads through admission, applies them server-side, and waits for them to roll out ([deploy/deployer/README.md](deploy/deployer/README.md)). A merge reaches the cluster within one pass of its CI going green. To roll back, revert the commit. `kubectl rollout undo` holds only while the deployer is suspended.
 
 Third-party images and Dockerfile bases are pinned tag+digest. Downloaded tools are pinned to a version and checksum-verified.
 
