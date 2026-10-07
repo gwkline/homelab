@@ -49,7 +49,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 echo "==> installing prerequisites"
 sudo apt-get update -y
-sudo apt-get install -y curl ca-certificates git
+sudo apt-get install -y curl ca-certificates git jq
 
 # The Ubuntu installer provisions the root LV at roughly half the disk; grow it
 # to the full VG before anything lands on it. Skipped when nothing is free.
@@ -88,6 +88,30 @@ echo "==> installing /etc/rancher/k3s/config.yaml"
 sudo install -D -m 0600 -o root -g root "$REPO_DIR/bootstrap/k3s-config.yaml" /etc/rancher/k3s/config.yaml
 
 if [[ "$ROLE" == "server" ]]; then
+  # k3s-config.yaml turns on secrets-encryption. Restarting an existing
+  # server with it before `k3s secrets-encrypt enable` skips the supported
+  # migration, so stop here until that step is done.
+  if sudo test -d /var/lib/rancher/k3s/server/db &&
+    ! sudo test -f /var/lib/rancher/k3s/server/cred/encryption-config.json; then
+    echo "existing server without secrets encryption: run 'sudo k3s secrets-encrypt enable' first (docs/runbook-server-cluster.md)" >&2
+    exit 1
+  fi
+
+  sudo install -D -m 0600 -o root -g root "$REPO_DIR/bootstrap/audit-policy.yaml" /etc/rancher/k3s/audit-policy.yaml
+  sudo install -d -m 0700 -o root -g root /var/lib/rancher/k3s/server/logs
+
+  # The API certificate must name the tailnet address kubectl uses, or the
+  # kubeconfig needs insecure-skip-tls-verify. Host-specific, so not in git.
+  TS_IP="$(tailscale ip -4)"
+  TS_NAME="$(tailscale status --json --peers=false | jq -r '.Self.DNSName // "" | rtrimstr(".")')"
+  if [ -z "$TS_IP" ] || [ -z "$TS_NAME" ]; then
+    echo "cannot read the tailnet name and IP from tailscale" >&2
+    exit 1
+  fi
+  echo "==> API certificate SANs: ${TS_NAME} ${TS_IP}"
+  printf 'tls-san:\n  - %s\n  - %s\n' "$TS_NAME" "$TS_IP" |
+    sudo install -D -m 0600 -o root -g root /dev/stdin /etc/rancher/k3s/config.yaml.d/10-tailnet.yaml
+
   echo "==> installing k3s ${K3S_VERSION} (control-plane)"
   fetch_verified \
     "https://raw.githubusercontent.com/k3s-io/k3s/${K3S_VERSION}/install.sh" \
