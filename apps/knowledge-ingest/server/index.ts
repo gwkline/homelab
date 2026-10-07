@@ -1,5 +1,9 @@
 import { serve } from "@hono/node-server";
 
+import {
+  KNOWLEDGE_SCHEMA_VERSION,
+  migrateKnowledgeSchema,
+} from "../../knowledge/src/schema.ts";
 import { createApp } from "./app.ts";
 import { configFromEnv } from "./config.ts";
 import { createMemoryManifestStore } from "./git-sync.ts";
@@ -12,7 +16,6 @@ import {
   createPipelineHandler,
   pipelineConfigFromEnv,
 } from "./pipeline-worker.ts";
-import { INGEST_SCHEMA_VERSION } from "./queue.ts";
 import { startWorker } from "./worker.ts";
 
 const logger = createJsonLogger();
@@ -28,8 +31,6 @@ try {
       })
     : createMemoryIngestStore({ maxAttempts: config.worker.maxAttempts });
 
-  // The queue schema must apply before the knowledge schema: both create
-  // `ingest_job` IF NOT EXISTS, and this service's richer table must win.
   const sink =
     pool === null
       ? createMemoryPipelineSink()
@@ -46,10 +47,11 @@ try {
         {}
       );
     } else {
-      await store.applySchema();
-      logger.info("queue schema applied", { version: INGEST_SCHEMA_VERSION });
-      await (sink as PgKnowledgeSink).applySchema();
-      logger.info("knowledge schema applied", {});
+      const applied = await migrateKnowledgeSchema(pool);
+      logger.info("knowledge schema migrated", {
+        applied: applied.join(","),
+        version: KNOWLEDGE_SCHEMA_VERSION,
+      });
     }
   }
 

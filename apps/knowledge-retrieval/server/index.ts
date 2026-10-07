@@ -1,7 +1,5 @@
 import { serve } from "@hono/node-server";
 
-import { ensureBm25Schema } from "../../knowledge/src/bm25.ts";
-import { PGVECTOR_MIGRATION_SQL } from "../../knowledge/src/pgvector.ts";
 import { createApp } from "./app.ts";
 import { configFromEnv } from "./config.ts";
 import { createJsonLogger } from "./log.ts";
@@ -30,13 +28,8 @@ try {
       {}
     );
   } else {
-    if (config.applySchemaOnBoot) {
-      // Extensions are installed by the CNPG Database resource
-      // (deploy/postgres/base/databases.yaml), not here.
-      await ensureBm25Schema(pool);
-      await pool.query(PGVECTOR_MIGRATION_SQL, []);
-      logger.info("knowledge schema + channel indexes applied", {});
-    }
+    // knowledge-ingest owns migrations; the store answers 503 until the
+    // schema version this build needs is in place.
     store = new PgRetrievalStore(pool, {});
     logger.info("store ready", { backend: "postgres" });
   }

@@ -6,7 +6,6 @@
 
 import type { PgClient, PgPool } from "./pg-client.ts";
 import { withTransaction } from "./pg-client.ts";
-import { KNOWLEDGE_SCHEMA_MIGRATION_SQL } from "./schema.ts";
 
 export const PGVECTOR_TABLE = "chunks";
 export const EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5";
@@ -18,17 +17,6 @@ export const DEFAULT_NAMESPACE = "default";
 /** pgvector's built-in `hnsw.ef_search` default, pinned explicitly per query. */
 export const DEFAULT_EF_SEARCH = 40;
 export const DEFAULT_VECTOR_LIMIT = 10;
-
-export const PGVECTOR_SCHEMA_VERSION = "1-pgvector-chunks";
-
-/**
- * The knowledge schema plus this channel's HNSW index. The `vector(384)`
- * typmod pins the dimension; a different-sized model needs a new column.
- */
-export const PGVECTOR_MIGRATION_SQL = `${KNOWLEDGE_SCHEMA_MIGRATION_SQL}
-CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw
-  ON chunks USING hnsw (embedding vector_cosine_ops)
-  WHERE valid_to IS NULL AND embedding IS NOT NULL;`;
 
 export interface CitationAnchor {
   type: "offset" | "heading";
@@ -385,10 +373,6 @@ export const countChunksNeedingBackfill = async (
     throw new TypeError("pgvector: backfill count query returned no rows");
   }
   return parseBackfillCounts(namespace, embeddingModel, row);
-};
-
-export const ensurePgvectorSchema = async (client: PgClient): Promise<void> => {
-  await client.query(PGVECTOR_MIGRATION_SQL, []);
 };
 
 /** `pg` is imported lazily so offline consumers never need the driver. */
