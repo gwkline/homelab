@@ -11,7 +11,7 @@ GitHub issues are the source of truth for both work and run state. There is no f
 | CronJob | Schedule | Role |
 | --- | --- | --- |
 | `factory-collector` | `:05` hourly | Admits eligible open issues by adding `factory/queued` (`apps/factory/collector/README.md`) |
-| `factory-orchestrator` (+ `-launchpad`) | every 10 min | Claims one queued issue, spawns a worker Job from the profile, then publishes: apply patch → push branch → approval gate → draft PR |
+| `factory-orchestrator` (+ `-launchpad`) | every 10 min | Claims one queued issue, spawns a worker Job from the profile, then publishes: apply patch → push branch → draft PR |
 | `factory-reviewer` (+ `-launchpad`) | twice hourly | Nudges/labels PRs by CI and review state; squash-merges green factory PRs (`FACTORY_REVIEWER_AUTO_MERGE=true`) |
 | `factory-medic` | `:41` hourly | Repairs freshly CI-red factory PRs |
 | `factory-sweeper` | `:48` hourly | Keeps PRs from stranding (pings, fix issues, drift warnings) |
@@ -41,13 +41,11 @@ Worker pods run at the `restricted` Pod Security level.
 | --- | --- | --- |
 | `factory/queued` | collector, panel ▶, human | waiting for the orchestrator |
 | `factory/in-progress` | orchestrator | claimed; run marker posted |
-| `factory/pending-approval` | orchestrator | approval gate before the draft PR (`<!-- factory:approval:<issue>:<action> -->` record) |
 | `factory/draft-pr` | orchestrator | draft PR open; stays until merge |
 | `factory/needs-review` | reviewer | PR ready and CI green |
-| `factory/approved` | reviewer | `reviewDecision == APPROVED` and CI green |
 | `factory/failed` | orchestrator | worker failed; reclaimer may requeue |
 | `factory/stuck` | medic, reclaimer | retries exhausted; needs a human |
-| `factory/cancelled` | human | stopped |
+| `factory/cancelled` | panel cancel, human | stopped |
 
 PR `isDraft`, `reviewDecision`, and check rollup are derived state; labels remain the ledger. A merged PR closes its issue via `Closes #N`. Factory PRs merge without a human once CI is green; the trust boundary is admission (the collector's `factory` label, which only collaborators can apply).
 

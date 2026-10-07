@@ -27,10 +27,8 @@ export interface CollectorConfig {
 export const FACTORY_LIFECYCLE_LABELS: readonly string[] = [
   "factory/queued",
   "factory/in-progress",
-  "factory/pending-approval",
   "factory/draft-pr",
   "factory/needs-review",
-  "factory/approved",
   "factory/failed",
   "factory/cancelled",
   "factory/stuck",

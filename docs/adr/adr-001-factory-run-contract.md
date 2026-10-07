@@ -10,7 +10,7 @@ Constraints:
 
 - Kubernetes Jobs are the only execution primitive. No Temporal/NATS/Argo/Tekton.
 - A fine-grained PAT is acceptable initially; a GitHub App ([docs/github-app.md](../github-app.md)) replaces it without contract changes.
-- Worker PRs are always drafts, never auto-merged. CI plus review gates promotion.
+- Worker PRs open as drafts. Green CI gates promotion and merge (D7).
 
 ## Decisions
 
@@ -53,8 +53,8 @@ The patch is the diff from the clone's base commit, agent commits included. Agen
 
 ### D7. Approval points
 
-1. Automated: CI on the draft PR plus the reviewer CronJob. Draft → ready needs green CI and review approval.
-2. Human: nothing merges autonomously by default.
+1. Admission (human): only issues a collaborator labels `factory` become Runs (the collector). That label is the one human decision before a merge.
+2. Merge (automated): the reviewer CronJob flips a green draft to ready and squash-merges it once `ci` is green. There is no approval step between the worker's patch and the draft PR.
 
 ### D8–D9. HTTP/MCP surface and sequence (superseded)
 

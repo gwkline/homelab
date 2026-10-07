@@ -139,7 +139,7 @@
       "post": {
         "operationId": "factory_cancel_run",
         "summary": "Cancel a queued or in-flight factory Run",
-        "description": "Requires operator approval in Executor policy. Converges the ledger to `factory/cancelled` and stops in-flight worker Jobs. Only queued, running, or awaiting-approval Runs can be cancelled; published Runs are refused (409) — close the draft PR instead. Terminal states are final: retry instead.",
+        "description": "Requires operator approval in Executor policy. Converges the ledger to `factory/cancelled` and stops in-flight worker Jobs. Only queued or running Runs can be cancelled; published Runs are refused (409) — close the draft PR instead. Terminal states are final: retry instead.",
         "x-factory-policy": "approval-required",
         "requestBody": {
           "required": true,
@@ -227,10 +227,8 @@
         "enum": [
           "queued",
           "running",
-          "awaiting-approval",
           "published",
           "needs-review",
-          "approved",
           "failed",
           "cancelled"
         ]
