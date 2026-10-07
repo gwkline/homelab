@@ -1,3 +1,6 @@
+# Not in clusters/home: its namespaces come from the operator installs (ESO,
+# CNPG, policy-controller, tailscale), so apply it after them
+# (docs/rebuild-runbook.md).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -8,12 +11,4 @@ labels:
     includeSelectors: false
 
 resources:
-  - configmap.yaml
-  - credentials.yaml
-  - executor.yaml
-  - rbac.yaml
-  - cluster-guide.yaml
-  - skills-sync.yaml
-  - statefulset.yaml
-  - service.yaml
   - netpol.yaml

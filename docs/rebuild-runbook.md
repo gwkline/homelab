@@ -102,6 +102,12 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
 kubectl get ingress -A   # t3code-0, work-t3code-0, panel get <host>.<tailnet>.ts.net
 ```
 
+Every operator namespace now exists, so apply their default-deny ingress policies (webhook ports stay open to the API server):
+
+```sh
+kubectl apply -k deploy/operator-policies/base
+```
+
 ### 3.8 Verify
 
 ```sh

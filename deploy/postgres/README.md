@@ -29,7 +29,7 @@ Part of `clusters/home`. Standalone: `kubectl apply -k deploy/postgres/base`, th
 ## Isolation
 
 - Databases `factory` and `knowledge`, each owned by a non-superuser login role (`<app>_owner`) with no cross-grants. Superuser access is disabled; extensions are installed declaratively via the `Database` resources.
-- The `database` namespace is default-deny. Allowed in: the CNPG operator (8000/9187) and SQL clients from `agents`/`sandbox` (5432).
+- The `database` namespace is default-deny. Allowed in: the CNPG operator (8000/9187) and the SQL clients named in `allow-sql-clients` (5432): cloudbeaver, knowledge-ingest and knowledge-retrieval in `agents`.
 - Connect at `pg-primary-rw.database.svc:5432` over TLS. For `verify-full`, the CA is in Secret `pg-primary-ca`.
 
 ## Scaling
