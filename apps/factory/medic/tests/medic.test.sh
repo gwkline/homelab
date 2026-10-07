@@ -10,6 +10,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 LIB="${REPO_ROOT}/apps/factory/medic/medic-lib.sh"
 MEDIC="${REPO_ROOT}/apps/factory/medic/run-medic.sh"
+FACTORY_LIB_DIR="${REPO_ROOT}/apps/factory/lib"
+# shellcheck source=../../lib/factory.sh
+. "${FACTORY_LIB_DIR}/factory.sh"
 # shellcheck source=../medic-lib.sh
 . "${LIB}"
 

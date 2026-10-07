@@ -19,6 +19,8 @@ NUM=$NUM RUN_TS=$RUN_TS PROFILE=$PROFILE
 WORKFLOW_VERSION=$WORKFLOW_VERSION
 WORKER_IMAGE='$WORKER_IMAGE'
 timestamp() { printf '2026-09-05T00:01:00Z'; }
+FACTORY_LIB_DIR="$SCRIPT_DIR/../../lib"
+. "\$FACTORY_LIB_DIR/factory.sh"
 . "$SCRIPT_DIR/../marker.sh"
 factory_marker_body running "_Worker dispatched"
 EOF
@@ -55,6 +57,8 @@ NUM=$NUM RUN_TS=$RUN_TS PROFILE=$PROFILE
 WORKFLOW_VERSION=$WORKFLOW_VERSION
 WORKER_IMAGE='$WORKER_IMAGE'
 timestamp() { printf '2026-09-05T00:01:00Z'; }
+FACTORY_LIB_DIR="$SCRIPT_DIR/../../lib"
+. "\$FACTORY_LIB_DIR/factory.sh"
 . "$SCRIPT_DIR/../marker.sh"
 factory_marker_body failed boom 2026-09-05T00:02:00Z
 EOF
