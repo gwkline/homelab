@@ -3,16 +3,14 @@ import { test } from "node:test";
 
 import {
   BM25_INDEX_NAME,
-  BM25_MIGRATION_SQL,
   buildBm25SearchQuery,
-  ensureBm25Schema,
   parseBm25Rows,
   searchBm25,
   withBm25ClientFromEnv,
 } from "../src/bm25.ts";
 import type { Bm25SearchQuery } from "../src/bm25.ts";
 import type { PgClient } from "../src/pg-client.ts";
-import { ensurePgvectorSchema } from "../src/pgvector.ts";
+import { migrateKnowledgeSchema } from "../src/schema.ts";
 
 const stubClient = (
   rows: Record<string, unknown>[],
@@ -252,35 +250,6 @@ test("searchBm25 validates before issuing any query", async () => {
   assert.equal(calls, 0);
 });
 
-test("ensureBm25Schema runs the migration: extension, B-tree, partial bm25 index", async () => {
-  const seen: { text?: string; params?: unknown[] } = {};
-  await ensureBm25Schema(stubClient([], seen));
-  assert.ok(
-    seen.text === BM25_MIGRATION_SQL,
-    "migration runs as one idempotent script"
-  );
-  assert.ok(
-    seen.text?.includes("CREATE EXTENSION IF NOT EXISTS pg_textsearch"),
-    "migration must enable pg_textsearch"
-  );
-  assert.ok(
-    seen.text?.includes("ON chunks (namespace) WHERE valid_to IS NULL"),
-    "migration must add the B-tree supporting the namespace filter"
-  );
-  assert.ok(
-    seen.text?.includes("USING bm25 (text)"),
-    "migration must index the chunk text column"
-  );
-  assert.ok(
-    seen.text?.includes("WITH (text_config = 'english')"),
-    "migration must pin text_config english"
-  );
-  assert.ok(
-    seen.text?.includes("WHERE valid_to IS NULL"),
-    "bm25 index must be partial over live chunks so corpus statistics exclude them"
-  );
-});
-
 test("integration path requires DATABASE_URL when env is empty", async () => {
   const saved = process.env["DATABASE_URL"];
   delete process.env["DATABASE_URL"];
@@ -399,8 +368,7 @@ test(
   { skip: !hasLiveDb },
   async () => {
     await withBm25ClientFromEnv(async (client) => {
-      await ensurePgvectorSchema(client);
-      await ensureBm25Schema(client);
+      await migrateKnowledgeSchema(client);
       await seedFixture(client);
 
       // --- EXPLAIN: wide namespace uses the BM25 index -------------------

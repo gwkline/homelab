@@ -15,7 +15,6 @@ import { withTransaction } from "../../knowledge/src/pg-client.ts";
 import {
   buildChunkSupersede,
   buildDocumentTombstone,
-  ensureKnowledgeSchema,
 } from "../../knowledge/src/schema.ts";
 import type { GitManifestStore } from "./git-sync.ts";
 import type {
@@ -72,11 +71,6 @@ export class PgKnowledgeSink implements PipelineSink, GitManifestStore {
       options.config ??
       embeddingWorkerConfigFromEnv(options.env ?? process.env);
     this.log = options.log;
-  }
-
-  /** Idempotent knowledge schema; apply after the queue schema. */
-  async applySchema(): Promise<void> {
-    await ensureKnowledgeSchema(this.pool);
   }
 
   async loadManifest(sourceKey: string): Promise<GitSourceManifest> {
