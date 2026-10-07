@@ -42,7 +42,11 @@ The patch is the diff from the clone's base commit, agent commits included. Agen
 
 ### D6. Credential boundaries
 
-- Worker: no GitHub write token, no kubeconfig, netpol-restricted egress. Read-only clone; the token is unset before the agent runs.
+- Worker: the agent container holds no GitHub credential and no kubeconfig, and its egress is netpol-restricted. Unsetting a token in the entrypoint is not enough: the entrypoint is PID 1, so its initial environment stays readable in `/proc/1/environ` by the agent (same uid).
+  - The Job's `clone` initContainer (`apps/factory/worker/prepare.sh`) is the only container given the `github-token` Secret. It clones into a shared `emptyDir` through a throwaway `GIT_ASKPASS` helper, so no URL or file keeps the token, syncs the pinned private skills, and exits.
+  - The agent container refuses to start if it finds a credential beside a pre-cloned repo.
+  - The model key reaches it as a mounted file (`OPENCODE_AUTH_FILE`), not env.
+  - The clone token is still the owner's PAT; a read-only, single-repo App installation token ([docs/github-app.md](../github-app.md)) is the follow-up.
 - Publishing step: scoped token (PAT today, App installation token later), Contents + Pull requests write on allowlisted repos only.
 - Orchestrator: RBAC limited to Jobs/Pods in `sandbox`.
 - No token is ever logged or persisted outside its Secret.
