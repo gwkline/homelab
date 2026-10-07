@@ -13,7 +13,6 @@ import {
   ENQUEUE_JOB_SQL,
   FAIL_SQL,
   HEARTBEAT_SQL,
-  INGEST_SCHEMA_SQL,
   JOB_BY_ID_SQL,
   PING_SQL,
   PUBLISH_DOCUMENT_SQL,
@@ -221,11 +220,6 @@ export class PgIngestStore implements IngestStore {
   ) {
     this.client = client;
     this.defaultMaxAttempts = options.defaultMaxAttempts ?? 5;
-  }
-
-  /** Idempotent DDL for the queue tables. */
-  async applySchema(): Promise<void> {
-    await this.client.query(INGEST_SCHEMA_SQL, []);
   }
 
   async ping(): Promise<void> {

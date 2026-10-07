@@ -49,7 +49,8 @@ spec:
         - protocol: TCP
           port: 8978
 ---
-# Egress: DNS and PostgreSQL only (JDBC drivers ship in the image).
+# Egress: DNS and the CNPG primary only (JDBC drivers ship in the image).
+# kube-router filters after DNAT, so pg-primary-rw resolves to the pod.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -72,15 +73,12 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
     - to:
-        - namespaceSelector: {}
-          podSelector: {}
-      ports:
-        - { protocol: TCP, port: 5432 }
-    # Pod/service CIDRs, for CNIs that evaluate egress before DNAT.
-    - to:
-        - ipBlock:
-            cidr: 10.42.0.0/16
-        - ipBlock:
-            cidr: 10.43.0.0/16
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: database
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: pg-primary
+              cnpg.io/instanceRole: primary
       ports:
         - { protocol: TCP, port: 5432 }

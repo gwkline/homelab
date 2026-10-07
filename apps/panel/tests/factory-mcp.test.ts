@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+import { jsonAs, writeAuthDir } from "./helpers.ts";
+
 const root = path.join(import.meta.dirname, "..");
 const repoRoot = path.join(root, "..", "..");
 
@@ -18,7 +20,11 @@ const readSpec = (): {
     string,
     Record<string, { operationId?: string; "x-factory-policy"?: string }>
   >;
-  components: { schemas: Record<string, Record<string, unknown>> };
+  components: {
+    schemas: Record<string, Record<string, unknown>>;
+    securitySchemes?: Record<string, { scheme?: string; type?: string }>;
+  };
+  security?: Record<string, string[]>[];
   servers: { url: string }[];
 } =>
   JSON.parse(
@@ -76,6 +82,9 @@ test("factory OpenAPI contract: policy classes, strict bodies, no k8s surface", 
   const profile = spec.components.schemas.ProfileName;
   assert.ok(profile, "ProfileName schema exists");
   assert.deepEqual(profile.enum, ["code-pr", "security"]);
+  // Each connection authenticates with its own bearer token.
+  assert.deepEqual(spec.security, [{ panelToken: [] }]);
+  assert.equal(spec.components.securitySchemes?.panelToken?.scheme, "bearer");
   // The spec points Executor at the in-cluster panel service, not any public host.
   const [server] = spec.servers;
   assert.ok(server, "spec declares a server");
@@ -93,6 +102,21 @@ const json = (res: ServerResponse, payload: unknown): void => {
     .writeHead(200, { "content-type": "application/json" })
     .end(JSON.stringify(payload));
 };
+
+// An active sandbox Job as the Kubernetes list returns it.
+const seedJob = (
+  name: string,
+  labels: Record<string, string>,
+  env: { name: string; value: string }[] = []
+) => ({
+  metadata: {
+    creationTimestamp: new Date().toISOString(),
+    labels,
+    name,
+  },
+  spec: { template: { spec: { containers: [{ env }] } } },
+  status: { active: 1 },
+});
 
 test("factory MCP surface: denied, idempotent, and successful lifecycle", async () => {
   // ── In-memory GitHub (stateful enough for idempotency + audit checks) ──
@@ -271,27 +295,33 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
   // ── Mock Kubernetes API: cronjob template + job create/list/delete ──
   const created: Record<string, unknown>[] = [];
   const deleted: string[] = [];
+  // Issue numbers collide across repos: only the launchpad Jobs belong to
+  // launchpad runs. Worker Jobs carry their repo in env, not a label.
   const seedJobs = [
-    {
-      metadata: {
-        creationTimestamp: new Date().toISOString(),
-        labels: { "factory.gwkline.io/issue": "6" },
-        name: "factory-issue-6-old",
-      },
-      status: { active: 1 },
-    },
-    {
-      metadata: {
-        creationTimestamp: new Date().toISOString(),
-        labels: { "factory.gwkline.io/issue": "9" },
-        name: "factory-issue-9-live",
-      },
-      status: { active: 1 },
-    },
+    seedJob("factory-issue-6-old", {
+      "factory.gwkline.io/issue": "6",
+      "factory.gwkline.io/repo": "gwkline/launchpad",
+    }),
+    seedJob("factory-issue-6-homelab", {
+      "factory.gwkline.io/issue": "6",
+      "factory.gwkline.io/repo": "gwkline/homelab",
+    }),
+    seedJob("factory-issue-9-live", { "factory.gwkline.io/issue": "9" }, [
+      { name: "FACTORY_REPO", value: "gwkline/launchpad" },
+    ]),
+    seedJob("factory-issue-9-homelab", {
+      "factory.gwkline.io/issue": "9",
+      "factory.gwkline.io/repo": "gwkline/homelab",
+    }),
+    seedJob("factory-issue-9-unknown", { "factory.gwkline.io/issue": "9" }),
   ];
+  const cronJobsRead: string[] = [];
+  const deleteQueries: string[] = [];
   const k8sMock = createServer((req, res) => {
     const url = req.url ?? "";
     if (req.method === "GET" && url.includes("/cronjobs/")) {
+      cronJobsRead.push(url.split("/cronjobs/")[1] ?? "");
+      // Stale values the clone must replace rather than shadow.
       res.writeHead(200, { "content-type": "application/json" }).end(
         JSON.stringify({
           spec: {
@@ -300,7 +330,18 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
                 template: {
                   spec: {
                     containers: [
-                      { env: [{ name: "FACTORY_REPO", value: "seed" }] },
+                      {
+                        env: [
+                          { name: "FACTORY_REPO", value: "seed" },
+                          { name: "FACTORY_ISSUE", value: "0" },
+                          {
+                            name: "GH_TOKEN",
+                            valueFrom: {
+                              secretKeyRef: { key: "token", name: "gh" },
+                            },
+                          },
+                        ],
+                      },
                     ],
                   },
                 },
@@ -322,8 +363,11 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
       return;
     }
     if (req.method === "DELETE" && url.includes("/jobs/")) {
-      const name = decodeURIComponent(url.split("/jobs/")[1] ?? "");
-      deleted.push(name);
+      const target = new URL(url, "http://k8s");
+      deleted.push(
+        decodeURIComponent(target.pathname.split("/jobs/")[1] ?? "")
+      );
+      deleteQueries.push(target.search);
       res.writeHead(200).end("{}");
       return;
     }
@@ -367,6 +411,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
       FACTORY_REPO: "gwkline/launchpad",
       GH_API_BASE: `http://127.0.0.1:${ghPort}`,
       GH_TOKEN: "test-token",
+      PANEL_AUTH_DIR: writeAuthDir(),
       PANEL_K8S_BASE: `http://127.0.0.1:${k8sPort}`,
       PANEL_ROOT: stage,
       PORT: String(port),
@@ -406,7 +451,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     // ── Denied: unknown profile / repo / smuggled k8s fields ──
     const badProfile = await fetch(`${base}/api/factory/run`, {
       body: JSON.stringify({ issue: 6, profile: "bash-1" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(badProfile.status, 400);
@@ -421,7 +466,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
         issue: 6,
         serviceAccountName: "evil",
       }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(k8sSmuggle.status, 400);
@@ -432,17 +477,29 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
 
     const badRepo = await fetch(`${base}/api/factory/run`, {
       body: JSON.stringify({ issue: 6, repo: "evil/repo" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(badRepo.status, 400);
+    // A real repo without an orchestrator CronJob would sit queued forever.
+    const noOrchestrator = await fetch(`${base}/api/factory/run`, {
+      body: JSON.stringify({ issue: 6, repo: "gwkline/plantry" }),
+      headers: jsonAs(),
+      method: "POST",
+    });
+    assert.equal(noOrchestrator.status, 400);
+    assert.deepEqual(profilesBody.repos, [
+      "gwkline/homelab",
+      "gwkline/launchpad",
+    ]);
 
-    // ── Success: create run (identity from the host-side header) ──
+    // ── Success: create run (identity from the bearer token) ──
     const create = await fetch(`${base}/api/factory/run`, {
       body: JSON.stringify({ issue: 7, repo: "gwkline/launchpad" }),
       headers: {
-        "content-type": "application/json",
-        "x-factory-requested-by": "hermes",
+        ...jsonAs("hermes"),
+        // Client-set identity is ignored; the bearer token decides.
+        "x-factory-requested-by": "spoofed",
       },
       method: "POST",
     });
@@ -480,17 +537,51 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
       ])
     );
     assert.equal(env.FACTORY_TRIGGERED_BY, "hermes");
+    assert.equal(cronJobsRead.at(-1), "factory-orchestrator-launchpad");
     assert.equal(
       job.metadata.labels["factory.gwkline.io/requested-by"],
       "hermes"
     );
     assert.equal(job.metadata.labels["factory.gwkline.io/issue"], "7");
 
+    // Each repo runs from its own orchestrator, pinned to that repo; the
+    // template's stale values are replaced, not shadowed.
+    for (const [repo, cronJob] of [
+      ["gwkline/homelab", "factory-orchestrator"],
+      ["gwkline/launchpad", "factory-orchestrator-launchpad"],
+    ] as const) {
+      issue(repo, 40, []);
+      const res = await fetch(`${base}/api/factory/run`, {
+        body: JSON.stringify({ issue: 40, repo }),
+        headers: jsonAs(),
+        method: "POST",
+      });
+      assert.equal(res.status, 201, `${repo}: ${await res.clone().text()}`);
+      assert.equal(cronJobsRead.at(-1), cronJob);
+      const cloned = created.at(-1) as {
+        metadata: { labels: Record<string, string> };
+        spec: {
+          template: {
+            spec: {
+              containers: { env: { name: string; value?: string }[] }[];
+            };
+          };
+        };
+      };
+      const clonedEnv = cloned.spec.template.spec.containers[0]?.env ?? [];
+      const values = (name: string) =>
+        clonedEnv.filter((e) => e.name === name).map((e) => e.value);
+      assert.deepEqual(values("FACTORY_REPO"), [repo]);
+      assert.deepEqual(values("FACTORY_ISSUE"), ["40"]);
+      assert.ok(clonedEnv.some((e) => e.name === "GH_TOKEN"));
+      assert.equal(cloned.metadata.labels["factory.gwkline.io/repo"], repo);
+    }
+
     // ── Idempotent: same call now refused with the actionable state ──
     const jobsBefore = created.length;
     const again = await fetch(`${base}/api/factory/run`, {
       body: JSON.stringify({ issue: 7, repo: "gwkline/launchpad" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(again.status, 409);
@@ -503,16 +594,27 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
       jobsBefore,
       "no duplicate Job on idempotent refusal"
     );
-    // Direct panel call without the Executor header records as panel.
-    const selfCreate = await fetch(`${base}/api/factory/run`, {
+    // Without credentials nothing is queued.
+    const anonymous = await fetch(`${base}/api/factory/run`, {
       body: JSON.stringify({ issue: 12 }),
       headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    assert.equal(anonymous.status, 401);
+    assert.ok(
+      !findIssue("gwkline/launchpad", 12)?.labels.some(
+        (l) => l.name === "factory/queued"
+      )
+    );
+    const selfCreate = await fetch(`${base}/api/factory/run`, {
+      body: JSON.stringify({ issue: 12 }),
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(selfCreate.status, 201);
     assert.equal(
       ((await selfCreate.json()) as { requestedBy: string }).requestedBy,
-      "panel"
+      "tester"
     );
 
     // ── Get run: ledger state + audit comment parse + artifacts ──
@@ -589,8 +691,9 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     const cancel = await fetch(`${base}/api/factory/run/cancel`, {
       body: JSON.stringify({ issue: 9, repo: "gwkline/launchpad" }),
       headers: {
-        "content-type": "application/json",
-        "x-factory-requested-by": "hermes",
+        ...jsonAs("hermes"),
+        // Client-set identity is ignored; the bearer token decides.
+        "x-factory-requested-by": "spoofed",
       },
       method: "POST",
     });
@@ -604,7 +707,9 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     assert.equal(cancelBody.cancelled, true);
     assert.deepEqual(cancelBody.jobsStopped, ["factory-issue-9-live"]);
     assert.equal(cancelBody.requestedBy, "hermes");
-    assert.ok(deleted.includes("factory-issue-9-live"));
+    assert.deepEqual(deleted, ["factory-issue-9-live"]);
+    // The Job's pods go with it.
+    assert.deepEqual(deleteQueries, ["?propagationPolicy=Background"]);
     const i9 = findIssue("gwkline/launchpad", 9);
     assert.ok(i9?.labels.some((l) => l.name === "factory/cancelled"));
     assert.ok(!i9?.labels.some((l) => l.name === "factory/queued"));
@@ -614,7 +719,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     // ── Cancel refusals: published run + unknown run ──
     const cancelDone = await fetch(`${base}/api/factory/run/cancel`, {
       body: JSON.stringify({ issue: 8, repo: "gwkline/launchpad" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(cancelDone.status, 409);
@@ -624,7 +729,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     );
     const cancelNone = await fetch(`${base}/api/factory/run/cancel`, {
       body: JSON.stringify({ issue: 999, repo: "gwkline/launchpad" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(cancelNone.status, 404);
@@ -636,10 +741,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
         profile: "security",
         repo: "gwkline/launchpad",
       }),
-      headers: {
-        "content-type": "application/json",
-        "x-factory-requested-by": "t3code",
-      },
+      headers: jsonAs("t3code"),
       method: "POST",
     });
     assert.equal(retry.status, 201);
@@ -655,11 +757,14 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     );
     const retryJob = created.at(-1) as {
       metadata: { labels: Record<string, string> };
+      spec: { ttlSecondsAfterFinished?: number };
     };
     assert.equal(
       retryJob.metadata.labels["factory.gwkline.io/requested-by"],
       "t3code"
     );
+    // The mocked CronJob template has no TTL; the cloned Job still gets one.
+    assert.equal(retryJob.spec.ttlSecondsAfterFinished, 86_400);
     assert.equal(
       retryJob.metadata.labels["factory.gwkline.io/profile"],
       "security"
@@ -670,7 +775,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     );
     const retryRunning = await fetch(`${base}/api/factory/run/retry`, {
       body: JSON.stringify({ issue: 11, repo: "gwkline/launchpad" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(retryRunning.status, 409);
@@ -680,7 +785,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     );
     const retryBadProfile = await fetch(`${base}/api/factory/run/retry`, {
       body: JSON.stringify({ issue: 10, profile: "bash-1" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(retryBadProfile.status, 400);
@@ -688,13 +793,13 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     // ── Malformed bodies are denied, not crashing ──
     const badJson = await fetch(`${base}/api/factory/run/cancel`, {
       body: "not-json",
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(badJson.status, 400);
     const noIssue = await fetch(`${base}/api/factory/run/retry`, {
       body: JSON.stringify({ repo: "gwkline/launchpad" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(noIssue.status, 400);

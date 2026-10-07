@@ -1,12 +1,25 @@
 # k3s configuration, installed by bootstrap.sh as /etc/rancher/k3s/config.yaml
 # on every node. Agents ignore the server-only keys (k3s logs "Unknown flag ...
 # skipping"). Edit here and re-run bootstrap.sh; never hand-edit the node copy.
+# Host-specific values (tls-san) go in config.yaml.d/, also written by
+# bootstrap.sh.
 
 # Every LoadBalancer uses the Tailscale class, so servicelb only adds svclb
 # DaemonSet pods.
 disable:
   - traefik
   - servicelb
+
+# AES-CBC encryption of Secrets in the datastore. An existing cluster needs
+# the `k3s secrets-encrypt` steps in docs/runbook-server-cluster.md as well.
+secrets-encryption: true
+
+kube-apiserver-arg:
+  - audit-policy-file=/etc/rancher/k3s/audit-policy.yaml
+  - audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log
+  - audit-log-maxage=30
+  - audit-log-maxbackup=10
+  - audit-log-maxsize=100
 
 kubelet-arg:
   # The default image GC thresholds (85/80) sit at the eviction line, so pulls

@@ -11,7 +11,9 @@ RUN sh /usr/local/lib/install-kubectl.sh
 COPY apps/shared/install-gh.sh /usr/local/lib/install-gh.sh
 RUN sh /usr/local/lib/install-gh.sh
 
+# Shared factory shell library and label list (apps/factory/lib).
+COPY apps/factory/lib/factory.sh apps/factory/lib/labels.json /usr/local/lib/factory/
 WORKDIR /orch
-COPY apps/factory/orchestrator/run.sh apps/factory/orchestrator/approval.sh apps/factory/orchestrator/marker.sh apps/factory/orchestrator/knowledge-context.sh apps/factory/orchestrator/run-reclaimer.sh /orch/
-RUN chmod +x /orch/run.sh /orch/approval.sh /orch/knowledge-context.sh /orch/run-reclaimer.sh
+COPY apps/factory/orchestrator/run.sh apps/factory/orchestrator/marker.sh apps/factory/orchestrator/knowledge-context.sh apps/factory/orchestrator/run-reclaimer.sh apps/factory/orchestrator/worker-job.jq /orch/
+RUN chmod +x /orch/run.sh /orch/knowledge-context.sh /orch/run-reclaimer.sh
 ENTRYPOINT ["/orch/run.sh"]

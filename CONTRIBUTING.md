@@ -8,7 +8,7 @@ npm run lint && npm run format:check && npm run typecheck && npm test
 ./scripts/verify.sh    # shellcheck, manifest builds, secret scan
 ```
 
-CI runs the same checks, plus every `apps/**/tests/*.test.sh` fixture test and the panel e2e against a kind cluster.
+CI runs the same checks, plus every `apps/**/tests/*.test.sh` and `deploy/*/tests/*.test.sh` fixture test and the panel e2e against a kind cluster.
 
 ## Conventions
 

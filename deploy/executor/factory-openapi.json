@@ -3,7 +3,7 @@
   "info": {
     "title": "Factory Operations API",
     "version": "1.0.0",
-    "description": "Request and inspect software-factory Runs without Kubernetes access (ADR-003 GitHub-as-ledger). Imported into Executor (self-host MCP gateway) as an OpenAPI integration: MCP tool schemas derive from this document, so the surface agents see is exactly the surface described here. Rules the gateway enforces and callers must respect:\n\n- RunProfiles fix the execution environment (image, service account, network policy, resources). Callers provide only (repo, issue, profile); there are no Kubernetes fields or profile overrides in this API and none can be supplied.\n- Reads (list/get) are policy-allowed. Mutations (create/cancel/retry) are configured in Executor to require operator approval before they execute.\n- Caller identity travels via the `X-Factory-Requested-By` header, set host-side per MCP client connection (hermes, t3code, panel) — never as a tool argument. It is preserved into the factory audit events (Job `factory.gwkline.io/requested-by` label, FACTORY_TRIGGERED_BY env, and the run marker/audit comment on the issue).\n- All credentials (GitHub token, Kubernetes RBAC) stay host-side in Executor and the panel service. No credential is a caller input, and error responses carry actionable factory state only.",
+    "description": "Request and inspect software-factory Runs without Kubernetes access (ADR-003 GitHub-as-ledger). Imported into Executor (self-host MCP gateway) as an OpenAPI integration: MCP tool schemas derive from this document, so the surface agents see is exactly the surface described here. Rules the gateway enforces and callers must respect:\n\n- RunProfiles fix the execution environment (image, service account, network policy, resources). Callers provide only (repo, issue, profile); there are no Kubernetes fields or profile overrides in this API and none can be supplied.\n- Reads (list/get) are policy-allowed. Mutations (create/cancel/retry) are configured in Executor to require operator approval before they execute.\n- Caller identity is the bearer token each MCP client connection (hermes, t3code) sends host-side — never a tool argument. The panel maps the token to the caller's name and records that name in the factory audit events (Job `factory.gwkline.io/requested-by` label, FACTORY_TRIGGERED_BY env, and the run marker/audit comment on the issue). Mutations without a valid token are refused with 401.\n- All credentials (GitHub token, Kubernetes RBAC) stay host-side in Executor and the panel service. No credential is a caller input, and error responses carry actionable factory state only.",
     "contact": {
       "name": "homelab factory",
       "url": "https://github.com/gwkline/homelab"
@@ -15,6 +15,7 @@
       "description": "In-cluster factory API (panel). Reachable only from the Executor pod by NetworkPolicy; agents call it exclusively through the Executor MCP gateway."
     }
   ],
+  "security": [{ "panelToken": [] }],
   "paths": {
     "/api/factory/profiles": {
       "get": {
@@ -138,7 +139,7 @@
       "post": {
         "operationId": "factory_cancel_run",
         "summary": "Cancel a queued or in-flight factory Run",
-        "description": "Requires operator approval in Executor policy. Converges the ledger to `factory/cancelled` and stops in-flight worker Jobs. Only queued, running, or awaiting-approval Runs can be cancelled; published Runs are refused (409) — close the draft PR instead. Terminal states are final: retry instead.",
+        "description": "Requires operator approval in Executor policy. Converges the ledger to `factory/cancelled` and stops in-flight worker Jobs. Only queued or running Runs can be cancelled; published Runs are refused (409) — close the draft PR instead. Terminal states are final: retry instead.",
         "x-factory-policy": "approval-required",
         "requestBody": {
           "required": true,
@@ -196,6 +197,13 @@
     }
   },
   "components": {
+    "securitySchemes": {
+      "panelToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "One token per MCP client connection, from Secret panel-auth key tokens. Required on create/cancel/retry."
+      }
+    },
     "schemas": {
       "Repository": {
         "type": "string",
@@ -219,17 +227,15 @@
         "enum": [
           "queued",
           "running",
-          "awaiting-approval",
           "published",
           "needs-review",
-          "approved",
           "failed",
           "cancelled"
         ]
       },
       "RequestedBy": {
         "type": "string",
-        "description": "Caller/run identity recorded in the factory audit events. Set host-side by the Executor integration (X-Factory-Requested-By, one value per MCP client connection); it is not a caller-supplied field.",
+        "description": "Caller identity recorded in the factory audit events: the name the panel maps the connection's bearer token to. It is not a caller-supplied field.",
         "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$"
       },
       "CreateRun": {
@@ -329,7 +335,7 @@
           },
           "requestedBy": {
             "type": "string",
-            "description": "Identity recorded on the run marker comment, when the run was requested through Executor"
+            "description": "Identity recorded on the run marker comment, when the run was requested through the panel"
           },
           "jobs": {
             "type": "array",

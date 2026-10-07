@@ -11,8 +11,12 @@ spec:
     - name: http
       port: 3000
       targetPort: http
+    - name: tailnet
+      port: 3001
+      targetPort: tailnet
 ---
-# The panel reads its tailnet suffix from this Ingress's status.
+# The panel reads its tailnet suffix from this Ingress's status. It targets
+# the tailnet port, where the panel trusts Tailscale-User-Login.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -26,7 +30,7 @@ spec:
     service:
       name: panel-http
       port:
-        number: 3000
+        number: 3001
   tls:
     - hosts: [panel]
 ---
@@ -41,13 +45,20 @@ spec:
       app: panel
   policyTypes: [Ingress]
   ingress:
+    # The tailnet port takes only the panel's own Tailscale proxy, which
+    # replaces any client-sent Tailscale-User-* headers with WhoIs identity.
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: tailscale
+          podSelector:
+            matchLabels:
+              tailscale.com/parent-resource: panel
+              tailscale.com/parent-resource-ns: agents
+              tailscale.com/parent-resource-type: ingress
       ports:
         - protocol: TCP
-          port: 3000
+          port: 3001
     - from:
         - podSelector:
             matchLabels:

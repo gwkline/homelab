@@ -2,9 +2,10 @@
 // panel lists sandbox state and that its remaining write routes work as the
 // production ServiceAccount:
 //   1. GET /api/state returns the seeded Job and CronJob
-//   2. PATCH /api/cronjobs/:name suspends and resumes the seeded CronJob
-//   3. DELETE /api/jobs/:name removes the seeded Job
-//   4. POST /api/jobs no longer exists and creates nothing
+//   2. mutations without a bearer token are refused (401)
+//   3. PATCH /api/cronjobs/:name suspends and resumes the seeded CronJob
+//   4. DELETE /api/jobs/:name removes the seeded Job
+//   5. POST /api/jobs no longer exists and creates nothing
 //
 // Talks to the panel over PANEL_E2E_URL and reads live state with kubectl.
 // Standalone usage (see docs/panel-e2e.md):
@@ -20,6 +21,8 @@ const seedJob = process.env.PANEL_E2E_SEED_JOB ?? "panel-e2e-seed";
 // Seeded by scripts/panel-e2e-smoke.sh; never a production object.
 const seedCronJob = process.env.PANEL_E2E_CRONJOB ?? "panel-e2e-seed-cronjob";
 const seedSchedule = process.env.PANEL_E2E_SCHEDULE ?? "0 9 * * *";
+// A token from the panel's PANEL_AUTH_DIR tokens file.
+const token = process.env.PANEL_E2E_TOKEN ?? "";
 const skip =
   base === ""
     ? "PANEL_E2E_URL not set — run scripts/panel-e2e-smoke.sh"
@@ -54,10 +57,13 @@ const call = async (path, init) => {
   return { body, status: res.status };
 };
 
-const sendJson = (path, method, payload) =>
+const sendJson = (path, method, payload, { anonymous = false } = {}) =>
   call(path, {
     body: JSON.stringify(payload),
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(anonymous ? {} : { authorization: `Bearer ${token}` }),
+    },
     method,
   });
 
@@ -85,6 +91,19 @@ test(
   }
 );
 
+test("mutations without a bearer token are refused", { skip }, async () => {
+  const path = `/api/cronjobs/${encodeURIComponent(seedCronJob)}`;
+  const res = await sendJson(
+    path,
+    "PATCH",
+    { suspended: false },
+    { anonymous: true }
+  );
+  assert.equal(res.status, 401, `expected 401, got ${res.status} ${res.body}`);
+  const live = kubectlJson("get", "cronjob", seedCronJob, "-n", ns);
+  assert.equal(live.spec.suspend, true);
+});
+
 test(
   "PATCH /api/cronjobs/:name toggles suspend on the live CronJob",
   { skip },
@@ -102,9 +121,11 @@ test(
 );
 
 test("DELETE /api/jobs/:name removes the live Job", { skip }, async () => {
-  const res = await call(`/api/jobs/${encodeURIComponent(seedJob)}`, {
-    method: "DELETE",
-  });
+  const res = await sendJson(
+    `/api/jobs/${encodeURIComponent(seedJob)}`,
+    "DELETE",
+    {}
+  );
   assert.equal(res.status, 200, `delete failed: ${res.body}`);
   // Garbage collection finalizes the delete asynchronously.
   const deadline = Date.now() + 60_000;

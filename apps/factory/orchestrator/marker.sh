@@ -21,7 +21,7 @@ factory_marker_body() {  # <status> <extra-markdown> [<updated-ts>]
 "
   fi
   cat <<EOF
-<!-- factory:run:${NUM}:${RUN_TS} -->
+<!-- ${FACTORY_RUN_MARKER}${NUM}:${RUN_TS} -->
 ## 🏭 Factory Run
 
 | | |

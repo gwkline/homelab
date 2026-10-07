@@ -12,19 +12,18 @@ import {
   DISTANCE_OPERATOR,
   EMBEDDING_DIMENSIONS,
   EMBEDDING_MODEL,
-  ensurePgvectorSchema,
   hnswRecall,
   parseAnchors,
   parseBackfillCounts,
   parsePgvectorRows,
   PGVECTOR_EXACT_SCAN_GUARD,
-  PGVECTOR_MIGRATION_SQL,
   searchPgvector,
   searchPgvectorExact,
   toPgvectorLiteral,
   validateQueryEmbedding,
   withPgvectorClientFromEnv,
 } from "../src/pgvector.ts";
+import { migrateKnowledgeSchema } from "../src/schema.ts";
 import { fakePool } from "./fake-pool.ts";
 import type { FakePool } from "./fake-pool.ts";
 
@@ -405,34 +404,6 @@ test("parsePgvectorRows coerces missing text, parses JSON-string anchors", () =>
   });
 });
 
-test("ensurePgvectorSchema runs the migration: extension, table, hnsw index", async () => {
-  const recorded = stubClient([[]]);
-  await ensurePgvectorSchema(recorded.client);
-  assert.equal(
-    recorded.statements[0],
-    PGVECTOR_MIGRATION_SQL,
-    "migration runs as one idempotent script"
-  );
-  assert.ok(
-    PGVECTOR_MIGRATION_SQL.includes("CREATE EXTENSION IF NOT EXISTS vector"),
-    "migration must enable pgvector"
-  );
-  assert.ok(
-    PGVECTOR_MIGRATION_SQL.includes("embedding vector(384)"),
-    "migration must pin the model dimension"
-  );
-  assert.ok(
-    PGVECTOR_MIGRATION_SQL.includes("USING hnsw (embedding vector_cosine_ops)"),
-    "index operator class must match the cosine metric"
-  );
-  assert.ok(
-    PGVECTOR_MIGRATION_SQL.includes(
-      "WHERE valid_to IS NULL AND embedding IS NOT NULL"
-    ),
-    "hnsw index must be partial over live, embedded chunks"
-  );
-});
-
 test("backfill counts expose missing embeddings and model migrations", async () => {
   const built = buildBackfillCountQuery("default");
   assert.deepEqual(built.params, ["default", EMBEDDING_MODEL]);
@@ -606,7 +577,7 @@ test(
   { skip: !hasLiveDb },
   async () => {
     await withPgvectorClientFromEnv(async (client) => {
-      await ensurePgvectorSchema(client);
+      await migrateKnowledgeSchema(client);
       const namespace = "pgvector-test";
       await client.query("DELETE FROM chunks WHERE namespace = $1", [
         namespace,

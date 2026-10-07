@@ -5,7 +5,16 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { URL } from "node:url";
 
+import { UPSTREAM_TIMEOUT_MS, upstreamError } from "./upstream.js";
+
 const NS = "sandbox";
+
+// Pod env entry; valueFrom entries (secret refs) pass through clones intact.
+export interface EnvVar {
+  name: string;
+  value?: string;
+  valueFrom?: unknown;
+}
 
 // Only the fields the panel reads, all optional so every access is checked.
 export interface K8sObject {
@@ -25,7 +34,7 @@ export interface K8sObject {
     // Batch Job payloads carry their pod template here (listJobs/viewJob).
     template?: {
       spec?: {
-        containers?: { env?: { name: string; value: string }[] }[];
+        containers?: { env?: EnvVar[] }[];
       };
     };
   };
@@ -48,9 +57,10 @@ export interface K8sObject {
 
 // Spec of a k8s Job (the payload of a CronJob's jobTemplate and of createJob).
 export interface JobTemplateSpec {
+  ttlSecondsAfterFinished?: number;
   template?: {
     spec?: {
-      containers?: { env?: { name: string; value: string }[] }[];
+      containers?: { env?: EnvVar[] }[];
     };
   };
 }
@@ -109,6 +119,8 @@ const k8sFetch = <T>(
       "content-type": contentType ?? "application/json",
     },
     method,
+    // Covers the whole exchange: connect, headers, and body.
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
   };
   if (isHttps && cfg.ca) {
     opts.ca = cfg.ca;
@@ -117,10 +129,14 @@ const k8sFetch = <T>(
     opts.rejectUnauthorized = cfg.rejectUnauthorized;
   }
 
+  const call = { method, path: url.pathname };
   return new Promise<T>((resolve, reject) => {
+    const fail = (error: unknown): void =>
+      reject(upstreamError("kubernetes", call, error));
     const req = reqFn(url, opts, (res) => {
       let data = "";
       res.on("data", (c: Buffer) => (data += c.toString("utf-8")));
+      res.on("error", fail);
       res.on("end", () => {
         let json;
         try {
@@ -134,14 +150,19 @@ const k8sFetch = <T>(
             (json as { message?: string } | undefined)?.message ??
             `${status} ${res.statusMessage ?? ""}`.trim();
           reject(
-            Object.assign(new Error(message || `k8s ${status}`), { status })
+            upstreamError(
+              "kubernetes",
+              call,
+              new Error(message || `k8s ${status}`),
+              status
+            )
           );
           return;
         }
         resolve(json as T);
       });
     });
-    req.on("error", reject);
+    req.on("error", fail);
     if (body !== undefined) {
       req.write(JSON.stringify(body));
     }
@@ -157,11 +178,13 @@ export const api = (cfg: K8sConfig) => ({
       `/apis/batch/v1/namespaces/${NS}/jobs`,
       manifest
     ),
+  // batch/v1 orphans a deleted Job's pods unless told otherwise; a cancelled
+  // run must stop running.
   deleteJob: (name: string): Promise<unknown> =>
     k8sFetch<unknown>(
       cfg,
       "DELETE",
-      `/apis/batch/v1/namespaces/${NS}/jobs/${encodeURIComponent(name)}`
+      `/apis/batch/v1/namespaces/${NS}/jobs/${encodeURIComponent(name)}?propagationPolicy=Background`
     ),
   getCronJob: (name: string): Promise<K8sObject> =>
     k8sFetch<K8sObject>(

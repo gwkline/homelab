@@ -1,14 +1,49 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { serve } from "@hono/node-server";
 
-import { ensureBm25Schema } from "../../knowledge/src/bm25.ts";
-import { PGVECTOR_MIGRATION_SQL } from "../../knowledge/src/pgvector.ts";
+import { embeddingProviderFromEnv } from "../../knowledge/src/embedder.ts";
 import { createApp } from "./app.ts";
 import { configFromEnv } from "./config.ts";
 import { createJsonLogger } from "./log.ts";
 import { MemoryStore, memoryStoreFromSeedFile } from "./memory-store.ts";
+import { mismatchedChunks } from "./metrics.ts";
 import { PgRetrievalStore } from "./pg-store.ts";
 
 const logger = createJsonLogger();
+
+const EMBEDDING_CHECK_RETRY_MS = 10_000;
+
+/** Logs once whether stored vectors match the query model, after ingest migrates. */
+const reportEmbeddingModels = async (
+  store: PgRetrievalStore
+): Promise<void> => {
+  try {
+    const report = await store.embeddingReport();
+    const mismatched = mismatchedChunks(report);
+    const fields = {
+      configuredModel: report.configuredModel,
+      mismatchedChunks: mismatched,
+      storedModels: report.storedModels
+        .map((stored) => `${stored.model}=${stored.chunks}`)
+        .join(","),
+    };
+    if (mismatched > 0) {
+      logger.warn(
+        "stored vectors come from another embedding model; the vector channel ignores them until a re-embed",
+        fields
+      );
+    } else {
+      logger.info(
+        "stored vectors match the configured embedding model",
+        fields
+      );
+    }
+  } catch {
+    await sleep(EMBEDDING_CHECK_RETRY_MS);
+    await reportEmbeddingModels(store);
+  }
+};
 
 try {
   const config = configFromEnv(process.env);
@@ -30,14 +65,18 @@ try {
       {}
     );
   } else {
-    if (config.applySchemaOnBoot) {
-      // Extensions are installed by the CNPG Database resource
-      // (deploy/postgres/base/databases.yaml), not here.
-      await ensureBm25Schema(pool);
-      await pool.query(PGVECTOR_MIGRATION_SQL, []);
-      logger.info("knowledge schema + channel indexes applied", {});
+    // knowledge-ingest owns migrations; the store answers 503 until the
+    // schema version this build needs is in place.
+    const provider = embeddingProviderFromEnv(process.env);
+    const pgStore = new PgRetrievalStore(pool, { provider });
+    if (!pgStore.vectorSearch) {
+      logger.warn(
+        "no embedding provider configured; every search is served BM25-only",
+        { model: provider.model, provider: provider.name }
+      );
     }
-    store = new PgRetrievalStore(pool, {});
+    void reportEmbeddingModels(pgStore);
+    store = pgStore;
     logger.info("store ready", { backend: "postgres" });
   }
   const app = createApp({ config, logger, store });

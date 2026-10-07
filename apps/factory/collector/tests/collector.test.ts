@@ -1,8 +1,13 @@
 // Tick behavior against a fake GitHub client (no HTTP).
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { loadConfig, runIdempotencyKey } from "../config.ts";
+import {
+  FACTORY_LIFECYCLE_LABELS,
+  loadConfig,
+  runIdempotencyKey,
+} from "../config.ts";
 import type { IssueRef } from "../github-client.ts";
 import { collectTick, createTokenProvider } from "../run-collector.ts";
 import type { CollectorClient } from "../run-collector.ts";
@@ -122,6 +127,17 @@ test("closed issues, pull requests, and terminal labels are skipped", async () =
   assert.equal(result.skipped.closed, 1);
   assert.equal(result.skipped["pull-request"], 1);
   assert.equal(result.skipped["already-run"], 3);
+});
+
+test("lifecycle labels are the factory-wide list in apps/factory/lib/labels.json", () => {
+  const shared = JSON.parse(
+    readFileSync(new URL("../../lib/labels.json", import.meta.url), "utf-8")
+  ) as Record<string, string>;
+  assert.deepEqual(
+    FACTORY_LIFECYCLE_LABELS.toSorted(),
+    Object.values(shared).toSorted()
+  );
+  assert.ok(FACTORY_LIFECYCLE_LABELS.includes("factory/stuck"));
 });
 
 test("eligibility label gates admission when configured", async () => {

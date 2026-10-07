@@ -124,7 +124,6 @@ kubectl apply -k deploy/loki/base
 kubectl apply -k deploy/grafana/base      # needs Secret grafana-admin
 kubectl apply -k deploy/executor/base     # optional Secret executor-admin
 kubectl apply -k deploy/knowledge/base    # needs 1Password knowledge-db / knowledge-api-token
-kubectl apply -k deploy/cloudbeaver/base  # then ./scripts/create-cloudbeaver-secret.sh
 ```
 
 Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart && scripts/pg-smoke.sh verify`.
