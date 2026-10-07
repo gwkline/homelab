@@ -5,7 +5,8 @@
 # ad-hoc runs), list Jobs (state/run views), delete Jobs (job cleanup and
 # run cancel); get CronJobs (clone the factory-orchestrator jobTemplate),
 # list + patch CronJobs (schedules card: edit schedule, pause/resume).
-# In `agents` (dev tools health + tailnet discovery): get Services.
+# In `agents`: get Services (dev tools health) and the `panel` Ingress
+# (tailnet discovery).
 # Cluster-wide (/api/cluster): list nodes and pods. CronJob patch is the
 # documented schedules-card workflow; CronJob create/delete, pod/log
 # reads, and secrets are denied — that is the whole write surface.
@@ -51,8 +52,9 @@ subjects:
     name: panel
     namespace: agents
 ---
-# Dev tools health checks and tailnet discovery read Services here only —
-# every health entry in apps/panel/server/devtools.ts targets agents.
+# Dev tools health checks read Services here only — every health entry in
+# apps/panel/server/devtools.ts targets agents. Tailnet discovery reads the
+# panel Ingress status.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -61,6 +63,10 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["services"]
+    verbs: ["get"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    resourceNames: ["panel"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

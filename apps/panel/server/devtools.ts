@@ -116,7 +116,12 @@ export const DEV_TOOLS: ToolDef[] = [
     dependsOn: "deploy/t3code/base",
     description: "Interactive agent servers — one per replica.",
     enabled: true,
-    health: { namespace: "agents", path: "/", port: 443, service: "t3code-0" },
+    health: {
+      namespace: "agents",
+      path: "/",
+      port: 3773,
+      service: "t3code-0",
+    },
     icon: "SquareTerminal",
     name: "T3 Code",
     noEmbed: true,
@@ -158,6 +163,7 @@ export interface ToolState {
 
 // Structural subset of the panel's k8s api the evaluator needs.
 export interface DevToolsK8s {
+  getIngress: (name: string, namespace: string) => Promise<K8sObject>;
   getService: (name: string, namespace: string) => Promise<K8sObject>;
   listPodsAll: () => Promise<{ items?: K8sObject[] }>;
 }
@@ -165,8 +171,8 @@ export interface DevToolsK8s {
 // Tailnet DNS suffix, configured or discovered:
 // 1. PANEL_TAILNET_NAME env (mirrors the homepage single-source-of-truth
 //    ConfigMap value; "<tailnet>" placeholders don't count).
-// 2. Discovered from the panel's own tailscale LoadBalancer Service — its
-//    ingress hostname is panel.<tailnet>.ts.net, so the suffix falls out.
+// 2. Discovered from the panel's own Tailscale Ingress — its status
+//    hostname is panel.<tailnet>.ts.net, so the suffix falls out.
 export const discoverTailnet = async (
   env: NodeJS.ProcessEnv,
   k8s: DevToolsK8s
@@ -176,8 +182,8 @@ export const discoverTailnet = async (
     return configured;
   }
   try {
-    const svc = await k8s.getService("panel", "agents");
-    const hostname = svc?.status?.loadBalancer?.ingress?.[0]?.hostname;
+    const ing = await k8s.getIngress("panel", "agents");
+    const hostname = ing?.status?.loadBalancer?.ingress?.[0]?.hostname;
     const suffix = hostname ? hostname.split(".").slice(1).join(".") : "";
     if (suffix && suffix !== "<tailnet>") {
       return suffix;

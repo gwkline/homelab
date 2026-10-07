@@ -18,7 +18,7 @@ Tailnet-only, like every UI here:
 https://headlamp.<tailnet>.ts.net
 ```
 
-(`<tailnet>` is the DNS suffix discovered by `scripts/serve-https.sh` or set as `TAILNET_NAME` — never commit the real name; `scripts/verify.sh` rejects it. The panel's Dev Tools card links the same host with the `{tailnet}` placeholder resolved at runtime.)
+(`<tailnet>` is the tailnet DNS suffix (see `deploy/tailscale/README.md`) — never commit the real name; `scripts/verify.sh` rejects it. The panel's Dev Tools card links the same host with the `{tailnet}` placeholder resolved at runtime.)
 
 ## Security model (issue #40)
 

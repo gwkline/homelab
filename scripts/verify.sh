@@ -146,22 +146,26 @@ if ! check_cronjob_schedule_collisions deploy/factory/base; then
   fail 'factory CronJob schedule collision (deploy/factory/base)'
 fi
 
-echo '==> tailscale Services declare hostname + required tags'
-# Every LoadBalancer Service with loadBalancerClass: tailscale must declare
-# tailscale.com/hostname and tailscale.com/tags=tag:k8s-operator (issue #92).
+echo '==> tailscale exposure declares hostname + required tags'
+# Per rendered document: a LoadBalancer Service with loadBalancerClass:
+# tailscale needs tailscale.com/hostname + tailscale.com/tags=tag:k8s-operator;
+# an Ingress with ingressClassName: tailscale needs the tags annotation and a
+# tls host (its tailnet hostname).
 for d in deploy/*/base; do
   if ! kubectl kustomize "$d" | awk '
-      /^---/ { lb = 0; host = 0; tags = 0 }
+      function check() {
+        if (lb && (!host || !tags)) { print "  tailscale Service " name ": missing tailscale.com/hostname or tailscale.com/tags=tag:k8s-operator"; bad = 1 }
+        if (ing && (!tags || !tlshost)) { print "  tailscale Ingress " name ": missing tailscale.com/tags=tag:k8s-operator or spec.tls[0].hosts"; bad = 1 }
+      }
+      /^---/ { check(); lb = 0; ing = 0; host = 0; tags = 0; tlshost = 0; name = "" }
+      /^  name:/ && name == "" { name = $2 }
       /loadBalancerClass:[[:space:]]*tailscale/ { lb = 1 }
+      /ingressClassName:[[:space:]]*tailscale/ { ing = 1 }
       /tailscale\.com\/hostname:/ { host = 1 }
       /tailscale\.com\/tags:/ && /tag:k8s-operator/ { tags = 1 }
-      END {
-        if (lb && (!host || !tags)) {
-          print "  exposed Service missing tailscale.com/hostname or tailscale.com/tags=tag:k8s-operator"
-          exit 1
-        }
-      }'; then
-    fail "tailscale Service annotations: $d"
+      /^  - hosts:/ { tlshost = 1 }
+      END { check(); exit bad }'; then
+    fail "tailscale exposure annotations: $d"
   fi
 done
 

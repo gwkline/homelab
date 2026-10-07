@@ -41,7 +41,6 @@ This repository is public, so it deliberately carries **no work identifiers**: n
    kubectl apply -k deploy/work-t3code/base
    kubectl apply -k deploy/deployer             # keeps the StatefulSet on the latest image
    kubectl apply -k deploy/homepage/base        # dashboard entry
-   kubectl apply -k deploy/tailscale            # work-t3code-serve-fixer (HTTPS proxy)
    ```
 
 5. **Verify**:
@@ -50,7 +49,7 @@ This repository is public, so it deliberately carries **no work identifiers**: n
    kubectl get secretstore -n work              # onepassword Ready
    kubectl get externalsecret -n work           # work-github-token SecretSynced
    kubectl -n work rollout status statefulset work-t3code
-   kubectl get svc work-t3code-0 -n work \
+   kubectl get ingress work-t3code-0 -n work \
      -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'  # tailnet URL
    # The mounted token must NOT see personal repos (expect 404/NotFound):
    kubectl -n work exec work-t3code-0 -- \

@@ -21,7 +21,7 @@ Everything else (manifests for t3code, hermes, panel, homepage, policies, namesp
 
 ### A. Adopt now
 
-Flux (source/kustomize/helm/notification controllers) pulls this repo and reconciles every base. Wins: merge-to-deployed for **all** manifests (today only `deploy/factory/base` auto-applies), continuous drift correction + prune cluster-wide, HelmReleases with postRenderers could absorb the tailscale chart's `PROXY_TAGS` workaround and bring ESO into git. Costs: +4 controllers and CRDs as a recovery dependency; `flux bootstrap` needs a GitHub credential with repo scope on a dead-disk rebuild; debugging moves through new CRDs (`Kustomization`, `HelmRelease` status conditions) instead of `kubectl diff`; prune is dangerous on a cluster that deliberately runs out-of-band things (hermes-created Jobs, serve-fixer state).
+Flux (source/kustomize/helm/notification controllers) pulls this repo and reconciles every base. Wins: merge-to-deployed for **all** manifests (today only `deploy/factory/base` auto-applies), continuous drift correction + prune cluster-wide, HelmReleases with postRenderers could absorb the tailscale chart's `PROXY_TAGS` workaround and bring ESO into git. Costs: +4 controllers and CRDs as a recovery dependency; `flux bootstrap` needs a GitHub credential with repo scope on a dead-disk rebuild; debugging moves through new CRDs (`Kustomization`, `HelmRelease` status conditions) instead of `kubectl diff`; prune is dangerous on a cluster that deliberately runs out-of-band things (hermes-created Jobs).
 
 ### B. Defer (chosen)
 
@@ -76,7 +76,6 @@ Observed drift classes and their current remedy:
 | `deploy/factory/base` drift | reconciler CronJob | absorbed |
 | Manifest drift elsewhere (manual edits, partial applies) | `rebuild-check.sh` detects; human fixes | auto-corrected continuously + pruned |
 | Tailscale `PROXY_TAGS` env pin | documented `kubectl set env` workaround | absorbable via HelmRelease postRenderer — genuine win |
-| Tailscale serve entries pointing at dead pod IPs | serve-fixer loop (calls Tailscale API, not k8s) | **not fixed** — out-of-band API state |
 | Hermes gateway process dead inside pod | probe/restart config | **not fixed** — in-pod state |
 | Hand-made files in PVCs (sidecar `.mjs`) | initContainer copy | **not fixed** — volume state |
 

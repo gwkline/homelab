@@ -67,8 +67,7 @@ resources:
   #    Secrets
   - ../../../deploy/github-tokens/base
   # 5. tailscale stack: namespace, SecretStore, operator-oauth
-  #    ExternalSecret, t3code/panel/work serve-fixers (the operator itself
-  #    is helm, post-apply 4); the serve-fixer RBAC reaches into agents
+  #    ExternalSecret (the operator itself is helm, post-apply 4)
   - ../../../deploy/tailscale
   # 6. postgres (pg-primary): CNPG Cluster/Database CRs — requires the
   #    cnpg CRDs Established + controller Ready (pre-apply 2) and the

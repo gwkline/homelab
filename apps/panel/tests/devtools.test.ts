@@ -217,6 +217,9 @@ test("evaluateTools distinguishes healthy, unhealthy, unconfigured, and disabled
     },
   };
   const k8s = {
+    getIngress: (name: string): Promise<K8sObject> => {
+      throw notFound(name);
+    },
     getService: (name: string, ns: string): Promise<K8sObject> => {
       const svc = services[`${ns}/${name}`];
       if (!svc) {
@@ -307,7 +310,9 @@ test("evaluateTools distinguishes healthy, unhealthy, unconfigured, and disabled
 
 test("GET /api/devtools discovers the tailnet and reports catalog states", async () => {
   const mock = createServer((req, res) => {
-    if (req.url === "/api/v1/namespaces/agents/services/panel") {
+    if (
+      req.url === "/apis/networking.k8s.io/v1/namespaces/agents/ingresses/panel"
+    ) {
       res.writeHead(200, { "content-type": "application/json" }).end(
         JSON.stringify({
           metadata: { name: "panel" },

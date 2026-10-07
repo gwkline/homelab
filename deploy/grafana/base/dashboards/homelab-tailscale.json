@@ -8,7 +8,7 @@
       "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
       "id": 1,
       "options": {
-        "content": "# Tailscale operator, proxies, and serve-fixers\n\nThe **tailscale** namespace runs the Tailscale Kubernetes operator, the `ts-*` proxy StatefulSets it provisions for exposed Services, and the serve-fixer Deployments (t3code, panel, work) that re-apply `tailscale serve` when app pod IPs drift — the 502-after-rollout workaround (`deploy/tailscale/README.md`).\n\n**Datasources:** metric panels use the *Metrics datasource* variable at the top of the page — pick VictoriaMetrics (or any Prometheus-compatible datasource); it is deliberately **not pinned**. The two log panels are pinned to the provisioned Loki (`uid: loki`).",
+        "content": "# Tailscale operator and proxies\n\nThe **tailscale** namespace runs the Tailscale Kubernetes operator and the `ts-*` proxy StatefulSets it provisions for exposed Services and Ingresses (`deploy/tailscale/README.md`).\n\n**Datasources:** metric panels use the *Metrics datasource* variable at the top of the page — pick VictoriaMetrics (or any Prometheus-compatible datasource); it is deliberately **not pinned**. The two log panels are pinned to the provisioned Loki (`uid: loki`).",
         "mode": "markdown"
       },
       "title": "About this dashboard",
@@ -16,7 +16,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
-      "description": "Pods currently Running in the tailscale namespace (operator, serve-fixers, ts-* proxies).",
+      "description": "Pods currently Running in the tailscale namespace (operator, ts-* proxies).",
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 5 },
       "id": 2,
@@ -42,7 +42,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
-      "description": "Container restarts across operator, serve-fixers, and proxies in the last 24h.",
+      "description": "Container restarts across operator and proxies in the last 24h.",
       "fieldConfig": {
         "defaults": {
           "thresholds": {
@@ -144,7 +144,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
-      "description": "CPU used by each tailscale pod (operator, serve-fixers, ts-* proxies).",
+      "description": "CPU used by each tailscale pod (operator, ts-* proxies).",
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
       "id": 6,
@@ -250,7 +250,7 @@
     },
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "description": "Serve-fixer loop logs: pod-IP drift detection, tailscale serve re-applies, and the exited-nonzero retry loop.",
+      "description": "Operator logs: proxy provisioning, cert issuance, and reconcile errors.",
       "gridPos": { "h": 10, "w": 12, "x": 0, "y": 25 },
       "id": 10,
       "options": {
@@ -261,16 +261,16 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "{namespace=\"tailscale\", workload=~\".*serve-fixer.*\"}",
+          "expr": "{namespace=\"tailscale\", workload=\"operator\"}",
           "refId": "A"
         }
       ],
-      "title": "Serve-fixer activity (Loki)",
+      "title": "Operator logs (Loki)",
       "type": "logs"
     },
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "description": "Everything else in the namespace: the operator and the ts-* proxy pods.",
+      "description": "The ts-* proxy pods.",
       "gridPos": { "h": 10, "w": 12, "x": 12, "y": 25 },
       "id": 11,
       "options": {
@@ -281,11 +281,11 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "{namespace=\"tailscale\", workload!~\".*serve-fixer.*\"}",
+          "expr": "{namespace=\"tailscale\", workload!=\"operator\"}",
           "refId": "A"
         }
       ],
-      "title": "Operator + proxy logs (Loki)",
+      "title": "Proxy logs (Loki)",
       "type": "logs"
     }
   ],

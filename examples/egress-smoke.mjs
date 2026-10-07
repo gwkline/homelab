@@ -123,9 +123,9 @@ const tcpSpecs = [
   },
   {
     expect: "closed",
-    host: "panel.agents.svc.cluster.local",
+    host: "panel-http.agents.svc.cluster.local",
     name: "panel service (agents ns) blocked",
-    port: 443,
+    port: 3000,
   },
   { expect: "closed", host: lanHost, name: "LAN target blocked", port: 443 },
 ];

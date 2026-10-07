@@ -227,7 +227,7 @@ kubectl get svc homepage -n agents   # tailnet hostname
 **panel** (factory control panel):
 
 ```sh
-kubectl get svc panel -n agents      # tailnet hostname
+kubectl get ingress panel -n agents  # tailnet hostname
 # open it: launch runs, watch jobs. Set your tailnet in
 # deploy/homepage/base/configmap.yaml to link it from the dashboard
 ```
