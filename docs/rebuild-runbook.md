@@ -42,6 +42,8 @@ git clone https://github.com/gwkline/homelab.git && cd homelab
 
 Fetch the kubeconfig to the driver ([runbook-server-cluster.md](runbook-server-cluster.md) step 4) and confirm `kubectl get nodes` is Ready. Join agent nodes now or later.
 
+The server must come back on the address in `clusters/home/node/node.yaml` (its DHCP reservation). Otherwise update that file before the core set, or the API allowances in the NetworkPolicies point at the old address: `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes` shows the live one. `scripts/rebuild-check.sh` (3.8) compares them.
+
 ### 3.2 External Secrets Operator
 
 Server-side apply (two CRDs exceed the client-side annotation limit):

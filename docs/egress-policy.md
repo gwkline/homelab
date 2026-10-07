@@ -17,10 +17,10 @@ Ingress is default-deny in `agents`, `sandbox`, `work`, `database`, the operator
 
 | Workload | Allowed egress | Where |
 | --- | --- | --- |
-| Headlamp | DNS + Kubernetes API | `deploy/headlamp/base/netpol.yaml` |
-| hermes, t3code | DNS, Kubernetes API, Executor, knowledge retrieval, public internet (any port) | `deploy/hermes/base/netpol.yaml`, `deploy/t3code/base/netpol.yaml` |
+| Headlamp | DNS + Kubernetes API | `deploy/headlamp/base/netpol.yaml`, `headlamp-kube-api` in `deploy/policies/base/kube-api-egress.yaml` |
+| hermes, t3code | DNS, Kubernetes API, Executor, knowledge retrieval, public internet (any port) | `deploy/hermes/base/netpol.yaml`, `deploy/t3code/base/netpol.yaml`, `hermes-kube-api`/`t3code-kube-api` in `deploy/policies/base/kube-api-egress.yaml` |
 | Grafana, CloudBeaver, knowledge, Executor | Their own allowlists | beside each workload |
-| CNPG instances | DNS, Kubernetes API, peers on 5432 | `allow-instance-egress` in `deploy/postgres/base/netpol.yaml` |
+| CNPG instances | DNS, Kubernetes API, peers on 5432 | `allow-instance-egress` in `deploy/postgres/base/netpol.yaml`, `pg-primary-kube-api` in `deploy/policies/base/kube-api-egress.yaml` |
 | Factory loops and workers | kube-dns, then TCP 443 to the public internet minus private ranges, one policy per `factory.gwkline.io/profile` label. The orchestrator adds the API server node endpoint and knowledge retrieval | `allow-factory-*` beside each component in `deploy/factory/base/` |
 
 ## Required destinations
@@ -37,5 +37,5 @@ A sandbox pod must reach DNS, GitHub (git, codeload, API), a package registry, a
 
 - **Public-internet-minus-private-ranges, not SaaS IP lists:** SaaS IPs change without notice and a stale allowlist is an outage. If a destination can't be expressed this way, add an egress proxy rather than widening the netpol. `scripts/verify.sh` rejects any `ipBlock` CIDR under `deploy/` other than `0.0.0.0/0` and private/special ranges.
 - **Factory workers reach any public HTTPS host** until a domain-allowlisting egress proxy (GitHub, the model provider, npm, PyPI, crates.io) replaces the CIDR rule.
-- **Kubernetes API by node endpoint:** policy matches after DNAT, so an allowance for the Service VIP (`10.43.0.1`) never matches; allow `192.168.1.2:6443` instead.
+- **Kubernetes API by node endpoint:** policy matches after DNAT, so an allowance for the Service VIP (`10.43.0.1`) never matches; allow the node's `:6443` instead. The node IP lives only in `clusters/home/node/node.yaml`. API allowances go in `deploy/policies/base/kube-api-egress.yaml` with the label `homelab.gwkline.io/kube-api-egress: "true"`, and kustomize writes the IP in.
 - **`agents` has a baseline, not default-deny:** most of its workloads need only in-cluster services and the internet, which the baseline covers. Interactive agents (hermes, t3code) and anything holding credentials for an internal target get a per-workload allowlist and are listed out of `agents-egress-default`.
