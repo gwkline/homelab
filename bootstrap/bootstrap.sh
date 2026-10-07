@@ -46,6 +46,17 @@ echo "==> installing prerequisites"
 sudo apt-get update -y
 sudo apt-get install -y curl ca-certificates git
 
+# The Ubuntu installer provisions the root LV at roughly half the disk; grow it
+# to the full VG before anything lands on it. Skipped when nothing is free.
+VFREE_KB="$(sudo vgs --noheadings --units k -o vg_free 2>/dev/null | tr -dc 0-9 || echo 0)"
+if [ "${VFREE_KB:-0}" -gt 1048576 ]; then
+  echo "==> growing root LV into ${VFREE_KB} KiB of free VG space"
+  sudo lvextend -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
+  sudo resize2fs /dev/ubuntu-vg/ubuntu-lv
+else
+  echo "==> root LV: no meaningful VG free space (${VFREE_KB} KiB); skipping growth"
+fi
+
 echo "==> installing tailscale ${TAILSCALE_VERSION}"
 fetch_verified \
   "https://raw.githubusercontent.com/tailscale/tailscale/v${TAILSCALE_VERSION}/scripts/installer.sh" \
@@ -57,6 +68,14 @@ sudo tailscale up --ssh
 echo "==> disabling sleep (agent host must stay awake)"
 sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 
+# kubelet image GC: default thresholds (85/80) sit exactly at the eviction
+# line, so image pulls raced node eviction on a full disk. Start GC at 70%
+# used, stop at 50%.
+KUBELET_ARGS=(
+  --kubelet-arg=image-gc-high-threshold=70
+  --kubelet-arg=image-gc-low-threshold=50
+)
+
 if [[ "$ROLE" == "server" ]]; then
   echo "==> installing k3s ${K3S_VERSION} (control-plane)"
   fetch_verified \
@@ -66,7 +85,7 @@ if [[ "$ROLE" == "server" ]]; then
   # kubeconfig stays root-only (600); fetch it from your laptop with:
   #   ssh <user>@<node-ip> sudo cat /etc/rancher/k3s/k3s.yaml
   INSTALL_K3S_VERSION="$K3S_VERSION" sh "$TMP_DIR/k3s-install.sh" server \
-    --disable traefik
+    --disable traefik "${KUBELET_ARGS[@]}"
   echo "==> kubeconfig: /etc/rancher/k3s/k3s.yaml"
   echo "==> node token: /var/lib/rancher/k3s/server/node-token"
 elif [[ "$ROLE" == "agent" ]]; then
@@ -79,7 +98,7 @@ elif [[ "$ROLE" == "agent" ]]; then
     "$TMP_DIR/k3s-install.sh"
   echo "==> joining cluster at ${SERVER_IP}"
   K3S_URL="https://${SERVER_IP}:6443" K3S_TOKEN="$TOKEN" \
-    INSTALL_K3S_VERSION="$K3S_VERSION" sh "$TMP_DIR/k3s-install.sh" agent
+    INSTALL_K3S_VERSION="$K3S_VERSION" sh "$TMP_DIR/k3s-install.sh" agent "${KUBELET_ARGS[@]}"
 else
   echo "unknown role: $ROLE" >&2
   exit 1

@@ -1,0 +1,13 @@
+# Gitleaks config for the CI history scan (ci.yaml `validate` job). The scan
+# walks the first-parent mainline only, so stale feature-branch fixtures can
+# never poison the gate. Working-tree patterns are checked separately by
+# scripts/verify.sh.
+
+title = "homelab gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic fixtures that must contain real-shaped tokens"
+paths = ['''^apps/factory/github-app/tests/token-service\.test\.ts$''']

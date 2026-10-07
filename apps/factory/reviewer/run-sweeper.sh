@@ -7,7 +7,8 @@
 #   ----------------------  ----------------------------------------------
 #   factory:sweep:filed:<n> fix issue already filed for PR #n (idempotency)
 #   factory:sweep:drift:<n> rebase-warning comment (edited in place)
-#   factory:medic:retry:<i> medic retry markers (counted vs max)
+#   factory:medic:<sha>:failed medic failure markers for the PR head sha
+#                          (the medic's per-head retry budget, counted vs max)
 #
 # Decision per open factory PR (head branch factory/issue-<N>/...; drafts skipped):
 #   green + awaiting human, age < PING_AFTER_H  → no action
@@ -37,7 +38,12 @@ LABEL_QUEUED="factory/queued"
 LABEL_STUCK="factory/stuck"
 MARKER_FILED="factory:sweep:filed:"
 MARKER_DRIFT="factory:sweep:drift:"
-MARKER_MEDIC="factory:medic:retry:"
+# The medic writes one '<!-- factory:medic:<head-sha>:failed -->' comment per
+# failed attempt (apps/factory/medic/medic-lib.sh); count the ones for the
+# CURRENT head sha so this matches the medic's own retry budget.
+medic_marker() { # $1 = head sha
+  printf 'factory:medic:%s:failed' "${1:?head sha}"
+}
 
 gh() {
   if command -v timeout >/dev/null 2>&1; then
@@ -67,13 +73,14 @@ except Exception:
 }
 
 # One read of the PR's comments, reduced to the sweep markers:
-# "<filed true|false> <drift_comment_id|-> <medic_retries>". 2 = read failure.
+# "<filed true|false> <drift_comment_id|-> <medic_failures_for_head>".
+# 2 = read failure. $3 = PR head sha (scopes the medic retry count).
 pr_markers() {
   _pm_file="$(mktemp)"
   if ! gh api "repos/$1/issues/$2/comments?per_page=100" > "$_pm_file" 2>/dev/null; then
     rm -f "$_pm_file"; return 2
   fi
-  if ! _pm_out="$(jq -r --arg m1 "$MARKER_FILED" --arg m2 "$MARKER_DRIFT" --arg m3 "$MARKER_MEDIC" '
+  if ! _pm_out="$(jq -r --arg m1 "$MARKER_FILED" --arg m2 "$MARKER_DRIFT" --arg m3 "$(medic_marker "${3:-}")" '
     [ ([.[] | (.body // "") | contains($m1)] | any),
       ([.[] | select((.body // "") | contains($m2))][0].id // "-"),
       ([.[] | (.body // "" | (split($m3) | length - 1))] | add // 0)
@@ -281,7 +288,7 @@ for repo in $REPOS; do
       continue
     fi
 
-    if ! MARKERS="$(pr_markers "$repo" "$NUM")"; then
+    if ! MARKERS="$(pr_markers "$repo" "$NUM" "$HEAD_SHA")"; then
       echo "[sweeper] skip ${repo}#${NUM}: comment read failed" >&2
       continue
     fi

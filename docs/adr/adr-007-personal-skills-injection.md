@@ -1,6 +1,6 @@
 # ADR-007: Personal-skills repository and injection contract
 
-**Status:** Accepted — implementation pending (the private skills repo exists; no workload consumes it yet) **Deciders:** Gavin Kline
+**Status:** Accepted — the private skills repo is `gwkline/.dotfiles`, consumed by hermes, t3code, and factory workers via `apps/shared/skills-lib.sh` (pinned ref + path allowlist + secret scan, deployed and verified in production). The generic multi-harness installer below remains implemented and fixture-tested for harnesses that need adapter formats (cursor, codex), but is not yet wired to a live consumer. **Deciders:** Gavin Kline
 
 ## Context
 
@@ -14,7 +14,7 @@ Constraints: personal content stays private; one skill reaches every harness wit
 
 ### D1. Repository
 
-One private repository (installer default `https://github.com/gwkline/.agent-skills`, override with `SKILLS_SOURCE`). `examples/personal-skills-fixture/` in this repo is the seed and the CI fixture. Nothing in `deploy/` references the private repo until a consumer is wired (D10).
+One private repository: `https://github.com/gwkline/.dotfiles` (the personal-skills repo this ADR originally sketched as `.agent-skills` was never created; `.dotfiles` is the source of truth). Its layout is `skills/<category>/<skill>/SKILL.md` with no `skills.yaml` registry — the deployed consumers (`apps/shared/skills-lib.sh`, wired in `deploy/hermes/base/skills-sync.yaml` and `deploy/t3code/base/skills-sync.yaml`) pin a ref and gate by `SKILLS_ALLOWLIST` path list. `examples/personal-skills-fixture/` in this repo is the seed and the CI fixture for the generic installer path.
 
 ### D2. Format
 

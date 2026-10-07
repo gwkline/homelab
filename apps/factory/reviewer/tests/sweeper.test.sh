@@ -241,10 +241,11 @@ echo '[]' > "${FIXD}/reviews-21.json"
 echo '[]' > "${FIXD}/reviews-22.json"
 echo '[]' > "${FIXD}/reviews-23.json"
 cat > "${FIXD}/comments-23.json" << 'EOF'
-[{"id":1,"body":"<!-- factory:medic:retry:1 --> re-ran checks"},
- {"id":2,"body":"<!-- factory:medic:retry:2 --> re-ran checks"},
- {"id":3,"body":"<!-- factory:medic:retry:3 --> re-ran checks"},
- {"id":4,"body":"<!-- factory:medic:retry:4 --> re-ran checks, giving up"}]
+[{"id":1,"body":"<!-- factory:medic:head23:failed --> fix attempt 1 failed"},
+ {"id":2,"body":"<!-- factory:medic:head23:failed --> fix attempt 2 failed"},
+ {"id":3,"body":"<!-- factory:medic:head23:failed --> fix attempt 3 failed"},
+ {"id":4,"body":"<!-- factory:medic:head23:failed --> fix attempt 4 failed, giving up"},
+ {"id":5,"body":"<!-- factory:medic:olddigest:failed --> stale marker from a previous head sha (must not count)"}]
 EOF
 echo '[]' > "${FIXD}/comments-21.json"
 echo '[]' > "${FIXD}/comments-22.json"

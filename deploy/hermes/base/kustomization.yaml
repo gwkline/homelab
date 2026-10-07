@@ -9,6 +9,7 @@ labels:
 
 resources:
   - configmap.yaml
+  - credentials.yaml
   - executor.yaml
   - rbac.yaml
   - cluster-guide.yaml

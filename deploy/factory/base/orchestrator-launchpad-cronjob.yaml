@@ -48,7 +48,7 @@ spec:
                 - name: KNOWLEDGE_TOKEN_FILE
                   value: /secrets-knowledge/token
                 - name: KNOWLEDGE_NAMESPACE
-                  value: homelab-docs
+                  value: launchpad-docs
                 - name: WORKER_CMD
                   value: "opencode run"
                 - name: GH_TOKEN
