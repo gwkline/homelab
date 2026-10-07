@@ -42,8 +42,9 @@ spec:
         - ipBlock: { cidr: 185.199.108.0/22 } # objects.githubusercontent (fastly)
     - to: # container registries (npm, ghcr, crates.io)
         - ipBlock: { cidr: 104.16.0.0/12 }
-        - ipBlock: { cidr: 18.214.0.0/16 } # index.crates.io
-        - ipBlock: { cidr: 108.138.128.0/17 } # static.crates.io CDN
+        - ipBlock: { cidr: 18.214.0.0/16 } # index.crates.io (legacy)
+        - ipBlock: { cidr: 108.138.128.0/17 } # static.crates.io CDN (legacy)
+        - ipBlock: { cidr: 151.101.0.0/16 } # fastly: index/static.crates.io today
     - ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
     - to:
         - ipBlock: { cidr: 10.43.0.1/32 }

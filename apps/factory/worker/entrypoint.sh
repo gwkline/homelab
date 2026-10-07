@@ -168,12 +168,17 @@ except json.JSONDecodeError:
   export OPENROUTER_API_KEY
 
   # Pin openrouter as the only provider. WORKER_MODEL is recorded in the run
-  # report and marker so outcomes are attributable per model.
-  WORKER_MODEL="openrouter/stealth/union-alpha"
+  # report and marker so outcomes are attributable per model. The union-alpha
+  # trial model was removed upstream (HTTP 400 "not a valid model ID" on every
+  # run) — reverted to the documented glm-5.3-flash baseline (#238).
+  WORKER_MODEL="openrouter/z-ai/glm-5.3-flash"
   export WORKER_MODEL
+  # Unquoted heredoc (WORKER_MODEL must expand): escape the literal JSON $schema
+  # key or dash with `set -u` dies with `schema: parameter not set` before the
+  # agent ever starts.
   cat > "${OC_CONFIG_FILE}" <<OCEOF
 {
-  "$schema": "https://opencode.ai/config.json",
+  "\$schema": "https://opencode.ai/config.json",
   "provider": {
     "openrouter": {
       "npm": "@openrouter/ai-sdk-provider",
