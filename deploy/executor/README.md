@@ -30,7 +30,7 @@ Clients authenticate with an API key minted in the web console. Register t3code 
 The panel serves the factory API (`factory-openapi.json`), and the netpols make Executor its only caller, so agents can't get around the approval policies. One-time setup in the web console:
 
 1. Import `deploy/executor/factory-openapi.json` as an OpenAPI integration named `factory`, keeping the default base URL (`http://panel-http.agents.svc:3000`).
-2. Create one connection per client (`hermes`, `t3code`), each with the host-side header `X-Factory-Requested-By: <client-id>` so audit events record who asked.
+2. Create one connection per client (`hermes`, `t3code`), each with its own bearer token from the `tokens` field of 1Password item `panel-auth` (`<client-id>=<token>`). The panel records that client id as "requested by" and refuses mutations without a valid token.
 3. Set the policies:
 
 | Tool | Policy |
