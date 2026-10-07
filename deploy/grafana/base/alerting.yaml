@@ -5,13 +5,10 @@
 # Mounted as a provisioning file at
 # /etc/grafana/provisioning/alerting/homelab-alerts.yaml (see deployment.yaml).
 #
-# The four alert families the issue requires — disk pressure, failed
-# backups, unavailable core workloads, repeated Job failures — plus PVC
-# near-full as the early-warning form of disk pressure:
+# Alert rules:
 #
 #   homelab-node-disk-pressure       kubelet reports DiskPressure=True
 #   homelab-pvc-nearly-full          >90% of a PVC's capacity consumed
-#   homelab-backup-failed            a restic-backup Job failed in 24h
 #   homelab-deployment-unavailable   an agents Deployment under-replicated
 #   homelab-statefulset-unavailable  an agents StatefulSet not fully ready
 #   homelab-jobs-repeatedly-failing  >=3 failed Jobs per namespace/24h
@@ -122,58 +119,6 @@ data:
                         params:
                           - 0.1
                         type: lt
-                      operator:
-                        type: and
-                      query:
-                        params:
-                          - A
-                      reducer:
-                        params: []
-                        type: last
-                      type: threshold
-                  datasource:
-                    type: __expr__
-                    uid: __expr__
-                  expression: A
-                  intervalMs: 1000
-                  maxDataPoints: 43200
-                  reducer: last
-                  type: threshold
-          - uid: homelab-backup-failed
-            title: Nightly backup failed
-            condition: C
-            noDataState: OK
-            execErrState: Error
-            annotations:
-              summary: 'restic-backup Job {{ $labels.job_name }} failed within the last 24h — the durable copies of t3code/hermes state are aging. Check the Job logs in Grafana Explore.'
-            labels:
-              severity: critical
-            data:
-              - refId: A
-                relativeTimeRange:
-                  from: 86400
-                  to: 0
-                datasourceUid: victoriametrics
-                model:
-                  datasource:
-                    type: prometheus
-                    uid: victoriametrics
-                  editorMode: code
-                  expr: 'sum by (job_name) (increase(kube_job_status_failed{namespace="agents",job_name=~"restic-backup.*"}[24h]))'
-                  instant: true
-                  intervalMs: 1000
-                  legendFormat: __auto
-                  maxDataPoints: 43200
-                  range: false
-                  refId: A
-              - refId: C
-                datasourceUid: __expr__
-                model:
-                  conditions:
-                    - evaluator:
-                        params:
-                          - 0
-                        type: gt
                       operator:
                         type: and
                       query:

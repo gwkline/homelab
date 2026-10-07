@@ -53,24 +53,15 @@ Alert rules (provisioned from `deploy/grafana/base/alerting.yaml`, evaluated by 
 | --- | --- |
 | `homelab-node-disk-pressure` | a node reports `DiskPressure=True` for 10m |
 | `homelab-pvc-nearly-full` | a PVC is >90% full for 30m |
-| `homelab-backup-failed` | a `restic-backup` Job failed in the last 24h |
 | `homelab-deployment-unavailable` | an agents Deployment is under-replicated 5m |
 | `homelab-statefulset-unavailable` | an agents StatefulSet is not fully ready 5m |
 | `homelab-jobs-repeatedly-failing` | ≥3 failed Jobs per namespace in 24h |
 
 States are visible in Grafana's Alerting UI; notification routing is deliberately not configured yet (nothing here pages at 2 a.m., ADR D7) — wire a contact point in Grafana when that changes.
 
-## Verification
-
-```sh
-scripts/metrics-smoke.sh
-```
-
-creates three controlled failing Jobs and a 500m CPU-load pod in `sandbox`, then proves via the VM query API that `kube_job_status_failed`, the load pod's `container_cpu_usage_seconds_total`, `kubelet_volume_stats_*`, and the kube-state-metrics target all appear — and that the failed-Job count crosses the alert threshold (`kube_job_status_failed` is a per-Job 0/1 gauge, so the count comes from Jobs, not pod attempts). Expected alert/dashboard effects: "Failed Jobs (24h)" ≥ 3, the load pod's core on the Nodes dashboard's CPU panel, and `homelab-jobs-repeatedly-failing` going Pending → Firing in Grafana's Alerting UI within ~2 evaluation intervals. Clean up is automatic (`--keep` leaves the fixtures).
-
 ## Recovery
 
-Everything that matters is declarative and in git: scrape config, dashboards, datasources, alert rules, RBAC. A rebuilt node re-applies both kustomize dirs and the stack reappears. The VM PVC (like the Loki PVC and Grafana's SQLite) is **disposable telemetry, deliberately not backed up** (ADR D6): retention is the recovery plan, so do not add these PVCs to the nightly restic set without revisiting the ADR. Dashboards/datasources are re-provisioned on restart; only the `grafana-admin` Secret is hand-created (one command above).
+Everything that matters is declarative and in git: scrape config, dashboards, datasources, alert rules, RBAC. A rebuilt node re-applies both kustomize dirs and the stack reappears. The VM PVC (like the Loki PVC and Grafana's SQLite) is **disposable telemetry, deliberately not backed up** (ADR D6): retention is the recovery plan, and nothing in the cluster is backed up. Dashboards/datasources are re-provisioned on restart; only the `grafana-admin` Secret is hand-created (one command above).
 
 ## Version pins
 

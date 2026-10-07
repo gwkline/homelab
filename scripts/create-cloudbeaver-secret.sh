@@ -33,7 +33,7 @@ fi
 
 [ -n "${DB_PASSWORD:-}" ] || { echo "empty password" >&2; exit 1; }
 
-# Exact bytes via a temp file, like create-github-secret.sh - the password
+# Exact bytes via a temp file - the password
 # must not appear in the process list.
 pw_file=$(mktemp)
 trap 'rm -f "$pw_file"' EXIT

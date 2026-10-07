@@ -2,7 +2,7 @@
 
 **Status:** Implemented (2026-10-06; Accepted 2026-09-02) **Deciders:** Gavin Kline, ox-alpha **Implements:** #51 · **Blocks:** #60, #62
 
-**What shipped (D14 map):** 1 — schema (`src/schema.ts`, #56); 2 — ingest worker (`src/ingest.ts`, #57); 3a/3b — BM25 (`src/bm25.ts`, #60) and pgvector (`src/pgvector.ts`, #62) channels; 4 — HTTP surface (`apps/knowledge-retrieval`); 5 — eval harness against both channels. The service layer landed with the vertical completion: `apps/knowledge-ingest` runs the real pipeline (queue contracts + git-source sync + `processDocumentVersion`) and `apps/knowledge-retrieval` runs the Postgres store + RRF fusion with the sources/sync passthrough; both deploy from `deploy/knowledge/base` (see its README for the image-pin bootstrap), and `apps/knowledge-mcp` is the local stdio adapter. Still deferred by design: 6 — lifecycle (tombstone API surfaced; the GC job and re-embed backfill runner are follow-ups), 7 — graph (gated on D12's multi-hop eval gap).
+**What shipped (D14 map):** 1 — schema (`src/schema.ts`, #56); 2 — ingest worker (`src/ingest.ts`, #57); 3a/3b — BM25 (`src/bm25.ts`, #60) and pgvector (`src/pgvector.ts`, #62) channels; 4 — HTTP surface (`apps/knowledge-retrieval`); 5 — eval harness against both channels. The service layer landed with the vertical completion: `apps/knowledge-ingest` runs the real pipeline (queue contracts + git-source sync + `processDocumentVersion`) and `apps/knowledge-retrieval` runs the Postgres store + RRF fusion with the sources/sync passthrough; both deploy from `deploy/knowledge/base` (see its README for the image-pin bootstrap), and `apps/knowledge-mcp` was the local stdio adapter (since removed). Still deferred by design: 6 — lifecycle (tombstone API surfaced; the GC job and re-embed backfill runner are follow-ups), 7 — graph (gated on D12's multi-hop eval gap).
 
 ## Context
 
@@ -74,7 +74,7 @@ Provenance is not a separate table in phase one: a chunk's provenance **is** its
 
 ### D4. Raw-object storage
 
-Raw bytes (original files/HTML) go to the panel PVC: `/data/knowledge-raw/<namespace>/<sha256>` — the same pattern as factory artifacts (ADR-001 D2). Postgres stores extracted text only. `storage_path` is opaque; migrating to S3 later is additive. Nightly restic covers the PVC once the path is added to its backup set.
+Raw bytes (original files/HTML) go to the panel PVC: `/data/knowledge-raw/<namespace>/<sha256>` — the same pattern as factory artifacts (ADR-001 D2). Postgres stores extracted text only. `storage_path` is opaque; migrating to S3 later is additive. Nightly restic covers the PVC once the path is added to its backup set (restic has since been removed; nothing is backed up).
 
 ### D5. Ingestion queue
 

@@ -14,8 +14,6 @@
 #   - Egress is public-internet-only at the namespace level
 #     (deploy/policies/base): GitHub/npm/model APIs yes; Kubernetes API,
 #     LAN, tailnet, and every other homelab service no.
-#   - Work PVCs are deliberately absent from deploy/backup/base — work code
-#     and work credentials never land in the personal restic/B2 backups.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -98,10 +96,7 @@ spec:
             - name: data
               mountPath: /data
             # t3code state (environment-id, pairings, sessions, agent creds).
-            # Standalone PVC declared in t3state-pvc.yaml — deliberately NOT
-            # backed up by deploy/backup/base (work credentials stay out of
-            # the personal B2 bucket; a lost node means re-pairing the
-            # browser session and re-logging the CLIs, not data loss).
+            # Standalone PVC declared in t3state-pvc.yaml.
             - name: t3state
               mountPath: /home/node/.t3
             - name: work-github-token

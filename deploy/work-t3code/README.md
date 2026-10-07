@@ -13,7 +13,7 @@ This repository is public, so it deliberately carries **no work identifiers**: n
 | Network | The `work` namespace is default-deny ingress AND egress. Egress is DNS + public internet only — the Kubernetes API, LAN, tailnet, and every other homelab service are carved out (see `deploy/policies/base/networkpolicy.yaml`, `work-egress-public-only`). Work code can clone/push GitHub and install packages; it cannot touch the personal stack even if compromised. |
 | Personal skills | No skills-sync init container: private personal skills (`.dotfiles`) are authenticated by the personal read token, which this pod does not have — and personal skills stay out of work sessions by design. |
 | Factory tooling | No Executor MCP registration: the work runner cannot request factory runs on the personal cluster. |
-| Backups | Work PVCs (`data-work-t3code-0`, `t3state-work-t3code-0`) are deliberately **not** in `deploy/backup/base` — work code and credentials never land in the personal restic/B2 bucket. Trade-off: a lost node means re-pairing the browser session and re-logging the CLIs; repos just re-clone. |
+| Backups | Work PVCs (`data-work-t3code-0`, `t3state-work-t3code-0`) are not backed up (nothing in the cluster is). Trade-off: a lost node means re-pairing the browser session and re-logging the CLIs; repos just re-clone. |
 | Exposure | Only the Tailscale operator proxy and the Homepage siteMonitor can reach it (`netpol.yaml`). URL: `https://work-t3code-0.<tailnet>.ts.net`. |
 
 ## One-time bootstrap

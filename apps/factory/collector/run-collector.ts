@@ -1,8 +1,5 @@
-// Durable GitHub issue collector (#78, ADR-002 GitHub-as-ledger).
-//
-// Replaces the demo dispatcher (examples/dispatch-watcher.mjs +
-// deploy/dispatcher/base): GitHub issues are the primary work generator, not
-// shell commands embedded in CronJob configuration.
+// Durable GitHub issue collector: open issues become factory Runs, with
+// GitHub labels as the ledger.
 //
 // One tick:
 //   1. Load declarative config (repos, eligibility label/status, default

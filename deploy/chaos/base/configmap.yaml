@@ -19,7 +19,7 @@ data:
     # controller replaces it and the replacement goes Ready. Targets are
     # Running+Ready pods in $CHAOS_NAMESPACES owned by a ReplicaSet or
     # StatefulSet. Deliberately excluded (see issue #113):
-    #   - Job-owned pods (dispatcher/factory/loop runs): killing those
+    #   - Job-owned pods (factory and panel runs): killing those
     #     breaks GitHub side effects rather than testing recovery, and the
     #     chaos-monkey pod itself is one of them
     #   - anything whose pod or owner name matches $CHAOS_EXCLUDE

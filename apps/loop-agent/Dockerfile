@@ -4,18 +4,9 @@ FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c
 # independent of $HOME.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Browser deps: the playwright npm package is linked at /node_modules so ESM
-# imports resolve from any /data/** repo path (resolution ascends to /);
-# browsers install via that same pinned CLI. gh lets loops report back into
-# GitHub (comments, issues) when a writer token is mounted (workspace-lib
-# setup_gh_cli; runtime credentials only — never baked into a layer);
-# kubectl supports the dispatcher pattern. Neither has cluster credentials
-# unless granted. gh comes from the shared installer (apps/shared/
-# install-gh.sh) so the pin and checksum verification match t3code/hermes
-# exactly (#23); Renovate bumps the ARG below.
-# kubectl is pinned to a recorded version (the stable.txt resolution at pin
-# time — issue #35) and sha256-verified against dl.k8s.io's published
-# checksum for that exact version.
+# The playwright npm package is linked at /node_modules so ESM imports
+# resolve from any /data/** repo path. kubectl is checksum-verified against
+# dl.k8s.io.
 # renovate: datasource=github-releases depName=kubernetes/kubernetes extractVersion=^v(?<version>.+)$
 ARG KUBECTL_VERSION=1.37.0
 # renovate: datasource=npm depName=playwright
@@ -25,7 +16,6 @@ ARG GH_VERSION=2.98.0
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
       git ca-certificates openssh-client curl xz-utils gnupg \
-      docker.io \
   && rm -rf /var/lib/apt/lists/* \
   && curl -fsSLo /usr/local/bin/kubectl \
       "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/$(dpkg --print-architecture)/kubectl" \

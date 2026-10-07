@@ -1,161 +1,87 @@
 # homelab
 
-Two-node k3s cluster built from old servers that could die at any second. Everything is disposable by design: state lives on PersistentVolumes, and any node can be rebuilt from `bootstrap/bootstrap.sh` in ~15 minutes.
+A k3s cluster on old servers that could die at any second. State lives on PersistentVolumes and in 1Password; nodes are rebuilt from `bootstrap/bootstrap.sh`, and the cluster converges back to this repo.
 
 ## What runs here
 
-- **t3code**: T3 Code (`t3 serve`) as a StatefulSet — one isolated agent server per replica, each with its own PVC, repos auto-cloned from a ConfigMap. Interactive: you attach to it. Exposed to the tailnet via the Tailscale Kubernetes operator.
-- **loop-agent**: unattended agents as Jobs/CronJobs — throwaway pods with the same repo-sync plumbing plus Chromium and a nested Docker daemon (dind sidecar, pod-scoped socket). Contract: do work, export results, exit. Pods are garbage-collected after finishing.
-- **hermes**: Nous Research's self-improving agent as a StatefulSet — persistent memory/skills on its own PVC, reachable via its messaging gateway or `kubectl exec`. It orchestrates the software factory conversationally through the shared Executor MCP gateway — profile-validated Runs with operator approval gates — and holds only read-only RBAC for self-visibility and cluster health.
-- **executor**: self-hosted Executor as the single MCP/tool gateway — every MCP-compatible agent (T3 Code, hermes, Cursor, Claude, Codex, future factory jobs) shares one catalog of integrations with central credentials and allow/approval/block policies. Pinned image, PVC-backed state, tailnet-internal only.
-- **homepage**: dashboard for every tailnet service at `https://homepage.<tailnet>.ts.net` — live status cards, config in git.
-- **panel**: the factory control panel at `https://panel.<tailnet>.ts.net`. Custom Vite + React app (this repo's own code) listing sandbox jobs and schedules, with a button to launch runs against a command or issue number. Its dev tools catalog is the front door for self-hosted tools (Grafana, Headlamp, CloudBeaver, Executor, Homepage, T3 Code, …): cards show live health from cluster state and link out to tailnet hostnames. Adding a tool is one entry in `apps/panel/server/devtools.ts` — generic operations stay in the upstream tools.
-- **cloudbeaver**: browser database client at `https://cloudbeaver.<tailnet>.ts.net` — inspect the factory PostgreSQL schemas and run harmless reads with a least-privilege, non-superuser role. Tailnet-only (Tailscale operator + NetworkPolicy), state on a small workspace PVC; credential and backup contract in `deploy/cloudbeaver/base/README.md`.
-- **loki**: persistent cluster logs (`deploy/loki/base`) — Alloy reads every pod's logs through the Kubernetes API (no hostPath, no privilege) and Loki keeps them 30 days on a 10Gi-capped PVC. Finished/TTL-deleted sandbox Jobs stay debuggable in Grafana (the datasource ships with derived-field links straight to a run's logs); credentials are redacted at source. See `deploy/loki/README.md`.
-- **victoriametrics**: the metrics backend (`deploy/victoriametrics/base`) — single-node VM scrapes kubelet/cAdvisor metrics through the API-server proxy plus kube-state-metrics for object state (nodes, pods, jobs, deployments/statefulsets, PVCs), keeps 30 days at a 30s scrape on a 15Gi-capped PVC, and never touches the tailnet; ClusterIP-only, Grafana is its sole reader. Read-only scrape RBAC, plain kustomize, no CRDs. See `deploy/victoriametrics/README.md`.
-- **grafana**: the observability UI at `https://grafana.<tailnet>.ts.net` (`deploy/grafana/base`) — anonymous read-only Viewer behind the tailnet (login form on for the admin credential from the `grafana-admin` Secret). Loki and VictoriaMetrics datasources, seven Homelab dashboards (logs, factory jobs, postgres, tailscale, chaos, nodes, workloads), and the issue-#44 alert rules (disk pressure, PVC nearly full, failed backups, unavailable core workloads, repeated Job failures) are all provisioned from git. See `deploy/grafana/base/README.md`.
-- **dispatcher**: _(legacy, demoted by #78)_ watches a repo for issues labeled `run-agent` and turns each one into a sandbox Job with a shell command from CronJob config. Superseded by the factory's durable issue collector (issues → Runs, no commands in manifests); kept only as the #30 behavioral smoke baseline — do not apply `deploy/dispatcher/base` for new automation.
-- **knowledge**: the personal knowledge base (ADR-002) — two services in `agents` over the `knowledge` PostgreSQL database: `knowledge-ingest` (queue API + the extract → chunk → embed → upsert worker, git repos as first-class sources) and `knowledge-retrieval` (cited hybrid BM25 + vector search with RRF fusion at `https://knowledge.<tailnet>`, plus the panel/MCP-facing sources + sync passthrough). The panel's Knowledge card and the `apps/knowledge-mcp` stdio adapter (a local CLI, not deployed) are its front doors; deployment contract in `deploy/knowledge/README.md`.
+Agents:
 
-All share `apps/shared/workspace-lib.sh` (git auth + repo sync).
+- **t3code**: T3 Code (`t3 serve`) for interactive coding sessions. Repos are auto-cloned onto its PVC.
+- **work-t3code**: the same image in the isolated `work` namespace. It has a work-scoped token and public-internet-only egress.
+- **hermes**: Nous Research's persistent agent. It drives the software factory through Executor and has read-only cluster access.
+- **executor**: the shared MCP/tool gateway, giving every agent one catalog of integrations and credentials.
 
-## Private repos
+Software factory (`deploy/factory`): a collector admits open GitHub issues as Runs. The orchestrator turns each Run into a tested draft PR. Reviewer, security, medic and sweeper CronJobs keep those PRs moving, and a human merge is the only gate. See [ADR-009](docs/factory-v1-github-ledger.md).
 
-Workloads read a fine-grained PAT from Secret `github-token` (key `token`), mounted at `/secrets/token`. The Secret is synced declaratively from 1Password by External Secrets Operator — rotate the token in 1Password and it propagates within ~1h:
+Knowledge (`deploy/knowledge`): two services over Postgres. `knowledge-ingest` runs a queue and an extract → chunk → embed → upsert worker. `knowledge-retrieval` serves cited hybrid search (BM25 + vector). See [ADR-002](docs/adr/adr-002-knowledge-retrieval-architecture.md).
+
+Platform:
+
+- **panel**: this repo's control panel. It shows factory runs, launches jobs, explores the knowledge base, and links to every dev tool.
+- **homepage**, **headlamp** (read-only Kubernetes UI), **cloudbeaver** (SQL client) and **grafana**: tailnet UIs.
+- **postgres**: a CloudNativePG cluster holding factory and knowledge state.
+- **loki** and **victoriametrics**: 30 days of logs and metrics, read by Grafana.
+- **deployer**: continuous delivery for this repo's images (see below).
+- **chaos** and **node-cleanup**: small operational CronJobs.
+
+Every UI is reachable only on the tailnet, through the Tailscale operator.
+
+`kubectl apply -k clusters/home` applies the core set. The operators (ESO, CNPG, policy-controller, tailscale) and the per-component bases (grafana, loki, victoriametrics, executor, knowledge, cloudbeaver) are applied as described in [docs/rebuild-runbook.md](docs/rebuild-runbook.md).
+
+## Images and deploys
+
+CI builds an image only when its inputs change: the image's directory plus whatever its Dockerfile copies. A weekly run rebuilds everything. Each build is signed with cosign and published to `ghcr.io/gwkline/homelab/<app>` as `latest` and `sha-<commit>`.
+
+Manifests reference `:latest`. Every five minutes `deploy/deployer` clones `main`, resolves each `:latest` to its current digest, and applies the homelab workloads. A merge reaches the cluster within one pass of its image build. To roll back, use `kubectl rollout undo` or revert the commit.
+
+Third-party images and Dockerfile bases are pinned tag+digest. Downloaded tools are pinned to a version and checksum-verified.
+
+## Secrets
+
+Long-lived credentials live in 1Password, and External Secrets syncs them into the cluster (`deploy/eso`, `deploy/github-tokens`). The one hand-entered secret is the 1Password service-account token at bootstrap (`scripts/create-onepassword-service-account.sh`). A credential rotated in 1Password propagates within about an hour. [docs/secrets-inventory.md](docs/secrets-inventory.md) lists every credential and who owns it.
+
+## Security model
+
+- **Pod Security:** `agents` and `sandbox` enforce `baseline` Pod Security and `work` enforces `restricted`. Nothing runs privileged, and no pod gets a Docker socket.
+- **Network policy:**
+  - Ingress is default-deny, and only Tailscale proxies reach the UIs.
+  - Egress from `sandbox` and `work` is public-internet only: no Kubernetes API, LAN, tailnet or cloud metadata ([docs/egress-policy.md](docs/egress-policy.md)).
+- **Kubernetes API access is the exception and is narrowly scoped:**
+  - panel and the factory create Jobs in `sandbox`.
+  - deployer applies its target workloads.
+  - hermes, headlamp, alloy and victoriametrics only read.
+
+  Each grant lives in an `rbac.yaml` beside its workload.
+
+- **Image admission:** the sigstore policy-controller rejects any homelab image whose digest isn't signed by this repo's `main` CI ([ADR-004](docs/adr/adr-004-cosign-admission-verification.md)).
+- **Tailscale SSH:** it is enabled on nodes and gated by tailnet ACLs.
+
+## Common tasks
 
 ```sh
-kubectl apply -k deploy/github-tokens/base   # prerequisites + rotation: deploy/github-tokens/base/README.md
+kubectl apply -k clusters/home                  # converge the core set
+scripts/rebuild-check.sh                        # drift + health sweep
+scripts/new-job.sh my-task 'npm test'           # one-off sandbox Job
+./scripts/verify.sh                             # local checks before a PR
 ```
 
-Token needs "Contents: read-only" on every repo listed in a ConfigMap.
-
-## Backups
-
-Off by default. Nothing is scheduled until the credentials exist in 1Password:
+Rebuilding a dead node:
 
 ```sh
-# 1Password: add item `restic-backup` to the Homelab vault with fields
-# RESTIC_REPOSITORY, B2_ACCOUNT_ID, B2_ACCOUNT_KEY, RESTIC_PASSWORD
-kubectl apply -k deploy/backup/base             # enables nightly 03:30 runs
+bootstrap/bootstrap.sh server                   # fresh Ubuntu 24.04, control plane
+bootstrap/bootstrap.sh agent <server-ip>        # worker
 ```
 
-A nightly restic CronJob then snapshots the stateful PVCs (agent homes, hermes memory) encrypted to any S3-compatible store. The `backup-target` secret is materialized from 1Password by External Secrets, so a clean cluster needs no interactive secret script (`scripts/create-backup-secret.sh` remains only as a documented emergency fallback). Rotation and restore instructions live in the server runbook. Losing the restic password means losing the backups. Disposable telemetry is deliberately excluded: Loki logs (30-day retention, `deploy/loki/README.md`) are not backed up unless you add that PVC to the CronJob yourself.
-
-## Launching one-off jobs
-
-```sh
-scripts/new-job.sh my-task 'node /data/repos/homelab/examples/loop-hello.mjs'
-kubectl logs job/my-task -n sandbox -f
-```
-
-<<<<<<< HEAD
-The panel can also launch runs; hermes drives the factory through the governed Executor tools instead of raw Jobs. Fully hands-off runs are the factory's own collector, not the legacy dispatcher: GitHub issues are the primary work generator, and shell commands are never embedded in CronJob configuration (#78).
-=======
-
-The panel and dispatcher can also launch runs; hermes drives the factory through the governed Executor tools instead of raw Jobs. For fully hands-off runs, apply `deploy/dispatcher/base`: any issue labeled `run-agent` in the watched repo spawns a Job every 15 minutes, no human needed. The panel's list-and-launch behavior is proven end to end against a real cluster by `scripts/panel-e2e-smoke.sh` (see `docs/panel-e2e.md`).
-
-> > > > > > > 07afddb (factory: prove panel list-and-launch against a real Kubernetes API (#27))
-
-The software factory is fully unattended: `deploy/factory/base` runs a durable issue collector hourly. Apply it once during cluster bring-up; its small reconciler CronJob reapplies the same manifests from `main` every 10 minutes afterward. Every open issue in each repo listed by `FACTORY_REPOS` that has no factory lifecycle label is admitted idempotently (one repository/issue/rule version maps to exactly one Run, keyed per #71; GitHub access uses a short-lived read-scoped GitHub App installation token, #70); the orchestrator then produces a tested draft PR one issue at a time. This means factory code and schedules do not silently drift from the cluster.
-
-Stranded PRs are swept too: an hourly `factory-sweeper` CronJob converts stale ci-red factory PRs into `factory/queued` fix issues once the medic has given up, pings green PRs sitting past 7d exactly once, and warns on base drift (>50 commits). It never closes or merges anything — the human merge gate stays. Details and marker contracts: `docs/factory-v1-github-ledger.md` (Stalled-PR sweeper).
-
-Loops can report back into GitHub (PR comments, issue updates) via the `gh` CLI already in the image. Write access uses a **separate**, write-scoped 1Password item (`github-writer`, Contents+PR write on target repos only) synced into `sandbox/github-token-writer` by the same ExternalSecrets; if the item is absent, write reporting stays off and read-only jobs are unaffected (all mounts are optional). See `deploy/github-tokens/base/README.md`.
+Then follow [docs/rebuild-runbook.md](docs/rebuild-runbook.md). First-time hardware setup is in [docs/runbook-server-cluster.md](docs/runbook-server-cluster.md).
 
 ## Layout
 
 ```
-bootstrap/          node setup scripts (tailscale, k3s)
-apps/shared/        workspace-lib.sh (git auth, repo sync) shared by all images
-apps/t3code/        interactive agent server image
-apps/loop-agent/    unattended loop image (Chromium, docker CLI)
-                    Both coding images ship a pinned Rust toolchain (cargo).
-apps/hermes/        persistent orchestrator image (kubectl included)
-deploy/
-  namespaces.yaml   agents + sandbox + database + work namespaces with PSA labels
-  policies/base/    default-deny NetworkPolicies
-  image-policy/base/ cosign image-signature admission policy (ClusterImagePolicy; ADR-004)
-  cnpg/base/        pinned CloudNativePG operator 1.30.0 (prerequisite for postgres)
-  postgres/base/    CNPG PostgreSQL 18 cluster (factory + knowledge durable state)
-  backup/base/      opt-in nightly restic backups of stateful PVCs
-  gvisor/base/      opt-in loop-agent variant under gVisor
-  homepage/base/    tailnet dashboard (config-driven, zero code)
-  headlamp/base/    tailnet-only Kubernetes web UI (read-only inspection)
-  panel/            factory control panel (Vite + React, this repo's code)
-  knowledge/base/   knowledge retrieval + ingest services (ADR-002; see its README for the image-pin bootstrap)
-  dispatcher/base/  (legacy, demoted #78) label-driven issue -> Job demo
-  factory/base/      durable issue collector -> coding worker -> draft PR
-  github-tokens/base/ ExternalSecrets syncing GitHub tokens from 1Password
-  work-t3code/      isolated work code runner (scoped token, public-repo-safe)
-  tailscale/        Tailscale operator install notes
-   t3code/base/      StatefulSet + per-replica Services
-   hermes/base/      StatefulSet + scoped RBAC + cluster guide
-   executor/base/    shared MCP gateway (pinned upstream image + PVC)
-   loop-agent/base/  CronJob example + task ConfigMap
-docs/               hardware runbooks
-.github/workflows/  image builds + validation
-examples/           sample loop script target
-scripts/            cluster ops helpers + verify.sh
-```
-
-## Rebuilding a dead node
-
-```sh
-# fresh Ubuntu Server 24.04, then:
-bootstrap/bootstrap.sh server        # first/control-plane node
-bootstrap/bootstrap.sh agent <server-ip>   # worker nodes
-```
-
-The cluster converges back to whatever is in this repo. If a disk dies, delete the PVC and the init container re-clones everything.
-
-## Security model
-
-Decisions and their reasons, so future-you can audit them:
-
-- **Privilege is scoped to `sandbox` namespace only.** Nested Docker needs a privileged dind sidecar; only throwaway loop pods run there (Pod Security Admission enforces this). Interactive workloads live under `baseline` PSA.
-- **No host Docker socket, ever.** The dind daemon owns an emptyDir-scoped unix socket shared within its own pod. A compromised inner container gets that pod's daemon, not the node's.
-- **Pods cannot talk to Kubernetes** — with six deliberate, audited exceptions. The legacy demo dispatcher (demoted by #78, kept only as the #30 smoke baseline) and the panel (control-panel backend) hold Job/CronJob write verbs scoped to `sandbox` and nothing else (each ServiceAccount lives in the namespace its pods run in: dispatcher's in `sandbox`, panel's in `agents`); hermes holds **read-only** access (self-visibility + cluster health) and requests factory work through the Executor MCP gateway, which carries the write credentials host-side behind profile validation and approval policy; alloy (cluster log collector), read-only `pods` list/watch plus `pods/log` get cluster-wide so completed jobs' logs survive pod deletion (`deploy/loki/README.md`); the metrics backend (read-only, `deploy/victoriametrics/README.md`): the VictoriaMetrics scraper holds `nodes/metrics` + `nodes/proxy` get plus get/list/watch discovery reads so built-in kubernetes_sd can pull kubelet/cAdvisor metrics through the API-server proxy, and its kube-state-metrics exporter list-watches exactly the object kinds its collector allowlist covers; and Headlamp (`deploy/headlamp/base`), the Kubernetes web UI acting as its pod's ServiceAccount under a get/list/watch-only cluster role. None can touch secrets, nodes, CRDs, or anything in their own namespace. A mounted CLUSTER.md playbook teaches hermes the governed patterns.
-- **Default-deny ingress** in both namespaces; only Tailscale operator proxies may reach t3code, homepage, panel, and headlamp (each workload declares its own exposure rule beside its manifests). Hermes has no inbound at all. Egress is open by design — agents need the internet — revisit with allowlists if you start pointing agents at sensitive internal targets (headlamp already narrows its own egress to DNS + the Kubernetes API).
-- **Secrets**: long-lived credentials are synced from 1Password by External Secrets (`deploy/github-tokens/base/`); the only hand-entered secret is the least-privilege 1Password service-account token at bootstrap. The PAT is mounted read-only per namespace and delivered to git via a runtime-generated askpass helper (never in `.git/config`, env, or image layers). Non-dind containers run as uid 1000 with all capabilities dropped.
-- **Tailscale SSH is enabled on nodes** (`bootstrap.sh` runs `tailscale up --ssh`), gated by your tailnet ACLs. Tighten those before inviting anyone.
-- **Supply chain**: homelab images are built from `main` and signed keylessly by CI; the sigstore policy-controller (ADR-004, `deploy/image-policy/base`) rejects any homelab image whose digest lacks that signature. Third-party images and Dockerfile bases are pinned tag+digest; downloaded tools are pinned to versions and checksum-verified.
-
-- **Known gap**: dind sidecar is privileged by necessity. Next escalation step if wanted: gVisor (`runsc` RuntimeClass) for inner containers. An opt-in variant lives in `deploy/gvisor/base`; see the server runbook.
-
-## Images and deploys
-
-CI builds an image only when its inputs change (its directory plus whatever its Dockerfile copies), plus a weekly full rebuild, and publishes it to `ghcr.io/gwkline/homelab/<app>` as `latest` and `sha-<commit>`. Manifests reference `:latest`. Every five minutes `deploy/deployer` clones `main`, resolves each `:latest` to its current digest, and applies the homelab workloads, so a merge reaches the cluster within one pass of its image build. Roll back with `kubectl rollout undo`, or by reverting the commit.
-
-If your packages are private, create a pull secret once and reference it:
-
-```sh
-kubectl create secret docker-registry ghcr-pull \
-  --namespace agents \
-  --docker-server=ghcr.io \
-  --docker-username=<github-user> \
-  --docker-password=<PAT with read:packages>
-# repeat for sandbox; add imagePullSecrets to pod specs if needed
-```
-
-Making this repo public makes its images public and removes this step.
-
-## Runbooks
-
-- [Server cluster: bare metal → working cluster](docs/runbook-server-cluster.md)
-- [Gaming desktop: Windows + Linux dual boot](docs/runbook-gaming-dualboot.md)
-- [Media server: hardware inventory + Plex/Jellyfin brief](docs/media-server-brief.md)
-
-## Access
-
-Each t3code pod gets a Tailnet hostname via the operator:
-
-```
-kubectl get svc -n agents
-# t3code-0 → https://t3code-0.<tailnet>.ts.net
-```
-
-Pair from the desktop app or phone using the URL printed in the pod logs:
-
-```
-kubectl logs t3code-0 -n agents | head
+apps/        source for every image this repo builds
+bootstrap/   node setup (k3s, tailscale)
+clusters/    clusters/home: the root kustomization
+deploy/      one kustomize base per component
+docs/        runbooks and ADRs
+images/      third-party images we rebuild (pg_textsearch)
+scripts/     operator helpers and checks
 ```

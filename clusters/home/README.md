@@ -12,13 +12,8 @@ kubectl apply -k clusters/home    # apply it
 ```
 clusters/home/
 ├── kustomization.yaml          # entry point: includes base
-├── base/kustomization.yaml     # the normal set — resource list + ordering contract
-└── overlays/
-    ├── backup/                 # opt-in: normal set + nightly B2 restic backup
-    └── gvisor/                 # opt-in: loop-agent CronJob under gVisor
+└── base/kustomization.yaml     # the normal set — resource list + ordering contract
 ```
-
-Overlays include `base` and add to it — `base` must never reference them (kustomize rejects the cycle and duplicate resource IDs, so composition stays one-directional).
 
 ## The normal set (base)
 
@@ -32,7 +27,7 @@ The resource list in `base/kustomization.yaml` is a topological order of the dep
 | 4 | secret plumbing | `deploy/github-tokens/base` | per-namespace `onepassword` SecretStores + GitHub token ExternalSecrets — before every workload that mounts `github-token`(+writer)/`work-github-token` (t3code, hermes, factory jobs, panel, work-t3code) |
 | 5 | tailscale stack | `deploy/tailscale` | tailscale namespace + SecretStore + operator-oauth ExternalSecret + t3code/panel/work serve-fixers; the serve-fixer RBAC reaches into `agents` (needs layer 1) |
 | 6 | postgres | `deploy/postgres/base` | CNPG `Cluster`/`Database` CRs — the API server rejects them until the cnpg CRDs are Established (pre-apply); its clients are the factory/knowledge workloads in layer 7 |
-| 7 | workloads | t3code, hermes, loop-agent, homepage, panel, headlamp, dispatcher, factory, work-t3code | depend on layers 1–4 (namespaces, netpols, admission, mounted secrets), never on each other's apply order |
+| 7 | workloads | t3code, hermes, homepage, panel, headlamp, factory, deployer, work-t3code | depend on layers 1–4 (namespaces, netpols, admission, mounted secrets), never on each other's apply order |
 | 8 | operational CronJobs | `deploy/chaos/base`, `deploy/node-cleanup/base` | chaos deletes pods (never races bring-up by being last; kill switch: its configmap `enabled` key); node-cleanup prunes node disk pressure (#253) — both need only their namespace + RBAC |
 
 ### Server-side / helm controllers (deliberately not composed)
@@ -45,12 +40,5 @@ Four pieces cannot ride along in a plain `kubectl apply -k` and stay documented 
 4. **tailscale-operator** — helm install (pinned chart + values file) **after** the root apply; it consumes the operator-oauth Secret the root syncs from 1Password.
 
 The hand-entered 1Password service-account token (`scripts/create-onepassword-service-account.sh` → agents, sandbox, work, tailscale) is also a manual runbook step — secrets are never rendered into Git.
-
-## Opt-in overlays (not in the normal set)
-
-| Overlay | Command | Precondition |
-| --- | --- | --- |
-| backup | `kubectl apply -k clusters/home/overlays/backup` | B2 credentials exist in 1Password (docs/secrets-inventory.md) — production backup execution is excluded from the normal set until they do |
-| gvisor | `kubectl apply -k clusters/home/overlays/gvisor` | runsc registered in each node's containerd config (runbook-server-cluster, "Experimental: gVisor"); replaces the stock loop-agent runtime |
 
 Further per-component applies (cloudbeaver, executor) are documented beside their manifests under `deploy/` and in [runbook-server-cluster.md](../docs/runbook-server-cluster.md); they are intentionally not part of the fast-recovery normal set.

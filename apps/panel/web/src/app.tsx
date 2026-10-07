@@ -608,7 +608,7 @@ export default function App() {
             />
             <div className="space-y-3 p-5">
               <Input
-                placeholder="command, e.g. node /data/repos/homelab/examples/loop-hello.mjs"
+                placeholder="command, e.g. npm test"
                 value={command}
                 onChange={(e) => setCommand(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && launch()}

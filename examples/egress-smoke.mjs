@@ -1,27 +1,16 @@
-// Egress smoke test for sandbox pods (#93): proves the egress allowlist does
-// what it claims, both from the pod and from inside a dind inner container
-// (docker0 traffic is TESTED here, not assumed to inherit pod policy).
-//
-// Usage:  node egress-smoke.mjs [--phase pod|dind]
-// Exit 0 = every check matched its expectation; 1 = any mismatch.
+// Egress smoke test for sandbox pods: proves the egress allowlist does what
+// it claims. Exit 0 = every check matched its expectation; 1 = any mismatch.
 //
 // Positive targets are the documented required destinations
 // (docs/egress-policy.md): DNS, GitHub, package registry, model API.
 // Negative targets are the ranges the sandbox egress policy refuses:
 // Kubernetes API, node/kubelet, link-local metadata, tailnet (CGNAT),
 // cluster services in other namespaces, and a LAN address.
-//
-// Node built-ins only; no npm deps, so it also runs inside a bare
-// node:<tag> inner container.
 
 import dns from "node:dns/promises";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 
-const args = process.argv.slice(2);
-const phase = args.includes("--phase")
-  ? args[args.indexOf("--phase") + 1]
-  : "pod";
 const TIMEOUT_MS = Number(process.env.EGRESS_SMOKE_TIMEOUT_MS || 4000);
 
 // Default gateway = the node-side bridge address (10.42.<node>.1 under k3s
@@ -183,12 +172,9 @@ try {
 }
 
 const failed = results.filter((r) => !r.pass);
-console.log(`[egress-smoke] phase=${phase} gateway=${gw}`);
+console.log(`[egress-smoke] gateway=${gw}`);
 for (const r of results) {
   console.log(`  ${r.pass ? "PASS" : "FAIL"}  ${r.name}  ->  ${r.result}`);
-}
-if (phase === "dind") {
-  console.log("[egress-smoke] dind inner-container phase complete");
 }
 if (failed.length > 0) {
   console.error(

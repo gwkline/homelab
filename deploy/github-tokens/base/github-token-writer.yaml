@@ -1,6 +1,6 @@
 # Write-scoped GitHub credential: a separate 1Password item with separate
-# permissions, synced only into sandbox where write jobs run (loop-agent,
-# panel-spawned jobs) and consumed as GITHUB_WRITER_TOKEN_FILE=/secrets-writer/token.
+# permissions, synced only into sandbox where write jobs run (panel-spawned
+# jobs) and consumed as GITHUB_WRITER_TOKEN_FILE=/secrets-writer/token.
 #
 # 1Password item contract (issues #39/#45):
 #   vault:  homelab

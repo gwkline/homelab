@@ -5,14 +5,8 @@
 # read-only and separately justified below. It cannot touch secrets, CRDs,
 # or other namespaces' workloads.
 #
-# Issue #26 — hermes' permissions are documented here, separately from the
-# other principals. CronJob mutation is NOT required: the last write path
-# was removed in #82, and hermes has no Role granting create/patch/delete
-# on Jobs or CronJobs in any namespace. The shared `loop-manager` Role that
-# used to live here is gone — dispatcher and panel define purpose-scoped
-# Roles in their own bases (deploy/dispatcher/base, deploy/panel/base).
-# One-time cleanup after applying this change:
-#   kubectl -n sandbox delete role loop-manager
+# hermes is read-only: it has no Role granting create/patch/delete on Jobs
+# or CronJobs anywhere, and requests factory work through Executor.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

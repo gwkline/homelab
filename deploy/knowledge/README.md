@@ -5,9 +5,7 @@ The deployed knowledge vertical: two services in `agents` over the `knowledge` d
 | Service | Image | What it does |
 | --- | --- | --- |
 | `knowledge-ingest` | `ghcr.io/gwkline/homelab/knowledge-ingest` | Queue API (`/v1/ingest`, `/v1/sources`, `/v1/sync-jobs`) + the real worker: claim → route (git-source sync / git blob fetch / url fetch) → chunk → embed → upsert into the #56 schema → ledger publish. |
-| `knowledge-retrieval` | `ghcr.io/gwkline/homelab/knowledge-retrieval` | `POST /v1/search` (BM25 + vector → RRF fusion, cited chunks), plus the `/v1/sources` + `/v1/sync-jobs` passthrough to ingest so the panel and MCP use one base URL. |
-
-`apps/knowledge-mcp` is **not** deployed: it is a local stdio CLI (run by t3code/agents against `KNOWLEDGE_API_BASE=https://knowledge.<tailnet>`); no Dockerfile by design.
+| `knowledge-retrieval` | `ghcr.io/gwkline/homelab/knowledge-retrieval` | `POST /v1/search` (BM25 + vector → RRF fusion, cited chunks), plus the `/v1/sources` + `/v1/sync-jobs` passthrough to ingest so the panel uses one base URL. |
 
 ## Prerequisites
 

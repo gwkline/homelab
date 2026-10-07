@@ -64,7 +64,7 @@ Credential check while a worker pod runs: `kubectl exec` is not available on com
 ## Offline fixture tests (no cluster)
 
 ```sh
-sh apps/factory/collector/tests/collector.test.sh   # PASS: collector eligibility, duplicate-run, pagination, rate limits
+npm --prefix apps/factory/collector test # PASS: collector eligibility, duplicate-run, pagination, rate limits
 bash apps/factory/reviewer/tests/review.test.sh        # PASS: reviewer label filtering behaves
 bash apps/factory/orchestrator/tests/runtime-path.test.sh  # PASS: orchestrator Git runtime path is covered
 ```

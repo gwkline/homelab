@@ -62,7 +62,7 @@ data:
       }
 
       // Run identifier: the owning Job's name. Unique per run for panel
-      // (hash-suffixed), dispatcher, loop and factory Jobs alike, and
+      // (hash-suffixed) and factory Jobs alike, and
       // factory Job names embed the issue number (factory-issue-<n>-...).
       rule {
         source_labels = ["__meta_kubernetes_pod_label_batch_kubernetes_io_job_name"]

@@ -6,7 +6,6 @@ The CloudNativePG operator runs in `cnpg-system`. Version **1.30.0** (released 2
 
 - `base/upstream.yaml` — verbatim upstream bundle for v1.30.0 (CRDs, `cnpg-system` namespace, RBAC, controller Deployment). Never hand-edit.
 - `base/kustomization.yaml` — the only local mutations: digest-pins the operator image (`:1.30.0@sha256:a2701…efebb`, the multi-arch manifest digest from GHCR) and sets `OPERATOR_IMAGE_NAME` to the same pinned reference; adds baseline PSA labels to `cnpg-system`; adds the metrics discovery annotations; re-asserts the reviewed resource bounds (see below).
-- `scripts/cnpg-smoke.sh` (repo root `scripts/`) — disposable-Cluster lifecycle proof, see [Verification](#verification).
 
 Security posture is upstream's own: the manager runs as UID 10001 with `ALL` capabilities dropped, read-only root filesystem, and `RuntimeDefault` seccomp — it passes `restricted` PSA. The namespace itself carries the **baseline** labels, the same convention as the other operator namespace (`external-secrets`, `deploy/eso/base/namespace.yaml`); the `database` namespace where CNPG-managed instances run enforces `restricted` (`deploy/namespaces`).
 
@@ -49,7 +48,7 @@ The selected metrics stack (ADR-005: single-node VictoriaMetrics with built-in `
       target_label: __address__
 ```
 
-`scripts/cnpg-smoke.sh` asserts the annotations and probes `/metrics` live. CNPG's per-Cluster `monitoring.enablePodMonitor` (a `PodMonitor` CRD) stays off: the metrics stack intentionally ships no Prometheus-operator CRDs (ADR-005 D7); scraping the PostgreSQL instances' 9187 endpoints is part of the database-cluster issues, together with the matching `database`-namespace NetworkPolicy allowance.
+CNPG's per-Cluster `monitoring.enablePodMonitor` (a `PodMonitor` CRD) stays off: the metrics stack intentionally ships no Prometheus-operator CRDs (ADR-005 D7); scraping the PostgreSQL instances' 9187 endpoints is part of the database-cluster issues, together with the matching `database`-namespace NetworkPolicy allowance.
 
 ## Install / recover (plain kubectl, idempotent, no Flux)
 
@@ -60,7 +59,7 @@ kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
 kubectl -n cnpg-system get pods
 ```
 
-- **Idempotent:** re-running the apply is the recovery path (same contract as `deploy/eso/base`). Nothing here needs Flux — this is a plain kustomize base, so a later Flux `Kustomization` can point at `deploy/cnpg/base` unchanged (ADR-006 defers GitOps; the factory reconciler keeps only `deploy/factory/base` converged).
+- **Idempotent:** re-running the apply is the recovery path (same contract as `deploy/eso/base`). Nothing here needs Flux — this is a plain kustomize base, so a later Flux `Kustomization` can point at `deploy/cnpg/base` unchanged (ADR-006 defers GitOps).
 - **`--server-side` is required:** the CRDs are large enough to exceed the client-side `last-applied-configuration` annotation size limit on upgrade (same reason as the ESO install).
 
 ### CRD ordering
@@ -83,17 +82,7 @@ One `kubectl apply` carries CRDs, RBAC and the Deployment; kubectl applies CRDs 
      https://ghcr.io/v2/cloudnative-pg/cloudnative-pg/manifests/<version> \
      | grep -i docker-content-digest
    ```
-4. Update the `digest:` and `OPERATOR_IMAGE_NAME` values in `base/kustomization.yaml` (and the version comment at the top of both files), then apply + verify as above. Re-run `scripts/cnpg-smoke.sh all` before merging — it proves the upgraded operator still drives a Cluster through its full lifecycle.
-
-## Verification
-
-The issue's verification gate, as a script (run against a disposable cluster; safe on the homelab cluster too — it only applies `deploy/cnpg/base` idempotently and everything else lives in the throwaway `cnpg-smoke` namespace):
-
-```sh
-scripts/cnpg-smoke.sh all
-```
-
-`up` installs/verifies the pinned operator, creates a minimal one-instance PostgreSQL 18 Cluster, waits for `Ready`, connects with `psql` as the operator-created `app` user and round-trips a row; `down` deletes the Cluster and proves the operator cleaned up (every pod/PVC/Service gone with it, namespace deletable, operator still healthy).
+4. Update the `digest:` and `OPERATOR_IMAGE_NAME` values in `base/kustomization.yaml` (and the version comment at the top of both files), then apply + verify as above.
 
 ## Uninstall
 

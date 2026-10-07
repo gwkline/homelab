@@ -8,7 +8,7 @@
       "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
       "id": 1,
       "options": {
-        "content": "# Factory pipeline health\n\nThe factory (`deploy/factory`) runs CronJobs in the **sandbox** namespace — orchestrator (`*/10`), collector (hourly `:05`), reviewer, reconciler, security, sweeper, reclaimer, and the launchpads — that spawn sandbox Jobs and keep the live PR/issue ledger on GitHub. Finished Jobs are GC'd after 24h; a failed tick stays failed (`backoffLimit: 0`) so it is visible here.\n\n**Datasources:** metric panels use the *Metrics datasource* variable at the top of the page — pick VictoriaMetrics (or any Prometheus-compatible datasource); it is deliberately **not pinned** so this dashboard works with whichever metrics backend is provisioned. The ledger logs panel at the bottom is pinned to the provisioned Loki (`uid: loki`), where every `job_name=\"...\"` link jumps straight to that run's full logs.",
+        "content": "# Factory pipeline health\n\nThe factory (`deploy/factory`) runs CronJobs in the **sandbox** namespace — orchestrator (`*/10`), collector (hourly `:05`), reviewer, security, sweeper, reclaimer, and the launchpads — that spawn sandbox Jobs and keep the live PR/issue ledger on GitHub. Finished Jobs are GC'd after 24h; a failed tick stays failed (`backoffLimit: 0`) so it is visible here.\n\n**Datasources:** metric panels use the *Metrics datasource* variable at the top of the page — pick VictoriaMetrics (or any Prometheus-compatible datasource); it is deliberately **not pinned** so this dashboard works with whichever metrics backend is provisioned. The ledger logs panel at the bottom is pinned to the provisioned Loki (`uid: loki`), where every `job_name=\"...\"` link jumps straight to that run's full logs.",
         "mode": "markdown"
       },
       "title": "About this dashboard",
@@ -262,7 +262,7 @@
     },
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "description": "Logs from the factory CronJob pods (collector, reconciler, sweeper, ...) — the PR/issue ledger activity as it is posted to GitHub. The live ledger is GitHub labels; finished Job objects are GC'd after 24h.",
+      "description": "Logs from the factory CronJob pods (collector, sweeper, ...) — the PR/issue ledger activity as it is posted to GitHub. The live ledger is GitHub labels; finished Job objects are GC'd after 24h.",
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 25 },
       "id": 10,
       "options": {

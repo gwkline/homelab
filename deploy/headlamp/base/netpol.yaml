@@ -23,7 +23,7 @@ spec:
 # Egress narrowed below the namespace baseline (agents egress is otherwise
 # open): the Headlamp backend needs DNS and the Kubernetes API — nothing
 # else. The API is the kubernetes.default ClusterIP (10.43.0.1 under k3s
-# defaults — first IP of the service CIDR), same allowance as dispatcher.
+# defaults — first IP of the service CIDR).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

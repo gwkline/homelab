@@ -74,7 +74,7 @@ Job logs and events are the only durable record of sandbox work — the pods the
 
 ## D6. Backup posture
 
-- **Durable (in git, already covered):** dashboards, datasources, VM scrape config, Loki/Alloy configs — all provisioned from ConfigMaps in git, seeded Grafana-init style (`deploy/homepage/base/deployment.yaml` pattern). A rebuilt node re-applies kustomize and dashboards reappear; the nightly restic set (`deploy/backup/base`: t3code + hermes) stays **unchanged**.
+- **Durable (in git, already covered):** dashboards, datasources, VM scrape config, Loki/Alloy configs — all provisioned from ConfigMaps in git, seeded Grafana-init style (`deploy/homepage/base/deployment.yaml` pattern). A rebuilt node re-applies kustomize and dashboards reappear; the nightly restic set (`deploy/backup/base`: t3code + hermes; since removed) stays **unchanged**.
 - **Disposable (backed up by nothing):** VM and Loki PVCs, and Grafana's SQLite (users/preferences). Retention is the recovery plan for telemetry; losing it is acceptable by design, and `grafana-admin` is re-created in one command.
 
 ## D7. Decision
@@ -110,4 +110,4 @@ No GitHub-token ExternalSecret coverage is needed for either issue (nothing chec
 - The heavier, familiar baseline is deliberately not taken: kube-prometheus-stack's operator/CRD/Helm machinery would be the only part of the cluster outside the git→kustomize reconciler model, its node-exporter would fight the baseline PSA, and its convenience (prebuilt alerts) is not needed yet. Alerting stays a non-goal until something actually pages at 2 a.m.
 - VM's flag surface moves between versions — images are pinned and Renovate-updated; the PromQL-compatible datasource swap in D7 is the documented exit.
 - Log capture has an accepted gap window when Alloy is down (D4); factory artifacts remain the durable record per ADR-001 D2.
-- Telemetry is unbacked-up by design (D6); do not add these PVCs to `deploy/backup/base` without revisiting this ADR.
+- Telemetry is unbacked-up by design (D6); do not add these PVCs to any backup without revisiting this ADR (`deploy/backup/base` has since been removed; nothing is backed up).

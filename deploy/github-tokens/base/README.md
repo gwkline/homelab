@@ -1,6 +1,6 @@
 # GitHub tokens via External Secrets (1Password)
 
-Declarative replacement for the manually created `github-token` / `github-token-writer` Secrets ([issue #45](https://github.com/gwkline/homelab/issues/45)). `scripts/create-github-secret.sh` is **deprecated** — do not use it to create these Secrets; ESO owns them (`creationPolicy: Owner` reverts manual edits on the next refresh).
+Declarative replacement for the manually created `github-token` / `github-token-writer` Secrets ([issue #45](https://github.com/gwkline/homelab/issues/45)). ESO owns them (`creationPolicy: Owner` reverts manual edits on the next refresh).
 
 ```sh
 kubectl apply -k deploy/github-tokens/base

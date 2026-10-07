@@ -37,8 +37,7 @@ NS_AGENTS=agents
 PANEL_POD=panel-e2e
 SEED_JOB=panel-e2e-seed
 # E2e-only fixture names: they must never collide with production objects in
-# a reused cluster (loop-example is a real sandbox CronJob on main, and the
-# cleanup below deletes the seed fixtures).
+# a reused cluster (the cleanup below deletes the seed fixtures).
 SEED_CRONJOB=panel-e2e-seed-cronjob
 PF_PORT="${PANEL_E2E_PORT:-3933}"
 PANEL_IMG="${PANEL_E2E_PANEL_IMAGE:-panel-e2e:local}"

@@ -1,6 +1,4 @@
-# Fourth deliberate exception to "pods cannot talk to Kubernetes" — but a
-# different kind: where hermes/dispatcher/panel hold write verbs on sandbox
-# Jobs, headlamp is a read-only cluster viewer for the web UI (issue #40).
+# Headlamp is a read-only cluster viewer for the web UI.
 # get/list/watch only. It cannot read Secret values, mutate workloads, exec
 # into pods (pods/exec, pods/attach, pods/portforward unassigned), or reach
 # node proxy APIs (nodes/proxy, services/proxy unassigned). Tailnet identity
