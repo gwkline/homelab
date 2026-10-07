@@ -199,14 +199,11 @@ while [ "${i}" -lt "${N_QUERIES}" ]; do
   RESP="${WORK}/resp-${i}.json"
   BODY=$(jq -c ".[$((i - 1))]" "${QUERIES_FILE}")
   CURL_RC=0
-  HTTP_CODE=""
-  if ! HTTP_CODE=$(curl -sS --max-time "${KNOWLEDGE_TIMEOUT}" \
-      -o "${RESP}" -w '%{http_code}' \
-      -H "Authorization: Bearer ${TOKEN}" \
-      -H 'Content-Type: application/json' \
-      -X POST -d "${BODY}" "${KNOWLEDGE_SEARCH_URL}" 2>"${WORK}/curl.err"); then
-    CURL_RC=$?
-  fi
+  HTTP_CODE=$(curl -sS --max-time "${KNOWLEDGE_TIMEOUT}" \
+    -o "${RESP}" -w '%{http_code}' \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -X POST -d "${BODY}" "${KNOWLEDGE_SEARCH_URL}" 2>"${WORK}/curl.err") || CURL_RC=$?
   if [ "${CURL_RC}" -eq 28 ]; then
     fail_record "timeout" "query ${i} exceeded ${KNOWLEDGE_TIMEOUT}s (knowledge-service deadline)"
   elif [ "${CURL_RC}" -ne 0 ]; then
@@ -222,7 +219,7 @@ done
 # --- 4. merge, budget, cite ----------------------------------------------------
 # Dedupe by chunkId across queries → score filter → deterministic sort →
 # source cap → chunk cap → whole-chunk char budget → stable K<n> ids.
-python3 - "${WORK}" "${N_QUERIES}" "${OUT_FILE}" \
+python3 - "${WORK}" "${OUT_FILE}" \
   "${KNOWLEDGE_BUDGET_CHARS}" "${KNOWLEDGE_MAX_CHUNKS}" \
   "${KNOWLEDGE_MAX_SOURCES}" "${KNOWLEDGE_MIN_SCORE}" \
   "${KNOWLEDGE_NAMESPACE}" "${KNOWLEDGE_MODE}" "${KNOWLEDGE_TOP_K}" \
@@ -290,9 +287,8 @@ for i in range(1, len(queries) + 1):
             (c for c in candidates if c["chunk_id"] == entry["chunk_id"]), None
         )
         if prev:  # dedupe across queries; best fused score wins
-            if entry["score"] >= prev["score"]:
-                if entry["score"] > prev["score"]:
-                    prev["score"] = entry["score"]
+            prev["score"] = max(prev["score"], entry["score"])
+            if kind not in prev["retrieved_by"]:
                 prev["retrieved_by"].append(kind)
             continue
         candidates.append(entry)
