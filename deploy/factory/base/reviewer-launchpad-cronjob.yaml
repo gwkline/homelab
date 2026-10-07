@@ -40,9 +40,6 @@ spec:
                   valueFrom:
                     secretKeyRef:
                       { name: github-token, key: token, optional: false }
-                # Auto-merge factory-authored PRs once checks are green.
-                - name: FACTORY_REVIEWER_AUTO_MERGE
-                  value: "true"
               resources:
                 requests: { cpu: 100m, memory: 128Mi }
                 limits: { cpu: 500m, memory: 512Mi }
