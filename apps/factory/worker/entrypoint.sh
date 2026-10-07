@@ -176,9 +176,18 @@ except json.JSONDecodeError:
   # Unquoted heredoc (WORKER_MODEL must expand): escape the literal JSON $schema
   # key or dash with `set -u` dies with `schema: parameter not set` before the
   # agent ever starts.
+  # Permissions are pre-allowed: a headless run has no approver, so every ask
+  # (e.g. editing /tmp while TMPDIR is exported) auto-rejects and kills the run.
   cat > "${OC_CONFIG_FILE}" <<OCEOF
 {
   "\$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "*": "allow",
+    "edit": "allow",
+    "external_directory": "allow",
+    "bash": { "*": "allow" },
+    "webfetch": "allow"
+  },
   "provider": {
     "openrouter": {
       "npm": "@openrouter/ai-sdk-provider",
