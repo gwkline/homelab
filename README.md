@@ -22,7 +22,7 @@ Platform:
 - **postgres**: a CloudNativePG cluster holding factory and knowledge state.
 - **loki** and **victoriametrics**: 30 days of logs and metrics, read by Grafana.
 - **deployer**: continuous delivery for this repo's images (see below).
-- **chaos** and **node-cleanup**: small operational CronJobs.
+- **chaos**: a small operational CronJob.
 
 Every UI is reachable only on the tailnet, through the Tailscale operator.
 
