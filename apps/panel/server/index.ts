@@ -1,9 +1,13 @@
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import type { Server } from "node:http";
 import path from "node:path";
 
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
+import { routePath } from "hono/route";
+import { timeout } from "hono/timeout";
 
 import { requireCaller } from "./auth.js";
 import type { AuthEnv } from "./auth.js";
@@ -22,6 +26,7 @@ import {
   NAMESPACE_PATTERN,
   SOURCE_ID_PATTERN,
 } from "./knowledge.js";
+import { log } from "./log.js";
 import {
   collectRepoStats,
   historyFromStore,
@@ -34,6 +39,11 @@ import {
   weekStatsOf,
 } from "./stats.js";
 import type { RepoStats } from "./stats.js";
+import {
+  REQUEST_TIMEOUT_MS,
+  UPSTREAM_TIMEOUT_MS,
+  upstreamError,
+} from "./upstream.js";
 
 const root = process.env.PANEL_ROOT ?? process.cwd();
 const port = Number(process.env.PORT ?? 3000);
@@ -41,6 +51,42 @@ const tailnetPort = process.env.PANEL_TAILNET_PORT
   ? Number(process.env.PANEL_TAILNET_PORT)
   : null;
 const app = new Hono<AuthEnv>();
+app.use("*", async (c, next) => {
+  const started = performance.now();
+  try {
+    return await next();
+  } finally {
+    log("info", "request", {
+      durationMs: Math.round(performance.now() - started),
+      method: c.req.method,
+      path: c.req.path,
+      // The pattern of the handler that answered (dispatch has moved past
+      // this middleware by now).
+      route: routePath(c),
+      status: c.res.status,
+    });
+  }
+});
+app.use(
+  "/api/*",
+  timeout(
+    REQUEST_TIMEOUT_MS,
+    new HTTPException(504, {
+      message: `request exceeded ${REQUEST_TIMEOUT_MS}ms`,
+    })
+  )
+);
+app.onError((thrown, c) => {
+  if (thrown instanceof HTTPException) {
+    return c.json({ error: thrown.message }, thrown.status);
+  }
+  log("error", "unhandled error", {
+    error: thrown.message,
+    method: c.req.method,
+    path: c.req.path,
+  });
+  return c.json({ error: "internal error" }, 500);
+});
 app.use(
   "/api/*",
   requireCaller({
@@ -198,16 +244,24 @@ const ghFetch = async (
       { status: 500 }
     );
   }
-  const res = await fetch(`${GH_API_BASE}${route}`, {
-    ...init,
-    headers: {
-      accept: "application/vnd.github+json",
-      authorization: `Bearer ${token}`,
-      "x-github-api-version": "2022-11-28",
-      ...(init.headers as Record<string, string> | undefined),
-    },
-  });
-  const text = await res.text();
+  const call = { method: init.method ?? "GET", path: route };
+  let res: Response;
+  let text: string;
+  try {
+    res = await fetch(`${GH_API_BASE}${route}`, {
+      ...init,
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${token}`,
+        "x-github-api-version": "2022-11-28",
+        ...(init.headers as Record<string, string> | undefined),
+      },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    text = await res.text();
+  } catch (error: unknown) {
+    throw upstreamError("github", call, error);
+  }
   let json;
   try {
     json = text ? JSON.parse(text) : undefined;
@@ -218,7 +272,7 @@ const ghFetch = async (
     const msg =
       (json as { message?: string } | undefined)?.message ??
       `${res.status} ${res.statusText}`;
-    throw Object.assign(new Error(msg), { body: json, status: res.status });
+    throw upstreamError("github", call, new Error(msg), res.status);
   }
   return json;
 };
@@ -237,11 +291,15 @@ const errStatus = (error: unknown): number | null => {
   return null;
 };
 
-// Statuses in `passThrough` surface verbatim; everything else becomes 502.
-type RespondCode = 400 | 404 | 405 | 409 | 422 | 502;
-const respondStatus = (error: unknown, passThrough: number[]): RespondCode => {
+// Timeouts surface as 504 and statuses in `passThrough` verbatim; every
+// other failure becomes 502.
+type RespondCode = 400 | 404 | 405 | 409 | 422 | 502 | 504;
+const respondStatus = (
+  error: unknown,
+  passThrough: number[] = []
+): RespondCode => {
   const status = errStatus(error);
-  if (status !== null && passThrough.includes(status)) {
+  if (status !== null && (status === 504 || passThrough.includes(status))) {
     return status as RespondCode;
   }
   return 502;
@@ -301,7 +359,7 @@ app.get("/api/state", async (c) => {
       now,
     });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -329,7 +387,7 @@ app.get("/api/cluster", async (c) => {
       podsByNs,
     });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -343,7 +401,7 @@ app.get("/api/devtools", async (c) => {
       tools,
     });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -503,7 +561,7 @@ app.get("/api/cluster/pods", async (c) => {
     }));
     return c.json({ pods: out });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -562,7 +620,7 @@ app.get("/api/factory/issues", async (c) => {
       }));
     return c.json({ issues, repo });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -608,9 +666,9 @@ app.get("/api/factory/stats/rollup", async (c) => {
       upsertSnapshot(FACTORY_STATS_PATH, snapshot);
       persisted = true;
     } catch (error: unknown) {
-      console.warn(
-        `[panel] stats snapshot not persisted: ${errMessage(error)}`
-      );
+      log("warn", "stats snapshot not persisted", {
+        error: errMessage(error),
+      });
     }
   }
   const history = historyFromStore(loadStatsStore(FACTORY_STATS_PATH));
@@ -720,7 +778,7 @@ app.get("/api/factory/prs", async (c) => {
     prs.sort((a, b) => a.number - b.number);
     return c.json({ prs, repo });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -942,7 +1000,7 @@ app.get("/api/factory/stats", async (c) => {
     statsCache.set(repo, { at: Date.now(), body });
     return c.json({ ...body, cached: false });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -1216,7 +1274,7 @@ app.post("/api/factory/ready", async (c) => {
     }
     return c.json({ isDraft, pr, repo });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -1321,7 +1379,7 @@ app.post("/api/factory/run", async (c) => {
     if (errStatus(error) === 404) {
       return c.json({ error: `issue #${issueNum} not found in ${repo}` }, 404);
     }
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
   if (issue.pull_request) {
     return c.json({ error: `issue #${issueNum} is a pull request` }, 400);
@@ -1440,7 +1498,9 @@ const parseMarkerBody = (body: string) => {
 };
 
 // Maps upstream failures to actionable statuses without leaking GitHub internals.
-type IssueFetch = { issue: GhIssue } | { error: string; status: 404 | 502 };
+type IssueFetch =
+  | { issue: GhIssue }
+  | { error: string; status: 404 | 502 | 504 };
 const fetchIssue = async (
   repo: string,
   issueNum: number
@@ -1453,7 +1513,10 @@ const fetchIssue = async (
     if (errStatus(error) === 404) {
       return { error: `issue #${issueNum} not found in ${repo}`, status: 404 };
     }
-    return { error: errMessage(error), status: 502 };
+    return {
+      error: errMessage(error),
+      status: errStatus(error) === 504 ? 504 : 502,
+    };
   }
 };
 
@@ -1587,7 +1650,7 @@ app.get("/api/factory/runs", async (c) => {
       .filter((r) => state === undefined || state === "" || r.state === state);
     return c.json({ repo, runs });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -1716,7 +1779,7 @@ app.post("/api/factory/run/cancel", async (c) => {
     const inFlight = await inFlightJobs(target.repo, target.issue);
     stopping = inFlight.map((j) => j.metadata?.name ?? "");
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
   const deletes = await Promise.all(
     stopping.map(async (name): Promise<string | null> => {
@@ -1897,8 +1960,7 @@ app.patch("/api/cronjobs/:name", async (c) => {
     await k8s.patchCronJob(name, patch);
     return c.json({ name, ok: true });
   } catch (error: unknown) {
-    const status = errStatus(error);
-    return c.json({ error: errMessage(error) }, status === 404 ? 404 : 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error, [404]));
   }
 });
 
@@ -1911,8 +1973,7 @@ app.delete("/api/jobs/:name", async (c) => {
     await k8s.deleteJob(name);
     return c.json({ name, ok: true });
   } catch (error: unknown) {
-    const status = errStatus(error);
-    return c.json({ error: errMessage(error) }, status === 404 ? 404 : 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error, [404]));
   }
 });
 
@@ -1947,7 +2008,41 @@ app.use("*", async (c, next) => {
   }
 });
 const ports = tailnetPort === null ? [port] : [port, tailnetPort];
-await Promise.all(
-  ports.map((p) => once(serve({ fetch: app.fetch, port: p }), "listening"))
+const servers = ports.map(
+  (p) => serve({ fetch: app.fetch, port: p }) as Server
 );
-console.log(`[panel] listening on ${ports.join(", ")}`);
+await Promise.all(servers.map((s) => once(s, "listening")));
+log("info", `listening on ${ports.join(", ")}`, { ports });
+
+// Well inside the pod's default 30 s termination grace period.
+const DRAIN_MS = 10_000;
+
+// SIGTERM: stop accepting connections, let in-flight requests finish, then
+// exit. Keep-alive sockets close as soon as they go idle; whatever is still
+// open after DRAIN_MS is cut.
+const drain = async (): Promise<void> => {
+  log("info", "draining", { drainMs: DRAIN_MS });
+  const idle = setInterval(() => {
+    for (const s of servers) {
+      s.closeIdleConnections();
+    }
+  }, 100);
+  const cut = setTimeout(() => {
+    for (const s of servers) {
+      s.closeAllConnections();
+    }
+  }, DRAIN_MS);
+  await Promise.all(
+    servers.map((s) => {
+      s.close();
+      return once(s, "close");
+    })
+  );
+  clearInterval(idle);
+  clearTimeout(cut);
+  log("info", "stopped");
+  process.exit(0);
+};
+process.once("SIGTERM", () => {
+  void drain();
+});

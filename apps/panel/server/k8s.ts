@@ -5,6 +5,8 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { URL } from "node:url";
 
+import { UPSTREAM_TIMEOUT_MS, upstreamError } from "./upstream.js";
+
 const NS = "sandbox";
 
 // Pod env entry; valueFrom entries (secret refs) pass through clones intact.
@@ -116,6 +118,8 @@ const k8sFetch = <T>(
       "content-type": contentType ?? "application/json",
     },
     method,
+    // Covers the whole exchange: connect, headers, and body.
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
   };
   if (isHttps && cfg.ca) {
     opts.ca = cfg.ca;
@@ -124,10 +128,14 @@ const k8sFetch = <T>(
     opts.rejectUnauthorized = cfg.rejectUnauthorized;
   }
 
+  const call = { method, path: url.pathname };
   return new Promise<T>((resolve, reject) => {
+    const fail = (error: unknown): void =>
+      reject(upstreamError("kubernetes", call, error));
     const req = reqFn(url, opts, (res) => {
       let data = "";
       res.on("data", (c: Buffer) => (data += c.toString("utf-8")));
+      res.on("error", fail);
       res.on("end", () => {
         let json;
         try {
@@ -141,14 +149,19 @@ const k8sFetch = <T>(
             (json as { message?: string } | undefined)?.message ??
             `${status} ${res.statusMessage ?? ""}`.trim();
           reject(
-            Object.assign(new Error(message || `k8s ${status}`), { status })
+            upstreamError(
+              "kubernetes",
+              call,
+              new Error(message || `k8s ${status}`),
+              status
+            )
           );
           return;
         }
         resolve(json as T);
       });
     });
-    req.on("error", reject);
+    req.on("error", fail);
     if (body !== undefined) {
       req.write(JSON.stringify(body));
     }
