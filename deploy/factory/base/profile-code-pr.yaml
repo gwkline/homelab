@@ -1,7 +1,4 @@
-# Factory code-pr profile (#73): constrained execution template.
-# Callers provide ONLY repository/task inputs; this profile fixes the safe
-# environment: image, service account, netpol, resources, TTL, no k8s API.
-
+# Callers supply only repo/task inputs; the profile fixes everything else.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -26,8 +23,7 @@ data:
       "netpolName": "allow-factory-worker"
     }
 ---
-# Worker network policy: egress ONLY to github.com + registry; no cluster DNS
-# rebinding surprises (explicit IPs resolved via k8s egress to internet).
+# Worker egress: GitHub and package registries by IP.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -49,11 +45,11 @@ spec:
         - ipBlock: { cidr: 18.214.0.0/16 } # index.crates.io
         - ipBlock: { cidr: 108.138.128.0/17 } # static.crates.io CDN
     - ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
-    - to: # in-cluster Kubernetes API (orchestrator spawns Jobs)
+    - to:
         - ipBlock: { cidr: 10.43.0.1/32 }
       ports: [{ protocol: TCP, port: 443 }]
 ---
-# Least-privilege SA: workers get NO Kubernetes API access at all.
+# Workers get no Kubernetes API token.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

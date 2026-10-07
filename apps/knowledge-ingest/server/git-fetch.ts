@@ -1,11 +1,7 @@
 /**
- * Single-blob git fetch for `document` jobs with `github` sources: resolve
- * the ref, find the path in the commit's tree, read the blob, and gate it
- * through the same assessBlob filter sync uses (empty/too-large/secret/
- * binary refuse loudly instead of ingesting garbage). Reuses the git-source
- * clone cache (`openGitRepository`), so a source that also runs syncs shares
- * one clone. Read-only: clone/fetch, never push; tokens ride via
- * `GIT_SOURCE_TOKEN`(_FILE) env exactly as in git-source.
+ * Single-blob fetch for `github` document jobs. Shares the git-source clone
+ * cache and `assessBlob` gate with sync, so empty, oversized, secret, or
+ * binary blobs fail loudly instead of being ingested.
  */
 
 import type { ChunkFormat } from "../../knowledge/src/chunk.ts";
@@ -35,7 +31,7 @@ export interface GitHubBlobRequest {
 export interface GitHubBlob {
   /** The commit actually read (pinned provenance for the fetched text). */
   commitSha: string;
-  /** Deterministic #56 document id for (namespace, path). */
+  /** Deterministic document id for (namespace, path). */
   documentId: string;
   /** Chunker format for the path (extension → markdown/code/text). */
   format: ChunkFormat;

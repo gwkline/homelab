@@ -1,46 +1,10 @@
 /**
- * Semantic retrieval via pgvector (#62).
- *
- * Embeddings live in a `vector(384)` column (ADR-002 D6: local
- * `BAAI/bge-small-en-v1.5`, 384-d, cosine) and are ranked with the HNSW
- * approximate nearest neighbor index:
- *
- *   CREATE INDEX ... USING hnsw (embedding vector_cosine_ops)
- *     WHERE valid_to IS NULL AND embedding IS NOT NULL;
- *   SELECT ..., embedding <=> $1::vector AS distance
- *     FROM chunks
- *     WHERE namespace = $2 AND embedding_model = $3
- *       AND embedding IS NOT NULL AND valid_to IS NULL
- *     ORDER BY embedding <=> $1::vector ASC LIMIT $4;
- *
- * Cosine distance (`<=>`, `vector_cosine_ops`) matches the selected embedding
- * model; scores are lower-is-better and ranks (1-based positions) are what the
- * fusion contract consumes. Namespace (the collection key, ADR-002 D9) and
- * active-version (`valid_to IS NULL`, i.e. the chunk is live in the current
- * document version) are parameterized predicates, never interpolated.
- *
- * Explicit behavior for edge cases:
- * - Query embedding empty/zero/wrong dimension/non-finite → throws before any
- *   database call, naming the expected model and dimension.
- * - Chunk rows with missing embeddings, a missing model tag, or another
- *   model's tag are never mixed into results (`embedding_model = $3` +
- *   `embedding IS NOT NULL`); they are surfaced by `countChunksNeedingBackfill`
- *   for the re-embed backfill job (ADR-002 D10: a model swap is a backfill,
- *   not an in-place rewrite).
- * - `includeSuperseded` drops the `valid_to IS NULL` predicate; because the
- *   partial HNSW index only covers live chunks, that mode scans sequentially
- *   and is therefore exact.
- *
- * An exact sequential-scan baseline (`searchPgvectorExact`, via
- * `SET LOCAL enable_indexscan = off`) exists for tests/evaluation on small
- * datasets; `hnswRecall` compares approximate top-k against it.
- *
- * Like `src/bm25.ts`, SQL construction and row mapping are pure and covered by
- * offline unit tests; `searchPgvector`/`searchPgvectorExact` take any
- * pg-compatible client, and `withPgvectorClientFromEnv` is the only piece that
- * touches `DATABASE_URL` / opens a connection.
+ * Semantic retrieval over a partial HNSW index on `vector(384)` cosine
+ * embeddings (ADR-002 D6). Rows embedded under another model, or not at all,
+ * are never mixed into results; `countChunksNeedingBackfill` reports them.
  */
 
+import type { PgClient } from "./pg-client.ts";
 import { KNOWLEDGE_SCHEMA_MIGRATION_SQL } from "./schema.ts";
 
 export const PGVECTOR_TABLE = "chunks";
@@ -52,26 +16,19 @@ export const DISTANCE_OPERATOR = "<=>";
 export const DEFAULT_NAMESPACE = "default";
 /** pgvector's built-in `hnsw.ef_search` default, pinned explicitly per query. */
 export const DEFAULT_EF_SEARCH = 40;
-/** Default candidate count when the caller does not specify `limit`. */
 export const DEFAULT_VECTOR_LIMIT = 10;
 
-/** Schema/migration version to record in eval provenance once applied. */
 export const PGVECTOR_SCHEMA_VERSION = "1-pgvector-chunks";
 
 /**
- * Idempotent migration: the durable knowledge base schema (ADR-002 D3/#56,
- * defined in `src/schema.ts`: namespaces, documents, document versions,
- * content-addressed chunks with citation anchors, ingest jobs, and the core
- * indexes) plus this channel's partial HNSW index. The `vector(384)` typmod
- * pins the model dimension — a model whose dimension differs needs a new
- * column/migration alongside the re-embed backfill (ADR-002 D6/D10).
+ * The knowledge schema plus this channel's HNSW index. The `vector(384)`
+ * typmod pins the dimension; a different-sized model needs a new column.
  */
 export const PGVECTOR_MIGRATION_SQL = `${KNOWLEDGE_SCHEMA_MIGRATION_SQL}
 CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw
   ON chunks USING hnsw (embedding vector_cosine_ops)
   WHERE valid_to IS NULL AND embedding IS NOT NULL;`;
 
-/** Citation anchor stored per chunk (JSONB), mirroring the #56 contract. */
 export interface CitationAnchor {
   type: "offset" | "heading";
   start?: number;
@@ -79,12 +36,7 @@ export interface CitationAnchor {
   value?: string;
 }
 
-/**
- * One ranked semantic hit. Result shape matches the BM25 candidate contract:
- * the chunk (id + text), its document version, its rank/score, and citation
- * anchors. `distance` is cosine distance (lower = better); `rank` is the
- * 1-based position in the returned order.
- */
+/** `distance` is cosine distance (lower is better); `rank` is 1-based. */
 export interface PgvectorHit {
   anchors: CitationAnchor[];
   chunkId: string;
@@ -97,57 +49,27 @@ export interface PgvectorHit {
 }
 
 export interface PgvectorSearchOptions {
-  /**
-   * Max candidates to return. Must be an integer >= 1.
-   * Defaults to `DEFAULT_VECTOR_LIMIT`.
-   */
   limit?: number;
-  /** Namespace (collection key) to search. Defaults to `DEFAULT_NAMESPACE`. */
   namespace?: string;
-  /**
-   * Include superseded chunks (`valid_to` set). Defaults to `false`; because
-   * the partial HNSW index only covers live chunks, `true` scans sequentially.
-   */
+  /** The partial HNSW index covers only live chunks, so this scans sequentially. */
   includeSuperseded?: boolean;
-  /**
-   * Model generation to search. Defaults to `EMBEDDING_MODEL`; chunks tagged
-   * with any other model are filtered out, never mixed (ADR-002 D6/D10).
-   */
   embeddingModel?: string;
-  /**
-   * HNSW exploration breadth (`hnsw.ef_search`). Must be an integer >= 1.
-   * Defaults to `DEFAULT_EF_SEARCH`; ignored by the exact path.
-   */
+  /** `hnsw.ef_search`; ignored by the exact path. */
   efSearch?: number;
 }
 
-/** Minimal pg-compatible client surface; satisfied by `pg` Pool/Client. */
-export interface PgvectorDbClient {
-  query: (
-    text: string,
-    params: unknown[]
-  ) => Promise<{ rows: Record<string, unknown>[] }>;
-}
-
-/** Parameterized SELECT text plus bind params for `client.query`. */
 export interface PgvectorSearchQuery {
   text: string;
   params: unknown[];
 }
 
-/**
- * Bucketed visibility report for the re-embed backfill job (#62): retrieval
- * only ever sees `ready` rows; the other buckets say exactly what is missing
- * and why, so empty results are diagnosable instead of mysterious.
- */
+/** Retrieval only sees `ready` rows; the other buckets explain empty results. */
 export interface PgvectorBackfillCounts {
   embeddingModel: string;
-  /** Embedded under a different model (or untagged): generation mismatch. */
+  /** Embedded under a different model, or untagged. */
   modelMismatch: number;
-  /** No embedding at all (never embedded or cleared for re-embed). */
   missingEmbedding: number;
   namespace: string;
-  /** Embedded under `embeddingModel` — the only rows retrieval can see. */
   ready: number;
   total: number;
 }
@@ -192,12 +114,6 @@ const validatedEfSearch = (efSearch: number | undefined): number => {
   return value;
 };
 
-/**
- * Validate a query embedding before it can reach the database: it must be a
- * finite, non-zero numeric vector whose dimension matches the indexed model.
- * Every failure names the expectation it violated so a mismatch between the
- * query embedder and the indexed chunks fails loudly, not silently.
- */
 export const validateQueryEmbedding = (
   queryEmbedding: unknown,
   dimensions: number = EMBEDDING_DIMENSIONS
@@ -229,15 +145,9 @@ export const validateQueryEmbedding = (
   return queryEmbedding;
 };
 
-/** Serialize an embedding to pgvector's text literal format (`[a,b,c]`). */
 export const toPgvectorLiteral = (embedding: number[]): string =>
   `[${embedding.map(String).join(",")}]`;
 
-/**
- * Build the parameterized ANN query (HNSW path). Pure — no I/O, safe to unit
- * test without a database. The embedding, namespace, model, and limit are
- * bind parameters; nothing caller-controlled is interpolated.
- */
 export const buildPgvectorSearchQuery = (
   queryEmbedding: number[],
   options: PgvectorSearchOptions = {}
@@ -264,17 +174,12 @@ LIMIT $4`;
   return { params, text };
 };
 
-/**
- * Build the `SET LOCAL hnsw.ef_search = <n>` statement. `SET` cannot take
- * bind parameters, so the value is validated and inlined; SET LOCAL scopes it
- * to the search's transaction, leaving the session untouched.
- */
+/** `SET` cannot take bind parameters, so the validated value is inlined. */
 export const buildEfSearchStatement = (efSearch: number): string => {
   const value = validatedEfSearch(efSearch);
   return `SET LOCAL hnsw.ef_search = ${value}`;
 };
 
-/** Transaction prelude forcing a sequential scan for the exact baseline. */
 export const PGVECTOR_EXACT_SCAN_GUARD = "SET LOCAL enable_indexscan = off";
 
 const ANCHOR_NUMBER_KEYS = ["start", "end"] as const;
@@ -315,11 +220,7 @@ const parseAnchor = (raw: unknown, context: string): CitationAnchor => {
   return anchor;
 };
 
-/**
- * Parse a chunk's citation anchors from its JSONB cell: an array of
- * well-formed anchors, never a fabricated one. Malformed provenance throws
- * rather than ranking an unciteable chunk.
- */
+/** Malformed anchors throw rather than ranking an unciteable chunk. */
 export const parseAnchors = (
   raw: unknown,
   context: string
@@ -340,12 +241,6 @@ export const parseAnchors = (
   return parsed.map((entry) => parseAnchor(entry, context));
 };
 
-/**
- * Map raw driver rows to hits, assigning 1-based ranks in returned order.
- * Throws on malformed rows (missing ids, non-numeric distance, broken
- * anchors) rather than silently ranking garbage; missing chunk text coerces
- * to "" exactly like the BM25 mapper (the column is NOT NULL anyway).
- */
 export const parsePgvectorRows = (
   rows: Record<string, unknown>[]
 ): PgvectorHit[] =>
@@ -382,7 +277,7 @@ export const parsePgvectorRows = (
   });
 
 const runVectorQuery = async (
-  client: PgvectorDbClient,
+  client: PgClient,
   prelude: string | null,
   built: PgvectorSearchQuery
 ): Promise<PgvectorHit[]> => {
@@ -405,13 +300,11 @@ const runVectorQuery = async (
 };
 
 /**
- * Approximate (HNSW) semantic search. Runs `SET LOCAL hnsw.ef_search` inside
- * the search transaction so `efSearch` applies to exactly this query and is
- * recordable per eval run. Requires a dedicated client (single connection);
- * do not share a pooled connection across concurrent searches.
+ * HNSW search. `efSearch` is scoped to this transaction, so the client must
+ * be a dedicated connection, not one shared across concurrent searches.
  */
 export const searchPgvector = async (
-  client: PgvectorDbClient,
+  client: PgClient,
   queryEmbedding: number[],
   options: PgvectorSearchOptions = {}
 ): Promise<PgvectorHit[]> => {
@@ -422,14 +315,9 @@ export const searchPgvector = async (
   return await runVectorQuery(client, efSearchStatement, built);
 };
 
-/**
- * Exact baseline: the identical ranking query executed under
- * `SET LOCAL enable_indexscan = off`, forcing a sequential scan that computes
- * true cosine distances for every indexed row. Intended for tests/evaluation
- * on small datasets; `hnswRecall` measures the approximate channel against it.
- */
+/** Same query forced to a sequential scan: the ground truth for `hnswRecall`. */
 export const searchPgvectorExact = async (
-  client: PgvectorDbClient,
+  client: PgClient,
   queryEmbedding: number[],
   options: PgvectorSearchOptions = {}
 ): Promise<PgvectorHit[]> => {
@@ -437,11 +325,7 @@ export const searchPgvectorExact = async (
   return await runVectorQuery(client, PGVECTOR_EXACT_SCAN_GUARD, built);
 };
 
-/**
- * HNSW recall vs exact ground truth: |approximate ∩ exact| / |exact| over the
- * two top-k id lists. An empty exact list is vacuously perfect (nothing to
- * find); duplicate ids count once. Deterministic — pure set arithmetic.
- */
+/** |approximate ∩ exact| / |exact|; an empty exact list is vacuously 1. */
 export const hnswRecall = (approximate: string[], exact: string[]): number => {
   const truth = new Set(exact);
   if (truth.size === 0) {
@@ -456,10 +340,6 @@ export const hnswRecall = (approximate: string[], exact: string[]): number => {
   return found.size / truth.size;
 };
 
-/**
- * Build the visibility count query backing `countChunksNeedingBackfill`:
- * one pass over a namespace bucketing rows by embedding readiness.
- */
 export const buildBackfillCountQuery = (
   namespace: string,
   embeddingModel: string = EMBEDDING_MODEL
@@ -491,7 +371,6 @@ const validatedCount = (value: unknown, context: string): number => {
   return parsed;
 };
 
-/** Map one raw count row to the backfill report. */
 export const parseBackfillCounts = (
   namespace: string,
   embeddingModel: string,
@@ -508,14 +387,8 @@ export const parseBackfillCounts = (
   total: validatedCount(row["total"], "total"),
 });
 
-/**
- * Report how many chunks in `namespace` are missing embeddings or tagged with
- * another model generation — the explicit contract for empty/missing
- * embeddings and model migrations (#62): such rows can never appear in
- * results, and this says how many are waiting on the backfill job.
- */
 export const countChunksNeedingBackfill = async (
-  client: PgvectorDbClient,
+  client: PgClient,
   namespace: string,
   embeddingModel: string = EMBEDDING_MODEL
 ): Promise<PgvectorBackfillCounts> => {
@@ -528,21 +401,13 @@ export const countChunksNeedingBackfill = async (
   return parseBackfillCounts(namespace, embeddingModel, row);
 };
 
-/** Run the idempotent migration (`PGVECTOR_MIGRATION_SQL`) on `client`. */
-export const ensurePgvectorSchema = async (
-  client: PgvectorDbClient
-): Promise<void> => {
+export const ensurePgvectorSchema = async (client: PgClient): Promise<void> => {
   await client.query(PGVECTOR_MIGRATION_SQL, []);
 };
 
-/**
- * Integration path: connect with `DATABASE_URL`, check out a single client
- * (the transactional searches need one connection), hand it to `fn`, always
- * release + close afterwards. `pg` is imported lazily so unit tests and
- * offline consumers never need the driver installed.
- */
+/** `pg` is imported lazily so offline consumers never need the driver. */
 export const withPgvectorClientFromEnv = async <T>(
-  fn: (client: PgvectorDbClient) => Promise<T>
+  fn: (client: PgClient) => Promise<T>
 ): Promise<T> => {
   const connectionString = process.env["DATABASE_URL"];
   if (!connectionString) {

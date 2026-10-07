@@ -1,6 +1,4 @@
-# Knowledge retrieval API: hybrid BM25 (pg_textsearch) + vector (pgvector)
-# retrieval with RRF fusion. Stateless; uses an in-memory store when
-# DATABASE_URL is unset.
+# Knowledge retrieval API: hybrid BM25 + pgvector search with RRF fusion.
 FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS build
 WORKDIR /src
 COPY package.json package-lock.json ./

@@ -1,19 +1,18 @@
-# Durable approval gates for sensitive factory transitions (#83, ADR-009 ledger).
+# Durable approval gates for sensitive factory transitions (ADR-003 ledger).
 # Sourced by run.sh. State lives on the GitHub issue: label
 # factory/pending-approval + one <!-- factory:approval:<issue>:<action> -->
 # comment holding the JSON record, so gates survive pod/tick restarts.
 #
-# OWNERSHIP (no double gates): executor policy (profile netpol/SA/resources)
-# owns runtime capability; THIS gate owns the issue -> draft-PR transition;
-# the reviewer/panel merge gates own the merge transition. The gate never
-# re-checks CI, and the merge gates never re-check this approval.
+# This gate owns only the issue -> draft-PR transition; runtime capability
+# belongs to profile policy and merge to the reviewer/panel gates. Neither
+# side re-checks the other.
 #
 # Keep approval_policy in sync with deploy/factory/base/profile-*.yaml.
 
 APPROVAL_LABEL="factory/pending-approval"
 APPROVAL_TTL_HOURS="${FACTORY_APPROVAL_TTL_HOURS:-48}"
-# Always set (never merely unset): approval_put tests this under `set -u`,
-# and auto-approval reaches put without a prior find to initialize it.
+# Initialized because auto-approval reaches approval_put (under `set -u`)
+# without a prior approval_find.
 APPROVAL_COMMENT_ID="${APPROVAL_COMMENT_ID:-}"
 
 approval_policy() {  # <profile> <operation> -> "required <hours>" | "auto" | "none"
@@ -21,9 +20,8 @@ approval_policy() {  # <profile> <operation> -> "required <hours>" | "auto" | "n
     security:publish) echo "none" ;;
     reviewer:*) echo "none" ;;
     code-pr:publish)
-      # Self-approval (operator-enabled): the factory authored the patch and
-      # CI is the merge gate. Set FACTORY_APPROVAL_SELF=manual on the
-      # orchestrator to return to human approval without a code change.
+      # CI is the merge gate; FACTORY_APPROVAL_SELF=manual restores human
+      # approval.
       if [ "${FACTORY_APPROVAL_SELF:-auto}" = "manual" ]; then
         echo "required ${APPROVAL_TTL_HOURS}"
       else
@@ -300,10 +298,7 @@ approval_gate_publish() {  # <repo> <issue> <profile> <branch> <base> <patch_fil
       return 0
       ;;
     auto*)
-      # Self-approval (operator-enabled CI-as-gate): record the decision in
-      # the ledger exactly like a human approval — bound to this digest —
-      # then proceed. A changed artifact re-asks next tick through the normal
-      # pending path; merge itself still requires green CI via the reviewer.
+      # Record the self-approval like a human one, bound to this digest.
       _a_rec=$(mktemp)
       approval_build_request "${_g_repo}" "${_g_issue}" "${_g_profile}" "publish" "${_g_branch}" "$5" "${_g_head}" "${_g_patch}" "${_a_rec}"
       approval_merge "${_a_rec}" '{"status":"approved","decision":{"actor":"factory","at":"'"$(approval_now)"'","rationale":"CI-as-gate self-approval (operator-enabled): code-pr publish auto-proceeds; merge requires green CI via the reviewer"}}' "${_a_rec}.m"
@@ -332,10 +327,7 @@ approval_gate_publish() {  # <repo> <issue> <profile> <branch> <base> <patch_fil
     case "${_g_status}" in
       pending)
         if [ "$(approval_get "${_g_rec}" "digest")" != "${_g_head}" ]; then
-          # Fresh artifact: the expired-or-pending decision was about an older
-          # patch. Rebuild the request (new digest, new TTL) so a human
-          # decides on what would actually merge — never fail closed here just
-          # because a previous patch's window lapsed.
+          # The pending request was for an older patch: re-ask on this one.
           approval_build_request "${_g_repo}" "${_g_issue}" "${_g_profile}" "publish" "${_g_branch}" "$5" "${_g_head}" "${_g_patch}" "${_g_rec}"
           approval_put "${_g_repo}" "${_g_issue}" "publish" "${_g_rec}"
         elif [ "$(approval_epoch "$(approval_get "${_g_rec}" "expires_at")")" -lt "$(approval_epoch "$(approval_now)")" ]; then
@@ -367,8 +359,7 @@ approval_gate_publish() {  # <repo> <issue> <profile> <branch> <base> <patch_fil
         ;;
       expired)
         if [ "$(approval_get "${_g_rec}" "digest")" != "${_g_head}" ]; then
-          # Same fresh-artifact rule as pending above: the lapsed window
-          # belonged to an older patch — re-ask on the current one.
+          # The lapsed request was for an older patch: re-ask on this one.
           approval_build_request "${_g_repo}" "${_g_issue}" "${_g_profile}" "publish" "${_g_branch}" "$5" "${_g_head}" "${_g_patch}" "${_g_rec}"
           approval_put "${_g_repo}" "${_g_issue}" "publish" "${_g_rec}"
         else

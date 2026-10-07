@@ -16,10 +16,8 @@ const levelWeight: Record<LogLevel, number> = {
   warn: 30,
 };
 
-// Structured JSON-lines logger. Redaction is by construction: callers only
-// pass non-private metadata (ids, counts, durations, lengths) — never query
-// text or chunk content. KNOWLEDGE_LOG_QUERIES opts the search handler into
-// logging the raw query explicitly.
+// JSON-lines logger. Callers pass only metadata, never query text or chunk
+// content, unless KNOWLEDGE_LOG_QUERIES opts in to logging queries.
 export const createJsonLogger = (
   stream: NodeJS.WritableStream = process.stdout,
   minLevel: LogLevel = "info"

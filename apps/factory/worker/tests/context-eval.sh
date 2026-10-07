@@ -1,20 +1,11 @@
 #!/bin/sh
-# Context A/B evaluation for coding-run briefs (#86, acceptance: "compares
-# fixture task results with and without context rather than assuming
-# improvement").
+# Context A/B for coding-run briefs: runs the same fixture task through the
+# worker entrypoint with and without a knowledge section and prints both
+# outcomes plus the delta as JSON. Only the run contract gates; whether
+# context helped is recorded, never asserted.
 #
-# Runs the SAME fixture task twice through the real worker entrypoint — once
-# with a cited knowledge section in the brief, once without — and records both
-# outcomes plus the delta as JSON on stdout. The gate is the run CONTRACT:
-# both runs must emit a patch, pass verify, and produce a valid report.
-# Whether context improved the outcome is RECORDED, never assumed: this
-# script does not fail (and must never be made to fail) because the
-# with-context run was not better — the comparison data feeds trend review
-# like apps/knowledge/eval does for retrieval.
-#
-# Model-level A/B: the same harness replays real tasks by pointing
-# WORKER_CMD at a real coding CLI with a real CLONE_URL; the fixture agent is
-# only the deterministic offline default.
+# Point WORKER_CMD at a real coding CLI and CLONE_URL at a real repo for a
+# model-level A/B.
 set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
@@ -34,9 +25,7 @@ git -C "${FIX}/origin" add -A
 git -C "${FIX}/origin" commit -qm init
 
 # --- deterministic fixture agent ------------------------------------------------
-# Echos the prompt it received, attributes citation K1 when the prompt carried
-# one (context-used convention), and makes the same minimal edit either way —
-# so the ONLY variable between runs is the presence of knowledge context.
+# Makes the same edit either way, so knowledge context is the only variable.
 mkdir -p "${FIX}/bin"
 cat > "${FIX}/bin/ctx-cli" << 'EOF'
 #!/bin/sh
@@ -94,8 +83,7 @@ cat > "${FIX}/brief-with.json" << 'EOF'
   }
 }
 EOF
-# Without-context brief = with-context brief minus the knowledge section
-# (jq removal keeps the two runs byte-identical otherwise).
+# Derived with jq so the two briefs are otherwise byte-identical.
 jq 'del(.knowledge)' "${FIX}/brief-with.json" > "${FIX}/brief-without.json"
 
 run_fixture with "${FIX}/brief-with.json" "${FIX}/out-with" "${FIX}/work-with" "${FIX}/prompt-with.txt"
@@ -150,8 +138,6 @@ comparison = {
     "with_context": arm("with"),
     "without_context": arm("without"),
     "delta": {
-        # Both arms pass the contract here; the delta is the attribution
-        # signal only. A real model-level A/B would compare quality too.
         "context_attributed": arm("with")["citations_used"] or [],
         "context_available_to_without_arm": False,
     },

@@ -27,8 +27,7 @@ export interface JobRow {
   created: string | null;
 }
 
-// The feature set this table registers (v9 requires explicit registration —
-// see the comment on JobsTable).
+// TanStack Table v9 requires explicit feature registration.
 const features = tableFeatures({
   columnFilteringFeature: stockFeatures.columnFilteringFeature,
   columnVisibilityFeature,
@@ -55,8 +54,8 @@ const sortIndicator = (
   return cur.desc ? " ▼" : " ▲";
 };
 
-// TanStack Table v9.2.4's header columnDef lacks getToggleSortingHandler (the
-// v9 API gap); sorting is toggled manually below. See issue #115 migration notes.
+// TanStack Table v9's header columnDef lacks getToggleSortingHandler, so
+// sorting is toggled manually.
 export const JobsTable = ({
   jobs,
   onDelete,
@@ -137,10 +136,8 @@ export const JobsTable = ({
   );
 
   const table = useTable<PanelTableFeatures, JobRow>({
-    // The accessor helpers infer per-column TValue (string|null vs string…);
-    // v9's ColumnDef union doesn't accept that mixed-TValue array under
-    // exactOptionalPropertyTypes (optional `footer`/`meta` props), so the
-    // array is erased to the cell-unknown variant at this one boundary.
+    // v9's ColumnDef union rejects mixed per-column TValues under
+    // exactOptionalPropertyTypes, so erase to the cell-unknown variant here.
     columns: columns as unknown as ColumnDef<
       PanelTableFeatures,
       JobRow,

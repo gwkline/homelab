@@ -1,8 +1,4 @@
-# CloudBeaver - browser database client for the factory PostgreSQL cluster
-# (#55). Single replica; all state (users, connections, encrypted
-# credentials, embedded H2 server DB) lives on the workspace PVC. Image is
-# digest-pinned; upstream docs warn that downgrades are unsupported, so bump
-# the pin deliberately (back up the workspace first - see README.md).
+# All state (users, connections, encrypted credentials) is on the workspace PVC.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -26,8 +22,7 @@ spec:
         fsGroup: 8978
       containers:
         - name: cloudbeaver
-          # dbeaver/cloudbeaver:26.2.0 (multi-arch index, 2026-08-31). The
-          # image ships a dbeaver user (8978:8978) and runs the server as it.
+          # Upstream doesn't support downgrades; back up the workspace first.
           image: dbeaver/cloudbeaver:26.2.0@sha256:c06c1859700bd9202d9d49ebc10ee2512d745997d05e7ca6423267b227af1ca7
           securityContext:
             runAsNonRoot: true
@@ -40,22 +35,16 @@ spec:
             - containerPort: 8978
               name: http
           env:
-            # Default is true - this UI must not be reachable without login.
-            # Tailnet identity is the network gate; the admin account is the
-            # application gate.
+            # Upstream default is true.
             - name: CLOUDBEAVER_APP_ANONYMOUS_ACCESS_ENABLED
               value: "false"
-            # Keep the JVM inside the container memory limit.
             - name: JAVA_OPTS
               value: "-Xms128m -Xmx768m"
           volumeMounts:
             - name: workspace
               mountPath: /opt/cloudbeaver/workspace
-            # Java temp files live outside the workspace; keep them off the PVC.
             - name: tmp
               mountPath: /tmp
-            # Default connection (credential-free - see README.md). Mounted as
-            # a single file so the image's own conf/ dir stays intact.
             - name: initial-datasources
               mountPath: /opt/cloudbeaver/conf/initial-data-sources.conf
               subPath: initial-data-sources.conf
@@ -78,8 +67,7 @@ spec:
               port: http
             periodSeconds: 30
       initContainers:
-        # Runs as root only to fix workspace ownership (the local-path
-        # provisioner ignores fsGroup), then exits. Server runs as uid 8978.
+        # Root only to chown the volume (local-path ignores fsGroup).
         - name: volume-init
           image: busybox:1.36
           command: ["chown", "-R", "8978:8978", "/opt/cloudbeaver/workspace"]

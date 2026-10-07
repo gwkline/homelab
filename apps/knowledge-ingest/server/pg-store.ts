@@ -1,12 +1,7 @@
 /**
- * Postgres-backed `IngestStore` (#58): the durable service path. Executes the
- * queue SQL from `queue.ts` over a minimal pg-compatible client; every value
- * is a bind parameter, never interpolated. All statements are single-shot so
- * they are atomic without explicit transactions — the claim in particular is
- * one `UPDATE ... WHERE id IN (SELECT ... FOR UPDATE SKIP LOCKED)`.
- *
- * Row mappers throw on malformed rows instead of silently passing garbage
- * through the API (same discipline as the apps/knowledge channel mappers).
+ * Postgres `IngestStore`. Every value is a bind parameter, and every statement
+ * is single-shot so none needs an explicit transaction. Row mappers throw on
+ * malformed rows rather than passing them through.
  */
 
 import type { Pool } from "pg";
@@ -115,7 +110,7 @@ const asState = (value: unknown, context: string): JobState => {
   );
 };
 
-/** Document jobs carry the resolved #56 provenance inside their payload. */
+/** Document jobs carry their resolved provenance inside the payload. */
 const provenanceOf = (
   row: Record<string, unknown>
 ): IngestJobRecord["provenance"] => {
@@ -228,7 +223,7 @@ export class PgIngestStore implements IngestStore {
     this.defaultMaxAttempts = options.defaultMaxAttempts ?? 5;
   }
 
-  /** Idempotent DDL for the queue tables (see `queue.ts` for the layout). */
+  /** Idempotent DDL for the queue tables. */
   async applySchema(): Promise<void> {
     await this.client.query(INGEST_SCHEMA_SQL, []);
   }
@@ -320,8 +315,7 @@ export class PgIngestStore implements IngestStore {
     payload: DocumentVersionPayload,
     sourceId: string
   ): Promise<EnqueueResult> {
-    // Register a minimal source row when absent so the panel-facing source
-    // list includes the ledger counts; an existing (richer) row wins.
+    // Register a minimal source row if absent so the source list shows counts.
     await this.client.query(SOURCE_INSERT_IF_MISSING_SQL, [
       sourceId,
       payload.source === "git" ? "github" : "url",
@@ -510,7 +504,7 @@ export class PgIngestStore implements IngestStore {
   }
 }
 
-/** Open a pg Pool for the store (kept separate so tests can inject stubs). */
+/** Open a pg Pool; separate from the store so tests can inject stubs. */
 export const createPgPool = async (connectionString: string): Promise<Pool> => {
   const { default: pg } = await import("pg");
   return new pg.Pool({ connectionString });

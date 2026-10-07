@@ -6,7 +6,7 @@ export interface IngestConfig {
   token: string;
   /** Postgres connection string; null runs the in-memory store (dev/tests). */
   databaseUrl: string | null;
-  /** Serve readiness only once the schema is applied. */
+  /** Apply the queue and knowledge schemas at startup. */
   applySchemaOnBoot: boolean;
   workerEnabled: boolean;
   worker: WorkerConfig;
@@ -68,9 +68,7 @@ const readTokenFile = (path: string): string => {
   }
 };
 
-// The bearer token must come from a secret: an env var injected from a
-// Kubernetes Secret, or a mounted token file. Fail closed when neither is
-// present so the service can never start unauthenticated.
+// Fail closed: the service never starts without a secret-backed token.
 export const configFromEnv = (
   env: Record<string, string | undefined>
 ): IngestConfig => {
@@ -144,7 +142,7 @@ export const configFromEnv = (
   };
 };
 
-// Test/default instance: production-shaped defaults, caller supplies the rest.
+/** Production defaults with a caller-supplied token; used by tests. */
 export const baseConfig = (
   token: string,
   overrides: Partial<IngestConfig> = {}

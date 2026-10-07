@@ -1,5 +1,5 @@
 #!/bin/sh
-# Factory orchestrator (#78, ADR-009 GitHub-as-ledger).
+# Factory orchestrator (ADR-003: GitHub is the ledger).
 # Runs as a single-instance CronJob (concurrency: Forbid).
 #
 # One tick:
@@ -8,7 +8,7 @@
 #   2. Swap label to factory/in-progress + post run marker comment
 #   3. Spawn a worker Job from the profile
 #   4. Watch it to completion; extract /out artifacts from pod logs
-#   5. Publish: apply patch → push branch → approval gate (#83) → draft PR
+#   5. Publish: apply patch → push branch → approval gate → draft PR
 #   6. Converge labels on every exit path (success, failure, crash)
 #
 # Stop conditions (why every path terminates):
@@ -21,8 +21,7 @@
 set -eu
 
 REPO="${FACTORY_REPO:?FACTORY_REPO required (owner/name)}"
-# Operator whitelist: FACTORY_REPOS env (comma-separated) or built-in defaults.
-# Panel /api/factory/run keeps the canonical allowlist; this guards the CronJob.
+# Repo allowlist (mirrors the panel's /api/factory/run allowlist).
 WHITELIST="${FACTORY_REPOS:-gwkline/homelab,gwkline/launchpad,gwkline/plantry,gwkline/personal-site,gwkline/kline-services-bot,gwkline/discord-bot,gwkline/pr-czar}"
 case ",${WHITELIST}," in
   *",${REPO},"*) ;;
@@ -39,23 +38,14 @@ WORKFLOW_VERSION="${FACTORY_WORKFLOW_VERSION:-v1}"
 # An in-progress issue with no draft PR older than this is reclaimed to queued.
 STALE_HOURS="${FACTORY_STALE_HOURS:-2}"
 
-# gh wrapper with a hard timeout: a hung GitHub connection must not wedge the
-# whole tick (CronJob activeDeadline then kills the pod mid-publish).
+# Hard timeouts: a hung connection must fail the step, not burn the tick's
+# activeDeadline.
 gh() { timeout 60 /usr/local/bin/gh "$@"; }
-# kubectl got the same treatment: DNS/netpol blips made it hang too, burning
-# whole ticks against the activeDeadline.
 kubectl() { timeout 120 /usr/local/bin/kubectl "$@"; }
-# git network ops: 5 min ceiling; clones/pushes either work fast or the tick
-# fails visibly instead of stalling.
-# git lives in /usr/bin on debian:bookworm-slim (apt package) — resolve via
-# PATH instead of hardcoding /usr/local/bin (Dockerfile only installs gh and
-# kubectl there). #116 hardcoded the wrong path; every publish tick died with
-# "timeout: failed to run command '/usr/local/bin/git'".
 gitt() { timeout 300 /usr/bin/git "$@"; }
 timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
-# Redact the GitHub token from anything destined for a comment or report:
-# worker log tails and reports echo agent output, and an agent could have
-# printed its env. Everything else on these paths is already token-free.
+# Redact the GitHub token from worker output destined for comments: an agent
+# could have printed its env.
 redact() {
   if [ -n "${GH_TOKEN:-}" ]; then
     sed "s#${GH_TOKEN}#***#g"
@@ -64,20 +54,14 @@ redact() {
   fi
 }
 
-# Durable approval gates (#83): policy table, record I/O, publish gate, resume.
+# Durable approval gates: policy table, record I/O, publish gate, resume.
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 . "${SCRIPT_DIR}/approval.sh"
-# Run marker comment template (one comment per Run, edited in place; carries
-# the caller identity injected by the panel/Executor path — #84).
+# Run marker comment template (one comment per Run, edited in place).
 . "${SCRIPT_DIR}/marker.sh"
 
-# Update the run marker comment. Defined BEFORE the first failure path that
-# uses it (the worker-image FATAL at the profile resolution) — dash dies with
-# "update_status: not found" (127) when the definition sits below the first
-# call, which crashed the fail path before it could label the issue
-# factory/failed, so the same queued issue was re-picked and re-failed every
-# tick. No-op until the marker comment exists (MARKER_ID is set after the
-# worker dispatch); status text still surfaces via stderr for the pod log.
+# Update the run marker comment; a no-op until the marker exists. Must be
+# defined above its first caller (dash resolves functions at call time).
 MARKER_ID=""
 update_status() {  # $1=status, $2=extra detail markdown
   if [ -n "${MARKER_ID}" ]; then
@@ -88,10 +72,8 @@ update_status() {  # $1=status, $2=extra detail markdown
 
 NUM=""
 # shellcheck disable=SC2329  # invoked via `trap cleanup EXIT` below
-# Crash convergence: if we die (set -e, OOM, deadline) while the issue is
-# still labeled in-progress, move it to failed so it is never stranded.
-# The label state is checked LIVE (not via a flag) so normal terminal
-# transitions are never clobbered by this trap.
+# Crash convergence: if we die while the issue is still in-progress, move it
+# to failed. The label is checked live so normal terminal transitions win.
 cleanup() {
   RC=$?
   if [ -n "${NUM}" ] && [ "${RC}" -ne 0 ]; then
@@ -101,13 +83,11 @@ cleanup() {
       echo "[orch] crash cleanup: issue #${NUM} → ${LABEL_FAILED}" >&2
     fi
   fi
-  # No explicit exit here: POSIX preserves the original exit status after the
-  # EXIT trap completes, and re-exiting from the trap recurses in bash.
+  # No explicit exit: POSIX preserves the original status after the trap.
 }
 trap cleanup EXIT
 
-# Transient DNS/netpol warm-up can fail the first auth probe (seen in
-# sandbox pods); retry a few times before giving up.
+# DNS/netpol warm-up can fail the first auth probe; retry briefly.
 AUTH_OK=0
 for _a in 1 2 3 4 5 6; do
   if timeout 10 gh auth status >/dev/null 2>&1; then AUTH_OK=1; break; fi
@@ -116,17 +96,13 @@ done
 [ "${AUTH_OK}" = "1" ] || { echo "[orch] no gh auth" >&2; exit 1; }
 
 # ---- 0. reclaim stranded in-progress issues --------------------------------
-# The label swap to in-progress happens before the Job exists, so a tick that
-# died between swap and spawn (OOM, deadline, API blip) used to orphan the
-# issue forever. Reclaim: in-progress + no draft PR for this issue+profile +
-# run marker older than STALE_HOURS → back to queued.
+# A tick that died between the label swap and the Job spawn orphans the
+# issue. Reclaim: in-progress + no PR for this issue+profile + run marker
+# older than STALE_HOURS → back to queued.
 RECLAIMED=0
 for LNUM in $(gh api "repos/${REPO}/issues?labels=${LABEL_WIP}&state=open&per_page=20" --jq '.[].number' 2>/dev/null || true); do
   BRANCH="factory/issue-${LNUM}/${PROFILE}"
-  # "Don't touch labels on uncertain state": an API failure here must neither
-  # treat the PR question as answered nor strip the in-progress label — that
-  # would silently drop the issue from the pipeline (the exact stranding class
-  # this reclaim loop exists to fix). Leave labels alone; next tick retries.
+  # Never touch labels on uncertain state: a failed lookup skips this tick.
   if ! PRS=$(gh pr list -R "${REPO}" --head "${BRANCH}" --state all --json number --jq 'length' 2>/dev/null); then
     echo "[orch] WARN reclaim: PR lookup failed for issue #${LNUM} — skipping this tick" >&2
     continue
@@ -157,19 +133,15 @@ PY
 done
 [ "${RECLAIMED}" = "0" ] || echo "[orch] reclaimed ${RECLAIMED} stranded issue(s)"
 
-# ---- 0b. resolve durable approval gates (#83) ------------------------------
-# Issues parked on factory/pending-approval carry their approval record on the
-# issue itself, so ANY fresh tick/pod resolves a decision a human made in the
-# panel: open the PR when approved+digest matches; expire/deny/invalidate
-# cleanly otherwise. Nothing here depends on this pod's memory.
+# ---- 0b. resolve durable approval gates -----------------------------------
+# Issues on factory/pending-approval carry their approval record on the issue,
+# so any tick resolves a decision a human made in the panel.
 approval_resume "${REPO}" || true
 
 # ---- 1. find ONE queued issue ----------------------------------------------
-# One issue per tick: each queued item gets a full fresh tick budget instead
-# of the 2nd+ item inheriting whatever time the 1st burned (the old loop
-# starved them into the 3900s deadline). The */10 schedule drains the queue
-# continuously; an empty-queue tick costs ~5s of API calls.
-# Panel manual trigger can pin a single issue via FACTORY_ISSUE env (avoids GH label propagation race).
+# One issue per tick so each run gets the full tick budget. The panel's
+# manual trigger pins an issue via FACTORY_ISSUE (avoids a label-propagation
+# race).
 NUM_Q=""
 if [ -n "${FACTORY_ISSUE:-}" ]; then
   if gh api "repos/${REPO}/issues/${FACTORY_ISSUE}" --jq '.labels[].name' 2>/dev/null | grep -qx "${LABEL_QUEUED}"; then
@@ -193,9 +165,8 @@ RUN_TS=$(timestamp)
 EXISTING=$(gh pr list -R "${REPO}" --head "${BRANCH}" --state all --json number --jq 'length')
 if [ "${EXISTING}" != "0" ]; then
   echo "[orch] branch ${BRANCH} already has PR — skipping duplicate"
-  # A prior publisher may have created the PR but died before converging the
-  # issue ledger. Repair the terminal label instead of merely dropping the
-  # issue from the queue; otherwise the collector can requeue it forever.
+  # A prior publisher may have died before converging labels; repair them so
+  # the collector does not requeue the issue forever.
   gh issue edit "${NUM}" -R "${REPO}" \
     --remove-label "${LABEL_QUEUED}" --remove-label "${LABEL_WIP}" \
     --add-label "${LABEL_DONE}" >/dev/null
@@ -203,8 +174,6 @@ if [ "${EXISTING}" != "0" ]; then
 fi
 
 # ---- 2. resolve profile stack (image/SA/resources) ------------------------
-# Resolved before the marker comment so the Run records the stack that will
-# execute it.
 case "${PROFILE}" in
   security)
     PROFILE_CM="factory-profile-security"
@@ -245,42 +214,32 @@ MARKER_ID=${COMMENT_URL##*issuecomment-}
 
 # ---- 3. spawn the worker Job ---------------------------------------------
 JOB_NAME="factory-issue-${NUM}-$(date +%s)"
-# Build the worker brief: single python step, gh output via temp file.
 gh issue view "${NUM}" -R "${REPO}" --json number,title,body,url > /tmp/issue.json
 
-# Per-repo verify command: the worker's stop condition is "verify passes",
-# not "the agent exited" (which was always exit 0). Pipe-free on purpose —
-# the worker runs these under dash, where a pipeline's exit status is the
-# LAST command's, so `cmd | tail` would always "pass".
+# Per-repo verify command: the worker's stop condition. Pipe-free on purpose:
+# dash reports a pipeline's last exit status, so `cmd | tail` always passes.
+# Keep in sync with apps/factory/medic/run-medic.sh.
 VERIFY_CMD=""
 case "${REPO}" in
   *launchpad*)    VERIFY_CMD="cargo check --workspace --all-targets" ;;
   *plantry*|*personal-site*|*pr-czar*|*kline-services-bot*|*discord-bot*) VERIFY_CMD="npm run build" ;;
-  # Diff-scoped: syntax-check every changed .sh in the worker (shellcheck when
-  # present, dash -n fallback — always available). A fixed single-file check
-  # was near-vacuous; this scales with what the issue actually touches.
+  # Syntax-check every changed .sh (shellcheck when present, else dash -n).
   *homelab*)      VERIFY_CMD="for f in \$(git diff --name-only HEAD -- '*.sh'); do shellcheck -s sh \"\$f\" 2>/dev/null || dash -n \"\$f\" || exit 1; done; echo verify-ok" ;;
 esac
 
-# ---- 3b. knowledge context (#86) -------------------------------------------
-# Server-side brief assembly: query the configured knowledge service for
-# context relevant to this issue and embed a cited, budget-bounded record in
-# the brief. Fail-open: knowledge-context.sh always writes a status record
-# (disabled/unavailable/timeout/empty/ok) and exits 0 — a knowledge outage
-# never fails a run, and the status + selected citations land on the Run
-# comment below for visibility. Retrieved content is UNTRUSTED DATA: the
-# worker brief labels it as such and it cannot override profile instructions.
+# ---- 3b. knowledge context ------------------------------------------------
+# Fail-open: knowledge-context.sh always writes a status record and exits 0,
+# so a knowledge outage never fails a run. Retrieved content is untrusted data
+# in the brief and cannot override profile instructions.
 KNOWLEDGE_FILE="/tmp/knowledge-${NUM}.json"
 sh "${SCRIPT_DIR}/knowledge-context.sh" "${REPO}" /tmp/issue.json "${KNOWLEDGE_FILE}" 2>&1 || true
-# The record must exist even if the helper itself crashed — an explicit
-# "assembly failed" beats an absent section (visible, not silent).
+# An explicit "crashed" record beats a silently absent section.
 if [ ! -s "${KNOWLEDGE_FILE}" ]; then
   printf '{"status":"unavailable","error":"knowledge context assembly crashed","queries":[],"citations":[]}' > "${KNOWLEDGE_FILE}"
 fi
 
-# Compact record for the Run comment: exact queries + retrieval config +
-# selected citations (ids, sources, versions — no chunk text, the comment is
-# the durable Run ledger; full text rides in the brief itself).
+# Compact record for the Run comment: queries, retrieval config, citations
+# (no chunk text; full text rides in the brief).
 KNOWLEDGE_BLOCK=$(python3 - "${KNOWLEDGE_FILE}" << 'PYEOF'
 import json, sys
 
@@ -345,8 +304,7 @@ except Exception:
         "citations": [],
     }
 print(json.dumps({
-    # run_id maps 1:1 to the run marker (factory:run:<issue>:<ts>) so logs,
-    # reports and PRs can be traced back to exactly one Run attempt.
+    # run_id maps 1:1 to the run marker (factory:run:<issue>:<ts>).
     "run_id": run_id,
     "repository": repo,
     "issue": d,
@@ -354,8 +312,7 @@ print(json.dumps({
     "workflow_version": workflow,
     "constraints": ["draft PR only", "minimal diff"],
     "verify_command": verify,
-    # Cited knowledge context (#86): UNTRUSTED data, cited, budgeted. Never a
-    # source of instructions for the worker.
+    # Untrusted, cited reference data; never a source of instructions.
     "knowledge": knowledge
 }))
 PYEOF
@@ -393,15 +350,11 @@ spec:
             - { name: FACTORY_REPO,  value: "${REPO}" }
             - { name: FACTORY_ISSUE, value: "${NUM}" }
             - { name: FACTORY_PROFILE, value: "${PROFILE}" }
-            # The worker builds the authenticated clone URL from its GH_TOKEN
-            # env, so the token never appears in the Job spec (kubectl get job
-            # -o yaml stays secret-free; ADR D6).
+            # The worker builds its clone URL from GH_TOKEN, so the token never
+            # appears in the Job spec (ADR D6).
             - name: GH_TOKEN
               valueFrom:
                 secretKeyRef: { name: github-token, key: token }
-            # No CLONE_URL here on purpose: the worker builds the authenticated
-            # clone URL from GH_TOKEN itself, so the token never appears in the
-            # Job spec (kubectl get job -o yaml stays secret-free; ADR D6).
             - { name: WORKER_CMD,    value: "${WORKER_CMD:-claude --dangerously-skip-permissions}" }
             - name: OPENCODE_AUTH_B64
               value: '${OPENCODE_AUTH_B64:-}'   # shell substitutes; single-quote keeps yaml safe
@@ -419,18 +372,15 @@ echo "[orch] job ${JOB_NAME} created"
 
 update_status "running" "_Job \`${JOB_NAME}\` running._
 
-<details><summary>knowledge context (#86)</summary>
+<details><summary>knowledge context</summary>
 
 ${KNOWLEDGE_BLOCK}
 
 </details>"
 
 # ---- 4. wait for completion -----------------------------------------------
-# Poll instead of `kubectl wait`: dash + set -e silently swallowed its
-# non-zero exit in some conditions, skipping the failure path entirely.
-# 340 x 10s = 3400s: the full 3600s worker budget minus image-pull/startup,
-# so a legitimately long worker is never declared failed while still running
-# (issue #88 attempt 2 hit exactly that with the old 3000s wait).
+# Poll instead of `kubectl wait`, whose exit status dash + set -e can swallow.
+# 340 x 10s = the 3600s worker budget minus image pull/startup.
 WAIT_OK=0
 for _i in $(seq 1 340); do
   PHASE=$(kubectl get job "${JOB_NAME}" -n sandbox -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
@@ -470,9 +420,8 @@ ${LOGTAIL}
 fi
 
 # ---- 5. extract patch from the completed pod -------------------------------
-# Worker prints base64 artifacts to logs (---PATCH_B64_BEGIN--- ... ---PATCH_B64_END---).
-# kubectl cp / kubectl exec requires Running; Job pods are terminated (Failed/Succeeded).
-# Use kubectl logs on the Succeeded pod; select deterministically, not .items[0].
+# The worker prints base64 artifacts to its logs (kubectl cp/exec need a
+# running pod; Job pods are terminated). Prefer the Succeeded pod.
 POD=$(kubectl get pods -n sandbox -l job-name="${JOB_NAME}" --field-selector status.phase=Succeeded -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
 if [ -z "${POD}" ]; then
   POD=$(kubectl get pods -n sandbox -l job-name="${JOB_NAME}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
@@ -482,18 +431,13 @@ if [ -z "${POD}" ]; then
   gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
   exit 0
 fi
-# Try log-based extraction; fallback to cp for old image compat during rollout.
-# Logs are fetched once: both the patch and the structured worker report ride
-# the same base64 blocks (worker emits PATCH_B64 + REPORT_B64).
+# Logs are fetched once: they carry both PATCH_B64 and REPORT_B64 blocks.
 POD_LOGS="/tmp/pod-logs-${NUM}.txt"
 kubectl logs -n sandbox "${POD}" > "${POD_LOGS}" 2>/dev/null || true
 EXTRACTED=0
 if grep -q "PATCH_B64_BEGIN" "${POD_LOGS}"; then
   sed -n '/---PATCH_B64_BEGIN---/,/---PATCH_B64_END---/p' "${POD_LOGS}" \
     | grep -v -- "---PATCH" | tr -d '\n\r ' | base64 -d > "/tmp/patch-${NUM}.diff" 2>/dev/null && EXTRACTED=1
-fi
-if [ "${EXTRACTED}" != "1" ]; then
-  kubectl cp "sandbox/${POD}:/out/patch.diff" "/tmp/patch-${NUM}.diff" >/dev/null 2>&1 && EXTRACTED=1 || true
 fi
 if [ "${EXTRACTED}" != "1" ] || [ ! -s "/tmp/patch-${NUM}.diff" ]; then
   update_status "failed" "Could not retrieve patch artifact (pod: ${POD})."
@@ -502,16 +446,14 @@ if [ "${EXTRACTED}" != "1" ] || [ ! -s "/tmp/patch-${NUM}.diff" ]; then
   exit 0
 fi
 
-# Structured worker report (ADR-009 artifact): embedded in the run comment so
-# the PR's verification story survives the pod. Redacted like log tails.
+# Structured worker report: embedded in the run comment so the verification
+# story survives the pod.
 REPORT_JSON=""
 if grep -q "REPORT_B64_BEGIN" "${POD_LOGS}"; then
   REPORT_JSON=$(sed -n '/---REPORT_B64_BEGIN---/,/---REPORT_B64_END---/p' "${POD_LOGS}" \
     | grep -v -- "---REPORT" | tr -d '\n\r ' | base64 -d 2>/dev/null | redact || true)
 fi
-TESTS_VAL=$(printf '%s' "${REPORT_JSON}" | jq -r '.tests // "not-reported"' 2>/dev/null || echo "not-reported")
-# Model attribution (#241): pull the worker's model id out of the report so
-# the run marker and PR body name it. Empty when the worker didn't record one.
+# Worker model id for the run marker and PR body (empty if unreported).
 WORKER_MODEL=$(printf '%s' "${REPORT_JSON}" | jq -r '.model // ""' 2>/dev/null || echo "")
 export WORKER_MODEL
 REPORT_BLOCK=""
@@ -519,7 +461,7 @@ if [ -n "${REPORT_JSON}" ]; then
   REPORT_BLOCK=$(printf '<details><summary>worker report</summary>\n\n```json\n%s\n```\n\n</details>' "${REPORT_JSON}")
 fi
 
-# ---- 6. publish phase (publisher responsibilities, inline for v1) ---------
+# ---- 6. publish -------------------------------------------------------------
 update_status "publishing" "_Applying patch and opening draft PR..._"
 
 PUBLISH_DIR="/tmp/publish-${NUM}"
@@ -536,22 +478,12 @@ if gitt apply --whitespace=nowarn "/tmp/patch-${NUM}.diff" 2>/tmp/apply-err; the
 Produced by homelab software factory (${PROFILE} profile).${WORKER_MODEL:+
 Model: ${WORKER_MODEL}}
 Refs #${NUM}"
-  # Stage the branch BEFORE the gate: the staged branch is the durable artifact
-  # the approval binds to (digest = branch head); opening the PR is the gated
-  # sensitive transition. A pending gate parks the issue on
-  # factory/pending-approval and a later tick/pod resumes from the record.
+  # Push the branch before the gate: the approval binds to its head SHA, and
+  # opening the PR is the gated transition.
   echo "[orch] publish: pushing branch ${BRANCH}..."
-  # Stale-branch convergence: a prior tick may have pushed this branch and died
-  # before opening the PR. The branch is factory-owned transient state for the
-  # patch built above (fresh from current main), so overwrite it. A plain push
-  # dies here with "non-fast-forward" and — under set -eu — takes the whole
-  # tick down through the crash trap instead of the labeled failure path.
-  # Lease form matters: in a fresh clone the implicit --force-with-lease never
-  # matches (rejected "stale info" even with a correct tracking ref — verified
-  # live), so read the remote SHA and pass an explicit lease. Absent remotely
-  # means first push: plain create. A TOCTOU move between ls-remote and push
-  # fails the lease and lands in the labeled path below; the next tick then
-  # converges, so staleness can delay but never wedge publishing.
+  # A prior tick may have pushed this factory-owned branch and died; overwrite
+  # it. A fresh clone has no tracking ref, so the lease must name the remote
+  # SHA explicitly; a lost race fails into the labeled path below.
   REMOTE_SHA=$(gitt ls-remote "${AUTH_CLONE}" "refs/heads/${BRANCH}" 2>/dev/null | cut -f1)
   if [ -n "$REMOTE_SHA" ]; then
     PUSH_LEASE="--force-with-lease=${BRANCH}:${REMOTE_SHA}"

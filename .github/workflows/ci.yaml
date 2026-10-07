@@ -61,13 +61,8 @@ jobs:
             sh "$t"
           done
 
-  # Panel list-and-launch e2e (#27): the panel runs inside a disposable kind
-  # cluster as its production ServiceAccount (`panel`) with the mounted
-  # cluster CA, and the suite drives the real HTTP API — /api/state listing
-  # seeded Jobs/CronJobs, POST /api/jobs creating a locked-down Job that
-  # reaches Complete, and 400s for invalid input. TLS trust or RBAC drift
-  # fails loudly with diagnostics. scripts/panel-e2e-smoke.sh reuses the
-  # kind cluster this job creates (name panel-e2e) and cleans up after.
+  # Panel against a real API server as its production ServiceAccount
+  # (docs/panel-e2e.md); the script reuses this kind cluster.
   panel-e2e:
     runs-on: ubuntu-latest
     permissions:
@@ -166,10 +161,8 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
 
-      # #74: the worker image must be smoke-tested before it is trusted —
-      # every advertised coding CLI answers, non-root holds, pinned skills
-      # match their recorded sha. Rebuilds from cache (same CACHEBUST, so
-      # the same CLI resolution as the pushed image), so it is cheap.
+      # Every advertised coding CLI answers, non-root holds, pinned skills
+      # match their sha. Same CACHEBUST, so this rebuild is a cache hit.
       - name: Smoke test factory/worker image
         if: matrix.image.name == 'factory/worker'
         run: |

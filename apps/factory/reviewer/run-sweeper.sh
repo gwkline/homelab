@@ -1,18 +1,13 @@
 #!/bin/sh
-# Factory stalled-PR sweeper (#242): convert stale ci-red factory PRs into
-# queueable fix work. Companion to the reclaimer (#94) and the future medic
-# (#239) — the stale-red path only fires when the medic gave up.
-#
-# Lives in the reviewer app (same image, gh + jq only, no k8s API) and runs
-# as its own hourly CronJob. GitHub is the ledger (ADR-009): all sweep state
-# is DERIVED from GitHub (marker comments, review requests, fix-issue search),
-# so repeated ticks never re-file:
+# Factory stalled-PR sweeper: turns stale ci-red factory PRs the medic gave up
+# on into queued fix issues. All state is derived from GitHub (ADR-003), so
+# repeated ticks never re-file:
 #
 #   marker on PR            meaning
 #   ----------------------  ----------------------------------------------
 #   factory:sweep:filed:<n> fix issue already filed for PR #n (idempotency)
 #   factory:sweep:drift:<n> rebase-warning comment (edited in place)
-#   factory:medic:retry:<i> medic (#239) retry markers (counted vs max)
+#   factory:medic:retry:<i> medic retry markers (counted vs max)
 #
 # Decision per open factory PR (head branch factory/issue-<N>/...; drafts skipped):
 #   green + awaiting human, age < PING_AFTER_H  → no action
@@ -25,8 +20,8 @@
 #                                                 checks, drift) + marker
 #   main > DRIFT_COMMITS ahead of the PR base   → idempotent rebase warning
 #
-# NEVER closes or merges PRs — the human stays the merge gate. Every read is
-# fail-closed: an unavailable API cannot trigger a write.
+# Never closes or merges PRs. Every read fails closed: an unavailable API
+# cannot trigger a write.
 set -eu
 
 REPOS="${FACTORY_REPOS:?FACTORY_REPOS required (comma-separated owner/name)}"
@@ -91,7 +86,7 @@ pr_markers() {
 
 # CI verdict for a head sha + epoch the PR went red; failing-check summary
 # lines are written to $3. Prints "<ci> <red_epoch|->". 2 = read failure.
-# Same classification contract as the reviewer: pending is NEVER green.
+# Pending is never green.
 ci_state() {
   _cs_file="$(mktemp)"
   if ! gh api "repos/$1/commits/$2/check-runs" > "$_cs_file" 2>/dev/null; then
@@ -186,8 +181,7 @@ file_fix_issue() {
   _ff_repo="$1" _ff_num="$2" _ff_linked="$3" _ff_reason="$4"
   _ff_summary="$5" _ff_drift="$6" _ff_ref="$7"
 
-  # Idempotency backstop: search issues for the marker too, so a lost PR
-  # marker comment (comment write failed last tick) still does not re-file.
+  # Backstop for a PR marker comment that failed to write last tick.
   _ff_existing="$(gh api -X GET search/issues \
     -f q="repo:${_ff_repo} is:issue \"${MARKER_FILED}${_ff_num}\" in:body" \
     --jq '.total_count // 0' 2>/dev/null || true)"
@@ -267,7 +261,6 @@ for repo in $REPOS; do
   repo="$(printf '%s' "$repo" | tr -d '[:space:]')"
   if [ -z "$repo" ]; then continue; fi
   echo "[sweeper] scanning ${repo}"
-  # Filter factory branches locally (same convention as the reviewer).
   PRS_JSON="$(gh api --paginate --slurp "repos/${repo}/pulls?state=open&per_page=100" 2>/dev/null \
     | jq '[.[][] | select((.head.ref // "") | startswith("factory/issue-"))]')" || PRS_JSON="[]"
   printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
@@ -310,7 +303,6 @@ for repo in $REPOS; do
     DRIFT="$(base_drift "$repo" "$BASE_SHA")"
     case "$DRIFT" in ''|*[!0-9]*) DRIFT="" ;; esac
 
-    # Base drift: independent check, idempotent comment (edited in place).
     if [ -n "$DRIFT" ] && [ "$DRIFT" -gt "$DRIFT_COMMITS" ]; then
       post_or_update_drift_comment "$repo" "$NUM" "$DRIFT_ID" "$DRIFT" "$BASE_REF"
     fi
@@ -373,12 +365,11 @@ for repo in $REPOS; do
       fi
       RED_AGE_H=$(( (NOW - RED_EPOCH) / 3600 ))
       if [ "$RED_AGE_H" -lt "$RED_GRACE_H" ]; then
-        echo "[sweeper] fresh-red ${repo}#${NUM}: red ${RED_AGE_H}h < ${RED_GRACE_H}h — leaving for medic (#239)"
+        echo "[sweeper] fresh-red ${repo}#${NUM}: red ${RED_AGE_H}h < ${RED_GRACE_H}h — leaving for medic"
         continue
       fi
-      # Stale red: fire only when the medic gave up. `factory/stuck` on the
-      # linked issue (the reclaimer's park verdict) is that signal outright;
-      # otherwise count the medic's retry markers.
+      # Stale red: act only when the medic gave up — the linked issue is
+      # factory/stuck, or the retry markers say so.
       STUCK="no"
       if [ -n "$LINKED" ]; then
         case "$LINKED" in

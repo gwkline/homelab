@@ -31,8 +31,7 @@ const ToolIcon = ({ name }: { name: string }) => {
 };
 
 const ToolTile = ({ tool }: { tool: Tool }) => {
-  // Links open in a new tab — tools are never iframed (they forbid framing;
-  // noEmbed records it) and the panel never proxies them or their creds.
+  // Tools forbid framing, so links open in a new tab.
   const linkable = tool.url !== null && tool.status !== "disabled";
   const body = (
     <>

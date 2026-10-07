@@ -275,8 +275,7 @@ test("GET /api/factory/stats aggregates queue, output and merge trend", async ()
 
   const day = 86_400_000;
 
-  // Upstream request counter: proves the second stats hit is served from
-  // the server-side cache without any new GitHub round-trips (#184).
+  // Counts upstream requests to verify the second stats hit is cached.
   let ghHits = 0;
 
   // Mock GitHub API server: issue labels, PR lists, per-PR detail enrichment
@@ -501,8 +500,7 @@ test("GET /api/factory/stats aggregates queue, output and merge trend", async ()
       2
     );
 
-    // Second hit inside the ~120s TTL comes from the server-side cache
-    // (#184): flagged cached, and zero new upstream GitHub requests.
+    // Second hit inside the TTL is cached: flagged, with no new upstream requests.
     const hitsAfterFirst = ghHits;
     assert.ok(hitsAfterFirst > 0);
     const r2 = await fetch(

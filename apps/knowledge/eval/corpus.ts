@@ -1,12 +1,7 @@
 /**
- * Committed synthetic evaluation corpus (#59).
- *
- * Small on purpose: hand-chunked homelab-topic documents with labeled queries,
- * relevant chunk ids, and relevant document ids (for citation accuracy). Two
- * queries are deliberately unanswerable — the corpus contains nothing relevant
- * — so no-answer behavior is measurable, not assumed. Everything here is
- * committed and versioned; bump `DATASET_VERSION` whenever chunks, chunk
- * texts, labels, or query sets change so run records stay comparable.
+ * Small hand-labeled eval corpus. Two queries are deliberately unanswerable so
+ * no-answer behavior is measured, not assumed. Bump `DATASET_VERSION` whenever
+ * chunks, labels, or queries change so run records stay comparable.
  */
 
 export const DATASET_VERSION = "knowledge-eval-corpus-v1";
@@ -25,11 +20,8 @@ export interface EvalChunk {
 export interface EvalCorpusQuery {
   id: string;
   query: string;
-  /** Chunk ids judged relevant; empty means "no answer exists in the corpus". */
   relevantChunks: string[];
-  /** Document ids a correct citation must point at. */
   relevantDocs: string[];
-  /** False for queries with no relevant chunk: strategies should abstain. */
   answerable: boolean;
 }
 
@@ -133,7 +125,6 @@ export const EVAL_CORPUS_QUERIES: EvalCorpusQuery[] = [
     relevantDocs: ["doc-postgres"],
   },
   {
-    // Shares no tokens with the corpus: every strategy should abstain.
     answerable: false,
     id: "q7-no-answer-rack",
     query: "quantum entanglement calibration for the rack",
@@ -149,7 +140,7 @@ export const EVAL_CORPUS_QUERIES: EvalCorpusQuery[] = [
   },
 ];
 
-/** Cheap deterministic subset CI runs: one lexical win, one both-channel win, one no-answer. */
+/** CI subset: one lexical win, one both-channel win, one no-answer. */
 export const CI_SUBSET_QUERY_IDS = [
   "q1-https-expose",
   "q2-etcd-restore",
@@ -159,7 +150,6 @@ export const CI_SUBSET_QUERY_IDS = [
 export const corpusQueryById = (id: string): EvalCorpusQuery | undefined =>
   EVAL_CORPUS_QUERIES.find((query) => query.id === id);
 
-/** chunk id -> doc id, for citation accuracy. */
 export const docOfChunk = new Map<string, string>(
   EVAL_CHUNKS.map((chunk) => [chunk.id, chunk.docId])
 );

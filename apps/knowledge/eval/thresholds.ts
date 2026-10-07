@@ -13,14 +13,9 @@ export interface EvalThresholds {
 }
 
 /**
- * Regression gate (#59), checked against the fused strategy.
- *
- * Floors are pinned at the current deterministic outcome of the committed
- * fixtures and corpus, so any metric drop fails the run. Raise a floor when
- * retrieval genuinely improves; never lower one to make a run pass. Citation
- * accuracy and latency are recorded but deliberately not thresholded here:
- * citation floors depend on corpus size (k=5 over 9 chunks invites filler)
- * and latency is machine-dependent — watch them as trends, not gates.
+ * Floors for the fused strategy, pinned at the current deterministic outcome so
+ * any drop fails. Raise a floor when retrieval improves; never lower one to pass.
+ * Citation accuracy (corpus-size dependent) and latency are not gated.
  */
 export const EVAL_THRESHOLDS: EvalThresholds = {
   corpus: { mrrAtK: 0.8, noAnswerCorrectRate: 1, recallAtK: 0.9 },
@@ -39,12 +34,7 @@ export interface ThresholdResult {
   failures: ThresholdFailure[];
 }
 
-/**
- * Evaluate the gate over one corpus report and one fixture comparison. The
- * fused strategy must clear the metric floors and must not trail either
- * single channel on corpus recall — a fusion that loses to its own inputs is
- * the regression this harness exists to catch.
- */
+/** Fused must also not trail either single channel on corpus recall. */
 export const evaluateThresholds = (
   corpus: CorpusReport,
   fixtures: ComparisonReport

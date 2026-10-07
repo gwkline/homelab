@@ -1,8 +1,3 @@
-# Knowledge ingest API + worker (#58 + the retrieval issues): hono queue API
-# (idempotent enqueue, SKIP LOCKED claims, leases) and the real
-# extract → chunk → embed → upsert pipeline over the #56 knowledge schema.
-# One replica: the queue is multi-worker safe, but nothing here needs more
-# throughput yet. State (Postgres) lives in the database namespace.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -31,18 +26,11 @@ spec:
                 secretKeyRef:
                   name: knowledge-db
                   key: databaseUrl
-            # Private git sources (e.g. gwkline/personal-knowledge): the
-            # read-only GitHub PAT the rest of the homelab already uses.
-            # git-source.ts reads the token file for clone/fetch auth only —
-            # the token is never persisted into the corpus or the source
-            # config (public repos need no token at all).
+            # Read-only PAT for private git sources; used for clone/fetch only.
             - name: GIT_SOURCE_TOKEN_FILE
               value: /secrets-github/token
-            # Fail-closed bearer token (config.ts reads the mounted file).
             - name: KNOWLEDGE_INGEST_TOKEN_FILE
               value: /secrets/token
-            # git-source clone cache: per-pod, survives container restarts
-            # within the pod lifetime; a fresh pod re-clones.
             - name: TMPDIR
               value: /tmp/git-cache
           securityContext:
@@ -86,8 +74,6 @@ spec:
             items:
               - key: token
                 path: token
-        # GitHub PAT for private-repo git sources (read-only clone/fetch;
-        # same secret the factory uses).
         - name: github-token
           secret:
             secretName: github-token

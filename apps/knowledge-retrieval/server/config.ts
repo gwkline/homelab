@@ -17,7 +17,7 @@ export interface RetrievalConfig {
   seedFile: string | null;
   /** Postgres connection string; null runs the in-memory store (dev/tests). */
   databaseUrl: string | null;
-  /** Serve readiness only once the #56 schema + channel indexes are applied. */
+  /** Apply the knowledge schema and channel indexes at startup. */
   applySchemaOnBoot: boolean;
   /** In-cluster ingest API base for the sources/sync passthrough routes. */
   ingestBaseUrl: string | null;
@@ -70,9 +70,7 @@ const readTokenFile = (path: string, envName: string): string => {
   }
 };
 
-// The bearer token must come from a secret: an env var injected from a
-// Kubernetes Secret, or a mounted token file. Fail closed when neither is
-// present so the service can never start unauthenticated.
+// Fail closed: the service never starts without a secret-backed token.
 const tokenFromEnv = (env: Record<string, string | undefined>): string => {
   if (env.KNOWLEDGE_RETRIEVAL_TOKEN?.trim()) {
     return env.KNOWLEDGE_RETRIEVAL_TOKEN.trim();
@@ -173,7 +171,7 @@ export const configFromEnv = (
   };
 };
 
-// Test/default instance: same limits as production defaults, caller supplies the token.
+/** Production defaults with a caller-supplied token; used by tests. */
 export const baseConfig = (
   token: string,
   overrides: Partial<RetrievalConfig> = {}

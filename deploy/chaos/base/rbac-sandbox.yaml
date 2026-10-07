@@ -1,10 +1,5 @@
-# The chaos monkey is the one identity allowed to delete pods in `agents`:
-# proving the cluster self-heals (issue #113) requires destructive reads.
-# Scoped hard: pods only, agents+sandbox only, and it cannot see secrets,
-# touch nodes, or reach any other namespace. cnpg, the tailscale operator
-# and everything labelled do-not-chaos: "true" are excluded in the script
-# itself (chaos-config/run.sh), not by RBAC — RBAC is the blast radius,
-# the script is the aim.
+# Pod delete in agents and sandbox only (see also rbac-agents.yaml). Target
+# exclusions live in run.sh: RBAC is the blast radius, the script is the aim.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

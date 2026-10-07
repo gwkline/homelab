@@ -7,11 +7,8 @@ import type { ReactNode } from "react";
 
 import { cn } from "../lib/utils";
 
-// Base UI (base-ui.com, from the Radix/MUI team) is the headless base for the
-// interactive controls — Button, Input, Select, and Checkbox here wrap its
-// parts so behavior (focus management, keyboard nav, a11y) comes from one
-// upstream implementation. Card/CardHeader/Badge have no Base UI equivalents;
-// they stay layout primitives.
+// Interactive controls wrap Base UI for focus, keyboard, and a11y behavior;
+// Card/CardHeader/Badge are plain layout primitives.
 
 export const Card = ({
   className,
@@ -117,9 +114,7 @@ export interface SelectOption {
   value: string;
 }
 
-// Base UI Select behind a native-select-shaped API: controlled value,
-// options, change callback. Renders a portal popup with keyboard nav,
-// highlight, and item indicators.
+// Base UI Select behind a native-select-shaped API.
 export const Select = ({
   ariaLabel,
   className,
@@ -173,9 +168,7 @@ export const Select = ({
   </BaseSelect.Root>
 );
 
-// Base UI Checkbox with the native control's shape: controlled checked +
-// change callback. The visible label text is the caller's; point ariaLabel at
-// what the control toggles.
+// Base UI Checkbox with a native-checkbox-shaped API; ariaLabel names what it toggles.
 export const Checkbox = ({
   ariaLabel,
   checked,

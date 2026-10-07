@@ -1,22 +1,15 @@
 #!/bin/sh
-# Knowledge context assembly for coding-run briefs (#86).
+# Queries knowledge-retrieval for context relevant to one factory issue and
+# writes a cited, budget-bounded record that run.sh embeds into the worker
+# brief, including the exact queries, retrieval config, and per-citation
+# provenance.
 #
-# Queries the knowledge-retrieval service (apps/knowledge-retrieval) for
-# context relevant to one factory issue and writes a compact, cited,
-# budget-bounded record that run.sh embeds into the worker brief. The record
-# carries the exact queries, the retrieval configuration, and every selected
-# citation with full provenance, so the Run can show where its context came
-# from.
-#
-# Fail-open by contract: this script ALWAYS exits 0 and ALWAYS writes the
-# record file. The record's status field says exactly what happened:
+# Fail-open: always exits 0 and always writes the record. Its status is:
 #   ok          — citations selected (zero survivors is "empty", not "ok")
 #   empty       — service answered, nothing relevant survived the filters
 #   disabled    - KNOWLEDGE_SEARCH_URL unset; feature off for this run
 #   unavailable — service unreachable, auth failure, non-200, bad payload
 #   timeout     — a request exceeded KNOWLEDGE_TIMEOUT seconds
-# A knowledge outage never fails a run: the worker proceeds WITHOUT context
-# and the status (with the reason) is visible in the run comment.
 #
 # Configuration (env, all optional):
 #   KNOWLEDGE_SEARCH_URL    full .../v1/search URL; unset = disabled
@@ -31,16 +24,12 @@
 #   KNOWLEDGE_MAX_SOURCES   max distinct sources     (default: 4)
 #   KNOWLEDGE_MIN_SCORE     minimum fused RRF score  (default: 0 = rank-only)
 #
-# Budget rules (explicit, applied in this order after the score filter):
+# Budget rules, applied in order after the score filter:
 #   1. dedupe by chunkId across queries (best fused score wins)
 #   2. sort by fused score desc, chunkId asc (deterministic)
 #   3. cap distinct sources at KNOWLEDGE_MAX_SOURCES (by rank order)
 #   4. cap citation count at KNOWLEDGE_MAX_CHUNKS
 #   5. whole-chunk fit into KNOWLEDGE_BUDGET_CHARS (never truncated text)
-#
-# Deployment note: sandbox egress policy blocks in-cluster service CIDRs for
-# orchestrator pods; wiring a real URL requires a named egress allowance next
-# to the knowledge service manifests (docs/egress-policy.md).
 #
 # Usage: knowledge-context.sh <owner/name> <issue.json> <out-record.json>
 set -eu
@@ -62,8 +51,7 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/knowledge-ctx.XXXXXX")"
 trap 'rm -rf "${WORK}"' EXIT
 QUERIES_FILE="${WORK}/queries.json"
 
-# emit_record: write the record via python so status/reason are always valid
-# JSON, even on the failure paths (run.sh embeds it verbatim into the brief).
+# Written via python so the record is valid JSON even on failure paths.
 # $1=status  $2=error-reason  [$3=queries-json]  [$4=service-run-ids-json]
 # [$5=citations-json]
 emit_record() {
@@ -139,9 +127,8 @@ fi
 [ -r "${ISSUE_FILE}" ] || fail_record "unavailable" "issue record ${ISSUE_FILE} unreadable"
 
 # --- 2. derive queries from repo + issue title/body + affected paths ---------
-# "Affected paths when known": path-like tokens (dir/file and file.ext) found
-# in the issue text become their own query — the only path signal the
-# orchestrator has at brief-assembly time.
+# Path-like tokens in the issue body become their own query: the only path
+# signal available at brief-assembly time.
 python3 - "${REPO}" "${ISSUE_FILE}" "${QUERIES_FILE}" << 'PYEOF' || fail_record "unavailable" "query derivation failed"
 import json, re, sys
 
@@ -217,8 +204,6 @@ while [ "${i}" -lt "${N_QUERIES}" ]; do
 done
 
 # --- 4. merge, budget, cite ----------------------------------------------------
-# Dedupe by chunkId across queries → score filter → deterministic sort →
-# source cap → chunk cap → whole-chunk char budget → stable K<n> ids.
 python3 - "${WORK}" "${OUT_FILE}" \
   "${KNOWLEDGE_BUDGET_CHARS}" "${KNOWLEDGE_MAX_CHUNKS}" \
   "${KNOWLEDGE_MAX_SOURCES}" "${KNOWLEDGE_MIN_SCORE}" \

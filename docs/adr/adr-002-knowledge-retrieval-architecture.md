@@ -1,18 +1,18 @@
 # ADR-002: Knowledge architecture — Postgres-native hybrid retrieval
 
-**Status:** Implemented (2026-10-06; Accepted 2026-09-02) **Deciders:** Gavin Kline, ox-alpha **Implements:** #51 · **Blocks:** #60, #62
+**Status:** Implemented (items 6–7 of D14 deferred) **Deciders:** Gavin Kline
 
-**What shipped (D14 map):** 1 — schema (`src/schema.ts`, #56); 2 — ingest worker (`src/ingest.ts`, #57); 3a/3b — BM25 (`src/bm25.ts`, #60) and pgvector (`src/pgvector.ts`, #62) channels; 4 — HTTP surface (`apps/knowledge-retrieval`); 5 — eval harness against both channels. The service layer landed with the vertical completion: `apps/knowledge-ingest` runs the real pipeline (queue contracts + git-source sync + `processDocumentVersion`) and `apps/knowledge-retrieval` runs the Postgres store + RRF fusion with the sources/sync passthrough; both deploy from `deploy/knowledge/base` (see its README for the image-pin bootstrap), and `apps/knowledge-mcp` was the local stdio adapter (since removed). Still deferred by design: 6 — lifecycle (tombstone API surfaced; the GC job and re-embed backfill runner are follow-ups), 7 — graph (gated on D12's multi-hop eval gap).
+**What shipped (D14 map):** 1 — schema (`src/schema.ts`); 2 — ingest worker (`src/ingest.ts`); 3a/3b — BM25 (`src/bm25.ts`) and pgvector (`src/pgvector.ts`) channels; 4 — HTTP surface (`apps/knowledge-retrieval`); 5 — eval harness against both channels. The service layer landed with the vertical completion: `apps/knowledge-ingest` runs the real pipeline (queue contracts + git-source sync + `processDocumentVersion`) and `apps/knowledge-retrieval` runs the Postgres store + RRF fusion with the sources/sync passthrough; both deploy from `deploy/knowledge/base`. Still deferred by design: 6 — lifecycle (tombstone API surfaced; the GC job and re-embed backfill runner are follow-ups), 7 — graph (gated by [ADR-008](adr-008-knowledge-graph-expansion-gate.md)).
 
 ## Context
 
-The homelab needs a personal, self-hosted knowledge base. `apps/knowledge` already ships the fusion contract (`src/fusion.ts`: RRF, k=60, windowSize=100) and the eval harness (`eval/`, thresholds gated in CI), but the retrieval issues downstream (#60 pg_textsearch BM25, #62 pgvector) could each invent incompatible ingestion and retrieval models. This ADR fixes the schema, retrieval stack, and build order first.
+The homelab needs a personal, self-hosted knowledge base. `apps/knowledge` already ships the fusion contract (`src/fusion.ts`: RRF, k=60, windowSize=100) and the eval harness (`eval/`, thresholds gated in CI), but the two retrieval channels (pg_textsearch BM25, pgvector) could each invent incompatible ingestion and retrieval models. This ADR fixes the schema, retrieval stack, and build order first.
 
-Constraints (from #51 and repo direction):
+Constraints:
 
 - One Postgres, no extra databases: no Neo4j, no Pinecone, no Qdrant, no Kafka, no S3 (yet).
 - Self-hosted and offline-friendly: no paid-API dependency for retrieval; embeddings must run locally.
-- The factory database (ADR-001) stays extension-free; the knowledge database is a separate CNPG cluster where extensions are allowed.
+- The knowledge database is the one place Postgres extensions are allowed (the factory has no database, ADR-003).
 - This package ends at ranked, cited chunks — no LLM answer synthesis (`apps/knowledge/README.md`).
 
 ## Systems studied
@@ -74,7 +74,7 @@ Provenance is not a separate table in phase one: a chunk's provenance **is** its
 
 ### D4. Raw-object storage
 
-Raw bytes (original files/HTML) go to the panel PVC: `/data/knowledge-raw/<namespace>/<sha256>` — the same pattern as factory artifacts (ADR-001 D2). Postgres stores extracted text only. `storage_path` is opaque; migrating to S3 later is additive. Nightly restic covers the PVC once the path is added to its backup set (restic has since been removed; nothing is backed up).
+Raw bytes (original files/HTML) go to the panel PVC: `/data/knowledge-raw/<namespace>/<sha256>`. Postgres stores extracted text only. `storage_path` is opaque; migrating to S3 later is additive. Nothing is backed up.
 
 ### D5. Ingestion queue
 
@@ -127,7 +127,7 @@ If and when evals trigger graph work (D12), it uses **relational tables and recu
 
 Reuse `apps/knowledge/eval/` unchanged in shape: committed corpus (`knowledge-eval-corpus-v1`), metrics Recall@5 / MRR@5 / citation accuracy / no-answer correctness, thresholds in `eval/thresholds.ts` as CI gates, run provenance via `eval/run-meta.ts`. Evolution:
 
-- #60/#62 land as real channels under the same harness; the eval-local scorers in `eval/rank.ts` stay as independent cross-checks.
+- The BM25 and pgvector channels run under the same harness; the eval-local scorers in `eval/rank.ts` stay as independent cross-checks.
 - Before any graph/extraction work (D1/D11): bump the corpus to v2 with a **multi-hop query class** whose recall failure is the documented trigger.
 - Corpus changes bump the dataset version; thresholds only ever rise.
 
@@ -139,10 +139,10 @@ Reuse `apps/knowledge/eval/` unchanged in shape: committed corpus (`knowledge-ev
 
 | # | Deliverable | Depends on | Notes |
 | --- | --- | --- | --- |
-| 1 | K-schema: DDL + migrations, `KNOWLEDGE_SCHEMA_VERSION` bump | — | unblocks #60/#62 |
+| 1 | K-schema: DDL + migrations, `KNOWLEDGE_SCHEMA_VERSION` bump | — | unblocks 3a/3b |
 | 2 | K-ingest: extract → chunk → embed → upsert + raw-object write + `ingest_job` queue | 1 | D4–D6, D10 |
-| 3a | #60 pg_textsearch BM25 channel | 1 | D7; separate CNPG image with the extension |
-| 3b | #62 pgvector channel | 1 | D7; parallel with 3a |
+| 3a | pg_textsearch BM25 channel | 1 | D7; separate CNPG image with the extension |
+| 3b | pgvector channel | 1 | D7; parallel with 3a |
 | 4 | K-search: `/search` + `/documents` HTTP surface (the D13 PR) | 3a + 3b | fuses via `src/fusion.ts` |
 | 5 | K-eval: harness against real DB channels | 4 | D12; keep eval-local scorers |
 | 6 | K-lifecycle: tombstone API + GC job + re-embed backfill | 2 | D10 |
@@ -150,8 +150,8 @@ Reuse `apps/knowledge/eval/` unchanged in shape: committed corpus (`knowledge-ev
 
 ## Consequences
 
-- +1 Postgres cluster with `pgvector` and `pg_textsearch` (CNPG, `shared_preload_libraries`) — the ops cost ADR-001's "no extensions" rule pushed out of the factory DB lands here, isolated.
+- +1 Postgres cluster with `pgvector` and `pg_textsearch` (CNPG, `shared_preload_libraries`) — extension ops cost isolated to this cluster.
 - Chunks-only means no entity or multi-hop answers on day one — accepted by design; D12's eval gate, not enthusiasm, opens D11.
 - 384-d local embeddings trade some recall vs larger models; the harness measures it, and a model swap is a backfill job, not a schema change.
 - RRF-only ranking defers cross-encoder cost until evidence demands it.
-- The schema, namespaces, deletion, and citation contracts are fixed here so #60 and #62 cannot drift apart; `/search` (D13) is the single integration point they must satisfy.
+- The schema, namespaces, deletion, and citation contracts are fixed here so the two channels cannot drift apart; `/search` (D13) is the single integration point they must satisfy.

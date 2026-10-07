@@ -1,10 +1,4 @@
-# Weekly trigger for the panel's factory-stats rollup (issue #186): each call
-# upserts the current week's snapshot into the JSON artifact on the panel-stats
-# PVC, so quiet weeks still land in the trend history even when nobody opens
-# the panel. Lives in agents so the pod-scoped NetworkPolicy rule in
-# service.yaml is the only ingress path needed. The panel owns all GitHub
-# fan-out and persistence logic — this job only pokes the endpoint and reuses
-# the panel image (same pinned digest, no dedicated image to build).
+# Weekly poke so quiet weeks still land in the factory-stats trend history.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -13,8 +7,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: homelab
 spec:
-  # Sunday 23:53 UTC: the rollup's week key is the Monday six days earlier, so
-  # this captures the week that just ended, nearly complete.
+  # Late Sunday, so the snapshot captures the nearly complete week.
   schedule: "53 23 * * 0"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3

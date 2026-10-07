@@ -1,38 +1,10 @@
 /**
- * Embedding configuration, providers, and the batch engine (#57).
+ * Embedding providers and the batch engine: batched requests with bounded
+ * concurrency, per-attempt timeouts, and exponential-backoff retries. A bad
+ * input or vector fails only its own chunk, never its batchmates.
  *
- * Provider, model, and dimensions are configuration (env or explicit), and
- * the model identity is persisted per chunk by the ingest worker, so chunks
- * from different model generations are always distinguishable (ADR-002 D6:
- * different models never mix in one index — `src/pgvector.ts` filters on
- * `embedding_model`).
- *
- * The request engine is explicit and bounded:
- *
- * - **Batching** — chunk texts are grouped into `batchSize`-sized inputs per
- *   provider request (ADR-002 D5: batch, don't embed one-by-one).
- * - **Concurrency** — at most `concurrency` provider requests are in flight;
- *   results are keyed by input index, so completion order cannot matter.
- * - **Timeout** — every attempt runs under `AbortSignal.timeout(timeoutMs)`;
- *   providers forward the signal to their transport.
- * - **Retries** — retryable failures (timeouts, network errors, HTTP
- *   408/429/5xx) are retried up to `maxRetries` with exponential backoff
- *   `baseDelayMs * 2^(attempt-1)`; the sleep is injectable so tests need no
- *   real timers. Non-retryable failures (other HTTP 4xx) throw immediately.
- * - **Per-chunk isolation** — an invalid input or an invalid vector (wrong
- *   dimension, non-finite or zero entries) fails exactly that chunk; the
- *   valid chunks in the same batch still embed and persist.
- *
- * Dimension honesty: the configured provider dimension must equal the
- * `chunks` table's `vector(N)` typmod (`dbDimensions`, default 384 for the
- * local `BAAI/bge-small-en-v1.5`), and every returned vector is re-validated
- * before persistence. A model with a different dimension is a new column +
- * migration plus a re-embed backfill (ADR-002 D6/D10) — never a vector
- * written into the wrong-typed column.
- *
- * `createFakeEmbeddingProvider` is a fully deterministic, offline provider
- * (sha256-derived unit vectors) for tests and seed corpora — it must never
- * back real retrieval.
+ * The provider dimension must match the `chunks` column's `vector(N)`; a
+ * different model dimension needs a new column and a re-embed backfill.
  */
 
 import { createHash } from "node:crypto";
@@ -41,22 +13,18 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { DEFAULT_MAX_CHARS } from "./chunk.ts";
 import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "./pgvector.ts";
 
-/** The provider surface every embedder implements. */
 export interface EmbeddingProvider {
-  /** Vector dimension this provider produces. */
   dimensions: number;
-  /** Embed `inputs` in one request; returns one vector per input, in order. */
+  /** One request; returns one vector per input, in order. */
   embed: (
     inputs: string[],
     options?: { signal?: AbortSignal }
   ) => Promise<number[][]>;
-  /** Model identifier persisted on every chunk this provider embeds. */
+  /** Persisted on every chunk this provider embeds. */
   model: string;
-  /** Provider kind, e.g. `"fake"` or `"openai-compatible"`. */
   name: string;
 }
 
-/** Provider/transport failure with an explicit retryability verdict. */
 export class EmbeddingProviderError extends Error {
   override name = "EmbeddingProviderError";
   retryable: boolean;
@@ -75,11 +43,6 @@ export class EmbeddingProviderError extends Error {
 const isRetryStatus = (status: number): boolean =>
   status === 408 || status === 429 || status >= 500;
 
-/**
- * Decide whether a provider failure is worth retrying: transport errors,
- * timeouts/aborts, and HTTP 408/429/5xx are transient; other 4xx responses
- * are not.
- */
 export const isRetryableEmbeddingError = (error: unknown): boolean => {
   if (error instanceof EmbeddingProviderError) {
     return error.retryable;
@@ -90,12 +53,7 @@ export const isRetryableEmbeddingError = (error: unknown): boolean => {
   return false;
 };
 
-/**
- * Deterministic offline provider: each vector is sha256-derived from
- * `(model, input)` and L2-normalized, so identical inputs embed identically
- * across runs, machines, and call orders. For tests and offline seed data
- * only — retrieval must run against a real provider.
- */
+/** Deterministic sha256-derived unit vectors for tests; never for real retrieval. */
 export const createFakeEmbeddingProvider = (
   model = "fake/deterministic-v1",
   dimensions = EMBEDDING_DIMENSIONS
@@ -143,22 +101,14 @@ export const createFakeEmbeddingProvider = (
 };
 
 export interface OpenAICompatibleProviderOptions {
-  /** Bearer token; omitted when unset (self-hosted servers need none). */
   apiKey?: string;
-  /** API root, e.g. `http://tei.home.svc:80/v1` — `/embeddings` is appended. */
+  /** API root; `/embeddings` is appended. */
   baseUrl: string;
   dimensions: number;
   model: string;
 }
 
-/**
- * OpenAI-compatible `/embeddings` provider (self-hosted TEI/llama.cpp/
- * vLLM-style servers): `POST {model, input}` → `{data: [{index, embedding}]}`.
- * Batching is the engine's job; this layer sends exactly the inputs it is
- * given, forwards the abort signal, and validates the response shape before
- * returning — a short or misshapen batch is a provider error, never a silent
- * partial result.
- */
+/** A short or misshapen response is a provider error, never a partial result. */
 export const createOpenAICompatibleProvider = (
   config: OpenAICompatibleProviderOptions
 ): EmbeddingProvider => {
@@ -252,25 +202,19 @@ export const createOpenAICompatibleProvider = (
 };
 
 export interface EmbeddingWorkerOptions {
-  /** Chunk texts per provider request. Default 32. */
+  /** Default 32. */
   batchSize?: number;
-  /** Exponential backoff base in milliseconds. Default 250. */
+  /** Default 250. */
   baseDelayMs?: number;
-  /** Max in-flight provider requests. Default 4. */
+  /** Max in-flight requests. Default 4. */
   concurrency?: number;
-  /**
-   * The `chunks` column's pinned `vector(N)` dimension. Default 384
-   * (`EMBEDDING_DIMENSIONS`). A provider whose dimension differs is refused:
-   * a model change needs a new column + migration and a re-embed backfill
-   * (ADR-002 D6/D10), not vectors written into the wrong-typed column.
-   */
+  /** The `chunks` column's `vector(N)`; a mismatched provider is refused. */
   dbDimensions?: number;
-  /** Chunker soft cap forwarded to the chunker. Default `DEFAULT_MAX_CHARS`. */
   maxChars?: number;
-  /** Retries per provider request after the first attempt. Default 3. */
+  /** Retries after the first attempt. Default 3. */
   maxRetries?: number;
   provider: EmbeddingProvider;
-  /** Per-attempt timeout in milliseconds. Default 30_000. */
+  /** Per attempt. Default 30_000. */
   timeoutMs?: number;
 }
 
@@ -300,7 +244,6 @@ const validatedInt = (
   return resolved;
 };
 
-/** Validate and default the worker's explicit limits before any request runs. */
 export const resolveEmbeddingWorkerConfig = (
   options: EmbeddingWorkerOptions
 ): EmbeddingWorkerConfig => {
@@ -345,17 +288,10 @@ export const resolveEmbeddingWorkerConfig = (
 export interface EmbedRetryOptions {
   baseDelayMs?: number;
   maxRetries?: number;
-  /** Injectable sleep for deterministic tests; defaults to real timers. */
   sleep?: (ms: number) => Promise<void>;
   timeoutMs?: number;
 }
 
-/**
- * One provider request with explicit retry semantics: up to `maxRetries`
- * retries for retryable failures (timeout, network, 408/429/5xx) with
- * exponential backoff `baseDelayMs * 2^(attempt-1)`; non-retryable failures
- * throw immediately. Every attempt gets a fresh `AbortSignal.timeout`.
- */
 export const embedWithRetries = async (
   provider: EmbeddingProvider,
   inputs: string[],
@@ -386,11 +322,7 @@ export const embedWithRetries = async (
   }
 };
 
-/**
- * Validate one returned vector before persistence: finite numbers, the exact
- * expected dimension, non-zero (cosine is undefined on zero vectors).
- * Returns the failure reason, or null when the vector is usable.
- */
+/** Returns the failure reason, or null when the vector is usable. */
 export const embeddingVectorProblem = (
   vector: unknown,
   dimensions: number
@@ -414,24 +346,12 @@ export const embeddingVectorProblem = (
   return null;
 };
 
+/** Both maps are keyed by input index. */
 export interface EmbedBatchOutcome {
-  /** Input index → validated embedding, for every chunk that embedded. */
   embeddings: Map<number, number[]>;
-  /** Input index → failure reason, for every chunk that did not embed. */
   failures: Map<number, string>;
 }
 
-/**
- * Embed a list of chunk texts with explicit batching, bounded concurrency,
- * timeouts, retries, and per-chunk failure isolation:
- *
- * - Inputs that are unusable on their own (empty text) fail individually
- *   before any request.
- * - A provider request that keeps failing after its retries fails only the
- *   chunks in that batch.
- * - A malformed vector for one input fails only that chunk; every valid
- *   vector in the same batch is kept.
- */
 export const embedChunkTexts = async (
   texts: string[],
   config: EmbeddingWorkerConfig,
@@ -501,7 +421,6 @@ export const embedChunkTexts = async (
   return { embeddings, failures };
 };
 
-/** String-typed view of the env keys this module reads. */
 export type EmbeddingEnv = Record<string, string | undefined>;
 
 const intFromEnv = (raw: string | undefined, fallback: number): number => {
@@ -512,13 +431,7 @@ const intFromEnv = (raw: string | undefined, fallback: number): number => {
   return Number.isInteger(value) ? value : Number.NaN;
 };
 
-/**
- * Select the embedding provider from configuration:
- * `KNOWLEDGE_EMBEDDING_PROVIDER` = `fake` (default, deterministic offline) or
- * `openai` (OpenAI-compatible HTTP against `KNOWLEDGE_EMBEDDING_BASE_URL`),
- * with `KNOWLEDGE_EMBEDDING_MODEL` / `KNOWLEDGE_EMBEDDING_DIMENSIONS` /
- * `KNOWLEDGE_EMBEDDING_API_KEY`.
- */
+/** `KNOWLEDGE_EMBEDDING_PROVIDER` is `fake` (default) or `openai`. */
 export const embeddingProviderFromEnv = (
   env: EmbeddingEnv = process.env
 ): EmbeddingProvider => {
@@ -551,7 +464,6 @@ export const embeddingProviderFromEnv = (
   );
 };
 
-/** Resolve the full worker configuration from env plus an optional provider. */
 export const embeddingWorkerConfigFromEnv = (
   env: EmbeddingEnv = process.env,
   provider: EmbeddingProvider = embeddingProviderFromEnv(env)

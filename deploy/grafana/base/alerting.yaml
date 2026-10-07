@@ -1,21 +1,4 @@
-# Provisioned Grafana alert rules (issue #44). Evaluated by Grafana's
-# built-in unified alerting against the VictoriaMetrics datasource — no new
-# pods, no CRDs, matching the ADR shape (one Grafana, five small pods).
-#
-# Mounted as a provisioning file at
-# /etc/grafana/provisioning/alerting/homelab-alerts.yaml (see deployment.yaml).
-#
-# Alert rules:
-#
-#   homelab-node-disk-pressure       kubelet reports DiskPressure=True
-#   homelab-pvc-nearly-full          >90% of a PVC's capacity consumed
-#   homelab-deployment-unavailable   an agents Deployment under-replicated
-#   homelab-statefulset-unavailable  an agents StatefulSet not fully ready
-#   homelab-jobs-repeatedly-failing  >=3 failed Jobs per namespace/24h
-#
-# States are visible in Grafana's Alerting UI and on the Homelab dashboards.
-# Notification routing is deliberately not configured: nothing in this
-# cluster pages at 2 a.m. (ADR D7) — wire a contact point when that changes.
+# Grafana unified alerting over VictoriaMetrics. No contact point: nothing pages.
 apiVersion: v1
 kind: ConfigMap
 metadata:

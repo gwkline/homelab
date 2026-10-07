@@ -1,37 +1,13 @@
 /**
- * Postgres-backed `RetrievalStore` (#63/#64): the hybrid retrieval the
- * deployed service runs. Both channels rank the shared #56 `chunks` table
- * (apps/knowledge/src/schema.ts) through the pinned library queries —
+ * Postgres `RetrievalStore`: BM25 (pg_textsearch) and vector (HNSW) channels
+ * over the shared `chunks` table. Citations join live `document` rows, so a
+ * tombstoned document drops out of both channels before fusion (ADR-002 D8).
+ * The vector channel filters on the embedding model tag so generations never
+ * mix (ADR-002 D6).
  *
- * - BM25: `buildBm25SearchQuery` (pg_textsearch partial index, explicit
- *   index addressing, negative-score ordering),
- * - vector: `buildPgvectorSearchQuery` (partial HNSW cosine index, model-
- *   generation filter),
- *
- * and citations/provenance are resolved at query time by joining the chunk's
- * `document` + `document_version` rows (ADR-002 D3/D8): title, url, source
- * label, external id (path), version row id and created_at. The D8 live-join
- * guarantee is enforced in that join — a tombstoned document
- * (`deleted_at IS NOT NULL`) drops every chunk it owns from BOTH channels'
- * candidate sets before fusion, so no result can cite dead content.
- *
- * Mapping notes (the retrieval contract vs the #56 schema):
- * - `source.sourceId` is the stable `document.id` — version-independent, and
- *   the id a citation carries across re-ingests.
- * - `provenance.ingestionEventId` is the `document_version.id` the chunk
- *   cites: the durable pointer to the ingest that produced it
- *   (`ingestedAt` = that version's `created_at`).
- * - `tags` are always empty in phase one: the #56 schema has no tag column,
- *   so a tag filter returns no results (an honest empty, never fabricated
- *   matches).
- * - `version.commit` is null: the #56 `document_version` row records content
- *   identity, and the git commit lives in the ingestion queue's provenance;
- *   surfacing it on citations is a follow-up schema addition.
- *
- * Query embeddings come from the same shared provider configuration the
- * ingest worker uses (`KNOWLEDGE_EMBEDDING_*`, deterministic offline by
- * default), and the vector channel filters chunks by that provider's model
- * tag, so vectors from different model generations never mix (ADR-002 D6).
+ * `source.sourceId` is the version-independent `document.id`;
+ * `provenance.ingestionEventId` is the cited `document_version.id`. `tags`
+ * are always empty and `version.commit` is null: the schema stores neither.
  */
 
 import type { Pool } from "pg";
@@ -61,7 +37,7 @@ import type {
 } from "./store.ts";
 import { StoreUnavailableError } from "./store.ts";
 
-/** The #56 source label → the contract's source kinds. */
+/** Document source label → contract source kind. */
 const contractSourceKind = (
   sourceLabel: string
 ): ChunkRecord["source"]["kind"] => {
@@ -96,21 +72,14 @@ const asString = (value: unknown, context: string): string => {
 
 export interface PgStoreOptions {
   /**
-   * Query-embedding provider; defaults to the shared env configuration. Its
-   * `model` is also the vector channel's model filter, matching the tag the
-   * ingest worker writes, so query and chunk vectors always share one
-   * model generation.
+   * Query-embedding provider; defaults to the shared env config. Its `model`
+   * is also the vector channel's model filter.
    */
   env?: Record<string, string | undefined>;
   provider?: EmbeddingProvider;
 }
 
-/**
- * Citation + provenance join over the chunk ids the channels returned: the
- * live-document guarantee (`d.deleted_at IS NULL`) and the optional
- * source-id filter are applied here, before fusion. Parameterized; the
- * chunk-id array and source filter are bind parameters.
- */
+/** Citation join; enforces live documents and the source filter before fusion. */
 const buildMetadataQuery = (
   chunkIds: string[],
   sourceIds: string[]
@@ -137,11 +106,7 @@ export class PgRetrievalStore implements RetrievalStore {
       options.provider ?? embeddingProviderFromEnv(options.env ?? process.env);
   }
 
-  /**
-   * Embed the query with the shared provider. A provider failure returns
-   * null — the contract for "vector channel unavailable for this query",
-   * never a failed search.
-   */
+  /** Embed the query; a provider failure disables the vector channel instead of failing the search. */
   async embedQuery(query: string): Promise<number[] | null> {
     try {
       const [vector] = await this.provider.embed([query]);
@@ -156,8 +121,7 @@ export class PgRetrievalStore implements RetrievalStore {
   }
 
   async search(options: SearchOptions): Promise<ChannelResults> {
-    // No chunk carries tags in phase one (#56 schema has no tag column): an
-    // explicit tag filter is an honest empty, never fabricated matches.
+    // The schema has no tags, so a tag filter matches nothing.
     if (options.filters.tags.length > 0) {
       return { bm25: [], vector: [] };
     }

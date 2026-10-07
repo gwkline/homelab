@@ -1,8 +1,4 @@
-# Headlamp is a read-only cluster viewer for the web UI.
-# get/list/watch only. It cannot read Secret values, mutate workloads, exec
-# into pods (pods/exec, pods/attach, pods/portforward unassigned), or reach
-# node proxy APIs (nodes/proxy, services/proxy unassigned). Tailnet identity
-# gates who reaches the UI; this role bounds what the UI can do.
+# Read-only: no secrets, exec/attach/portforward, or node/service proxy.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -14,10 +10,6 @@ kind: ClusterRole
 metadata:
   name: headlamp-readonly
 rules:
-  # Workload inspection: pods, their status/logs/events, plus the nodes,
-  # services, and configmaps a debugging session needs to orient itself.
-  # ConfigMaps are read (not secret material by design) so workload config
-  # views render; Secrets are deliberately absent.
   - apiGroups: [""]
     resources:
       [
@@ -31,22 +23,19 @@ rules:
         "configmaps",
       ]
     verbs: ["get", "list", "watch"]
-  # Controllers behind the pods, for inspecting a failed rollout/Job.
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["batch"]
     resources: ["jobs", "cronjobs"]
     verbs: ["get", "list", "watch"]
-  # Both event flavors (kubectl describe uses core, the UI may read either).
   - apiGroups: ["events.k8s.io"]
     resources: ["events"]
     verbs: ["get", "list", "watch"]
-  # CPU/memory graphs. The metrics API has no watch; get/list covers it.
   - apiGroups: ["metrics.k8s.io"]
     resources: ["nodes", "pods"]
     verbs: ["get", "list"]
-  # Health/version endpoints the UI probes (no resource access implied).
+  # Health/version endpoints.
   - nonResourceURLs: ["*"]
     verbs: ["get"]
 ---

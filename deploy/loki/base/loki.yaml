@@ -1,9 +1,4 @@
-# Loki — log store for the cluster (issue #47).
-#
-# Single-binary filesystem mode, exactly one machine's worth of state on one
-# PVC. The PVC size below IS the hard disk ceiling; the limits_config block
-# keeps ingestion and cardinality underneath it. Alloy (alloy.yaml in this
-# directory) pushes logs in; Grafana (deploy/grafana/base, #44) queries.
+# Single-binary, filesystem storage. The PVC size is the hard disk ceiling.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -52,12 +47,9 @@ data:
       delete_request_store: filesystem
 
     limits_config:
-      # Retention: 30 days — comfortably outlives the 7-day
-      # ttlSecondsAfterFinished on sandbox Jobs, which is the point of
-      # this stack: a finished/TTL-deleted run stays debuggable.
+      # Outlives the Job TTL, so finished runs stay debuggable.
       retention_period: 720h
-      # Soft guardrails under the 10Gi PVC ceiling: throttle bursty agents,
-      # cap stream cardinality, refuse replayed ancient logs.
+      # Soft guardrails under the PVC ceiling.
       ingestion_rate_mb: 4
       ingestion_burst_size_mb: 8
       max_global_streams_per_user: 50000
@@ -86,7 +78,6 @@ spec:
       targetPort: http
       protocol: TCP
 ---
-# Headless service the StatefulSet pins its identity to.
 apiVersion: v1
 kind: Service
 metadata:
@@ -124,9 +115,7 @@ spec:
           type: RuntimeDefault
         fsGroup: 10001
       initContainers:
-        # Same pattern as hermes: the local-path provisioner hands us a
-        # hostPath-backed directory, so fix ownership once before the
-        # unprivileged loki user (10001) writes to it.
+        # Root only to chown the local-path volume for uid 10001.
         - name: volume-init
           image: busybox:1.36
           command: ["chown", "-R", "10001:10001", "/var/lib/loki"]
@@ -197,8 +186,5 @@ spec:
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
-            # The hard ceiling for logs on this machine: a PVC cannot grow
-            # past its request. 30-day retention normally keeps usage far
-            # below; when it does fill, writes fail loudly instead of the
-            # disk growing — see deploy/loki/README.md.
+            # Hard ceiling: when full, writes fail loudly (README).
             storage: 10Gi

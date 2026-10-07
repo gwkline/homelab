@@ -1,26 +1,11 @@
 #!/usr/bin/env bash
-# Creates the onepassword-service-account Secret — the only manually
-# bootstrapped secret for the External Secrets Operator 1Password connection
-# (issue #41). The token authenticates a least-privilege 1Password service
-# account restricted to the dedicated `homelab` vault; it is shown once when
-# the service account is created and must never be committed, pasted into an
-# issue, or logged.
+# Create Secret onepassword-service-account, the one hand-entered secret ESO
+# needs. Idempotent; never logs the token.
 #
-# Idempotent: re-running converges the same Secret (kubectl create
-# --dry-run=client | kubectl apply), so it is safe on rebuilds and rotations.
-#
-# Token sources (first match wins):
-#   1. OP_SERVICE_ACCOUNT_TOKEN environment variable
-#   2. stdin (e.g. `op read op://.../token | $0`), or a hidden prompt on a TTY
-#
-# Namespace arguments default to every namespace with a committed `onepassword`
-# SecretStore: agents, sandbox, and work (deploy/github-tokens/base/secretstore.yaml)
-# and tailscale (deploy/tailscale/secretstore.yaml).
-#
-# Usage:
-#   OP_SERVICE_ACCOUNT_TOKEN=... ./create-onepassword-service-account.sh [ns]...
+# Usage (token from env, stdin, or a hidden prompt; default namespaces:
+# agents sandbox work tailscale):
+#   ./create-onepassword-service-account.sh [ns]...
 #   op read op://.../token | ./create-onepassword-service-account.sh [ns]...
-#   ./create-onepassword-service-account.sh [ns]...   # hidden prompt
 set -euo pipefail
 
 tty_state=''

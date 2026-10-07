@@ -1,21 +1,13 @@
-// GitHub App installation-token service for the software factory (#70).
-//
-// Replaces long-lived writer PATs with short-lived installation tokens:
-// an RS256 app JWT is exchanged once per (permission set, expiry window)
-// for an installation token that GitHub expires after one hour. Tokens
-// are cached in memory only — never written to disk, logs, manifests, or
-// a database — and refreshed `refreshMarginMs` before expiry.
-//
-// Permission narrowing: each request may pass a subset of the app's
-// installed permissions (e.g. the read-only collector asks for
-// metadata/issues/contents read, the publisher for contents RW + PRs RW);
-// GitHub issues a token carrying exactly what was requested.
+// GitHub App installation-token service. An RS256 app JWT is exchanged for a
+// one-hour installation token, cached in memory per permission set and
+// refreshed `refreshMarginMs` before expiry. Each request may narrow the
+// app's installed permissions; GitHub issues exactly what was requested.
 import { createSign } from "node:crypto";
 
 export interface AppCredentials {
   appId: string;
   installationId: string;
-  /** PEM-encoded PKCS#1 or PKCS#8 private key (from the 1Password item). */
+  /** PEM-encoded PKCS#1 or PKCS#8 private key. */
   privateKey: string;
 }
 

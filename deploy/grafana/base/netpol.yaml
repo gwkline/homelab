@@ -1,6 +1,3 @@
-# Workload-owned exposure rule. Default-deny ingress lives in policies/base;
-# the only path in is the Tailscale operator's proxies. Tailnet identity is
-# the auth layer, same model as every other UI here.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -20,9 +17,7 @@ spec:
         - protocol: TCP
           port: 3000
 ---
-# Egress narrowed below the namespace baseline (agents egress is otherwise
-# open): Grafana needs DNS and the Loki query API — nothing else. Anonymous
-# auth is on, so no identity-provider egress is needed either.
+# Egress: DNS, Loki, VictoriaMetrics only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -34,7 +29,7 @@ spec:
       app: grafana
   policyTypes: [Egress]
   egress:
-    - to: # DNS: kube-dns pods only (k3s coredns carries this label)
+    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
@@ -44,14 +39,14 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    - to: # Loki query API (same namespace)
+    - to:
         - podSelector:
             matchLabels:
               app: loki
       ports:
         - protocol: TCP
           port: 3100
-    - to: # VictoriaMetrics query API (same namespace, issue #44)
+    - to:
         - podSelector:
             matchLabels:
               app: victoriametrics

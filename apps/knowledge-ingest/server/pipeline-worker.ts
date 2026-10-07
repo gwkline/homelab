@@ -1,42 +1,13 @@
 /**
- * The real ingest pipeline handler (#58 + the retrieval issues): claim →
- * route by job kind and source kind → chunk → embed → upsert into the #56
- * document model → record provenance on the queue's published-version ledger
- * → complete (or let the worker's lease/backoff machinery retry).
+ * Ingest pipeline handler, routed by job kind:
+ * - `document-version`: content is inline; chunk → embed → upsert.
+ * - `document`: identity only; fetch by source kind (git blob or HTTP) and
+ *   verify sha256 against `contentHash` so a stale event fails loudly.
+ * - `source_sync`: `github` sources run an incremental git sync that enqueues
+ *   one `document-version` job per change; other kinds have no crawler.
  *
- * Routing (the fixture worker proved the queue; this proves the pipeline):
- *
- * - `document-version` — a normalized document version carrying its own
- *   content, the git-source bridge shape (`apps/knowledge/src/git-source.ts`
- *   `buildIngestJob`/`toIngestJobPayload`, the `parseDocumentPayload`
- *   contract in `apps/knowledge/src/ingest.ts`). Content is already
- *   extracted, so the job runs straight into the sink: chunk → embed →
- *   upsert.
- * - `document` — an ingest-API event (`DocumentPayload`): identity and a
- *   content hash, no content. The worker FETCHES the content by source kind —
- *   a git blob via the git-source clone cache for `github` (server/
- *   git-fetch.ts), HTTP for `url`/`web`, an explicit unsupported error for
- *   `file` (no mounted source volumes in this deployment) — and verifies
- *   sha256(text) against the event's `contentHash`, so a stale event fails
- *   loudly instead of ingesting the wrong version.
- * - `source_sync` — re-pull a registered source. `github` sources run the
- *   full git-source sync (server/git-sync.ts): clone/fetch via the shared
- *   cache, diff against the durable per-source manifest (only changed blobs
- *   are read), one `document-version` job per changed document (idempotent
- *   on the version identity, so a retried sync never double-enqueues), and
- *   tombstones for deleted/moved paths in the #56 document model. `url`/
- *   `web`/`file` sources complete with zero counts in phase one (no crawler
- *   yet).
- *
- * The sink (`PipelineSink`) is the #56 persistence boundary: in production it
- * is `PgKnowledgeSink` (pg client → `processDocumentVersion` from
- * `apps/knowledge/src/ingest.ts`, see server/knowledge-sink.ts); in tests and
- * DB-less dev it is a recording/in-memory sink. The queue's own contracts are
- * untouched: claims, leases, heartbeats, backoff, and dead-lettering all stay
- * in worker.ts, and every publish is idempotent on the version identity, so a
- * crashed claim recovered by another worker re-runs without double-publishing.
- *
- * Bodies never reach logs: only ids, kinds, and counts.
+ * Leases, retries, and dead-lettering live in worker.ts. Bodies never reach
+ * logs.
  */
 
 import { createHash } from "node:crypto";
@@ -58,7 +29,7 @@ import type {
 } from "./store.ts";
 import type { JobHandler } from "./worker.ts";
 
-/** sha256 hex of the extracted text (the #56 content-hash contract). */
+/** sha256 hex of the extracted text. */
 export const sha256Hex = (text: string): string =>
   createHash("sha256").update(text, "utf-8").digest("hex");
 
@@ -115,7 +86,7 @@ export const pipelineConfigFromEnv = (
   return { fetchTimeoutMs, maxContentBytes };
 };
 
-/** The normalized document the sink ingests (the #56 ingest contract). */
+/** The normalized document the sink ingests. */
 export interface PipelineDocument {
   content: string;
   documentId: string;
@@ -136,11 +107,8 @@ export interface PipelineSinkOutcome {
 }
 
 /**
- * The #56 persistence boundary: chunk → embed → upsert. Production is the
- * pg-backed sink over `processDocumentVersion` (server/knowledge-sink.ts);
- * tests inject a recording fake. `tombstoneDocument` maps onto
- * `buildDocumentTombstone` + `buildChunkSupersede` — deleted documents stop
- * serving immediately; hard delete stays a later GC job (ADR-002 D10).
+ * Persistence boundary: chunk → embed → upsert. Tombstoned documents stop
+ * serving immediately; hard delete is a separate GC job (ADR-002 D10).
  */
 export interface PipelineSink {
   processDocumentVersion: (
@@ -199,11 +167,7 @@ const optionalFormat = (
   return format as ChunkFormat;
 };
 
-/**
- * Optional string-or-null field of a `document-version` payload; the return
- * carries `undefined` (absent) vs `null` (explicit) through to the parser's
- * exactOptionalPropertyTypes-shaped return.
- */
+/** Optional string-or-null field; preserves absent (`undefined`) vs explicit `null`. */
 const optionalString = (
   payload: Record<string, unknown>,
   key: string,
@@ -245,11 +209,7 @@ const optionalRecord = (
 const stringOr = (value: unknown): string | null =>
   typeof value === "string" && value.length > 0 ? value : null;
 
-/**
- * Narrow one claimed `document-version` job's document payload (the flat
- * git-source bridge shape), throwing on malformed ones instead of running
- * garbage through the pipeline.
- */
+/** Validate a `document-version` payload, throwing on malformed input. */
 export const parseDocumentVersionPayload = (
   payload: unknown,
   jobId: string
@@ -283,17 +243,14 @@ export const parseDocumentVersionPayload = (
   };
 };
 
-/**
- * Extract a string field from a `document-version` provenance object (the
- * git-source bridge records `commitSha`/`ref` there); null when absent.
- */
+/** String field from provenance (git-source records `commitSha`/`ref`). */
 const provenanceString = (
   payload: DocumentVersionPayload,
   key: string
 ): string | null =>
   payload.provenance === null ? null : stringOr(payload.provenance[key]);
 
-/** Map a #56 source label onto the queue ledger's source kinds. */
+/** Map a document source label onto the ledger's source kinds. */
 const ledgerSourceKind = (sourceLabel: string): IngestSourceInput["kind"] => {
   if (sourceLabel === "git") {
     return "github";
@@ -308,10 +265,7 @@ const ledgerSourceKind = (sourceLabel: string): IngestSourceInput["kind"] => {
   return "url";
 };
 
-/**
- * Fetch url/web content: bounded by `maxContentBytes` (knowledge ingestion,
- * not bulk mirroring). The caller verifies the content hash.
- */
+/** Fetch url/web content, capped at `maxContentBytes`; the caller verifies the hash. */
 const fetchText = async (
   url: string,
   config: PipelineConfig,
@@ -342,11 +296,9 @@ const fetchText = async (
   return new TextDecoder("utf-8").decode(body);
 };
 
-/** Derive the chunk format from a path-ish identity (extension → format). */
 const formatFor = (pathish: string): ChunkFormat =>
   classifyContent(pathish).contentKind;
 
-/** The handler: route one claimed job through the pipeline. */
 export const createPipelineHandler = (deps: PipelineDeps): JobHandler => {
   const config = deps.config ?? {
     fetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
@@ -487,8 +439,7 @@ export const createPipelineHandler = (deps: PipelineDeps): JobHandler => {
     }
     const { source } = job.payload.sync;
     if (source.kind !== "github") {
-      // Phase one: only git repos have a crawler (git-source). url/web/file
-      // sources ingest through explicit events; a sync is a clean no-op.
+      // Only git sources have a crawler; others ingest via explicit events.
       log?.info("pipeline sync skipped (no crawler for source kind)", {
         jobId: job.jobId,
         kind: source.kind,
@@ -557,9 +508,8 @@ export const createPipelineHandler = (deps: PipelineDeps): JobHandler => {
 };
 
 /**
- * In-memory sink for DB-less dev runs (no DATABASE_URL): chunk counts come
- * from the real deterministic chunker, so dev mode reports honest numbers,
- * and processing is idempotent on the version identity like the pg sink.
+ * In-memory sink for DB-less dev. Uses the real chunker so counts are honest,
+ * and is idempotent on version identity like the pg sink.
  */
 export const createMemoryPipelineSink = (
   options: { maxChars?: number } = {}

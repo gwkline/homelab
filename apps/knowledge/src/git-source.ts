@@ -1,62 +1,16 @@
 /**
- * Incremental Git repository knowledge source (#61).
+ * Incremental Git repository knowledge source. Syncs selected files into
+ * whole-file, provenance-complete documents tagged with a `contentKind`;
+ * chunking and embedding happen downstream.
  *
- * The first real ingestion source: sync selected files from a Git repository
- * into normalized, provenance-complete documents. This module ENDS at
- * whole-file documents — chunking and embeddings are downstream workers'
- * job (#59+); nothing here pretends Markdown and code chunk alike, it only
- * tags each document with a `contentKind` the chunker dispatches on.
+ * The manifest maps path to last-ingested blob hash, so unchanged blobs are
+ * never read; modified files bump the version, deletions tombstone the path,
+ * and a deleted blob reappearing at a new path is recorded as a rename.
  *
- * Provenance (every document carries all of it):
- * - `repositoryUrl` + `ref`: where the content came from
- * - `commitSha`: the exact commit the sync read
- * - `path` / `externalId`: repo-relative path at that commit
- * - `blobHash`: git blob SHA — what the incremental manifest diffs on
- * - `contentHash`: sha256 of the stored text (the D3/D10 no-op key)
- * - `url`: canonical commit-pinned web URL (GitHub/GitLab/Bitbucket exact)
- * - `lineRange`: inclusive 1-based range covered (whole file; chunkers
- *   narrow it per chunk)
- * - `firstCommitSha`, `renamedFrom`, `previousBlobHash`,
- *   `previousContentHash`: enough to explain history after renames and
- *   re-ingests
- *
- * Incremental sync: the manifest maps path → last-ingested blob hash. Each
- * sync diffs the current tree against it, so unchanged blobs are never read
- * (`cat-file` runs only for adds/changes), modified files bump the document
- * version, deletions tombstone the path, and a deleted blob reappearing at
- * a new path is a rename (same blob hash): the old path is tombstoned with
- * `renamedTo`, the new document records `renamedFrom` — stale paths never
- * serve results and history stays explainable.
- *
- * Defaults: binary extensions, NUL/mojibake-sniffed blobs, generated dirs
- * (`node_modules`, `dist`, `vendor`, …), lockfiles, and secret-looking
- * files (name patterns + PEM private-key content sniff) are excluded
- * without configuration. `applyDefaultExcludes: false` drops only the
- * directory/lockfile/generated sets — secret detection stays on in every
- * mode, because credentials must never reach the corpus by opt-out.
- *
- * Auth: an optional token arrives via `GitSourceConfig.token` or the
- * environment (`GIT_SOURCE_TOKEN_FILE`, then `GIT_SOURCE_TOKEN` — the
- * mounted-Secret/raw-PAT shapes the homelab's git auth already uses) and
- * is applied per invocation through the `http.extraheader` git config
- * override passed via `GIT_CONFIG_*` environment variables (the mechanism
- * GitHub Actions' checkout uses). The token never lands in any
- * `.git/config`, never appears in argv or logs, and is never accepted
- * URL-embedded (URLs carrying credentials are rejected); private-repo
- * auth failures fail fast with prompts disabled, and public repos need
- * no token at all. Access is strictly read-only: clone and fetch, never
- * push.
- *
- * Pipeline hand-off: each upserted document converts to one ingest-queue
- * job (`buildIngestJob`) — the #57/#58 worker's `document-version`
- * payload shape — so chunking, embedding, and durable persistence stay
- * downstream. Unchanged content reaching the worker is a full no-op via
- * the schema's content-hash guard, and the manifest here means unchanged
- * blobs never even get re-read or re-emitted.
- *
- * Like `src/bm25.ts`/`src/pgvector.ts`: pure pieces (glob matching, tree
- * filtering, planning, assessment, normalization) are covered by offline
- * unit tests; `openGitRepository` is the only piece that spawns `git`.
+ * Secret detection (name patterns plus a private-key content sniff) applies
+ * in every mode: credentials must never reach the corpus by opt-out. Tokens
+ * are passed per invocation via `GIT_CONFIG_*` env vars, never argv, logs,
+ * `.git/config`, or the URL. Access is read-only.
  */
 
 import { execFile } from "node:child_process";
@@ -88,14 +42,6 @@ const globSegmentSource = (segment: string): string =>
     .replaceAll("*", "[^/]*")
     .replaceAll("?", "[^/]");
 
-/** Test one repo-relative POSIX path against one pattern. */
-/**
- * gitignore-lite matching for include/exclude patterns: `*`/`?` within a
- * segment, `**` across segments, trailing `/` means the whole subtree, a
- * leading `/` anchors at the repo root, and a pattern without `/` matches
- * the basename at any depth (so a bare dir name excludes its whole
- * subtree — the gitignore intuition).
- */
 const globRegexCache = new Map<string, RegExp>();
 
 const compileGlob = (pattern: string): RegExp => {
@@ -132,8 +78,7 @@ const compileGlob = (pattern: string): RegExp => {
     }
   }
   if (!anchored && segments.length === 1) {
-    // Bare name / basename glob: hit any single segment; a directory hit
-    // carries its whole subtree with it.
+    // A bare name matches any segment, and a directory hit takes its subtree.
     source = `(?:.*/)?${source}(?:/.*)?`;
   } else if (!anchored) {
     source = `(?:.*/)?${source}`;
@@ -142,6 +87,11 @@ const compileGlob = (pattern: string): RegExp => {
   globRegexCache.set(pattern, regex);
   return regex;
 };
+
+/**
+ * gitignore-lite: `*`/`?` within a segment, `**` across segments, a leading
+ * `/` anchors at the root, and a pattern without `/` matches at any depth.
+ */
 export const matchGitPath = (pattern: string, filePath: string): boolean =>
   compileGlob(pattern).test(filePath);
 
@@ -286,11 +236,7 @@ const BINARY_EXTENSIONS = new Set([
   "zst",
 ]);
 
-/**
- * Secret-looking NAME patterns. Applied in every mode (even with
- * `applyDefaultExcludes: false`) — credentials must never reach the corpus
- * because a user opted out of the convenience excludes.
- */
+/** Applied even with `applyDefaultExcludes: false`. */
 const SECRET_NAME_PATTERNS = [
   ".env",
   ".env.*",
@@ -315,12 +261,6 @@ const SECRET_NAME_PATTERNS = [
   "secrets.*",
 ];
 
-/**
- * Excluded by default before any caller-supplied `exclude` patterns:
- * generated/vendored directories, lockfiles, generated files, and
- * secret-named files. Toggle off with `applyDefaultExcludes: false`
- * (secret-name and private-key content detection still apply).
- */
 export const DEFAULT_EXCLUDE_PATTERNS = [
   ...EXCLUDED_DIRECTORIES,
   ...EXCLUDED_LOCKFILES,
@@ -428,11 +368,6 @@ export interface ContentClassification {
   language: string | null;
 }
 
-/**
- * Markdown and source code get distinct `contentKind` values so the
- * downstream chunker can use heading/paragraph semantics for prose and
- * line/AST semantics for code — this module never chunks, it only tags.
- */
 const fileExtension = (filePath: string): string | null => {
   const fileName = path.basename(filePath);
   const dot = fileName.lastIndexOf(".");
@@ -466,9 +401,8 @@ export const isBinaryExtension = (filePath: string): boolean => {
 };
 
 /**
- * NUL byte anywhere, or a decode dominated by U+FFFD replacements (>1% —
- * real UTF-8 text never trips this; latin-1/UTF-16 payloads do), marks a
- * blob binary. Called on blobs already bounded by `maxBlobBytes`.
+ * A NUL byte, or more than 1% U+FFFD after UTF-8 decode, marks a blob
+ * binary; real UTF-8 never trips this, latin-1/UTF-16 payloads do.
  */
 export const sniffBinary = (bytes: Uint8Array): boolean => {
   if (bytes.includes(0)) {
@@ -488,7 +422,6 @@ export const contentLooksSecret = (text: string): boolean =>
 export const looksSecretNamed = (filePath: string): boolean =>
   SECRET_NAME_PATTERNS.some((pattern) => matchGitPath(pattern, filePath));
 
-/** Outcome of examining one blob for ingestion. */
 export type BlobAssessment =
   | { contentHash: string; kind: "text"; text: string }
   | { kind: "binary" | "empty" | "secret" | "too-large" };
@@ -497,10 +430,8 @@ export const sha256Hex = (text: string): string =>
   createHash("sha256").update(text, "utf-8").digest("hex");
 
 /**
- * Full ingest gate for one blob, in strict order: empty → too-large →
- * secret-named → binary → secret content → text. The returned
- * `contentHash` covers the exact stored text, so equal hashes mean
- * byte-equal documents (the D10 no-op contract).
+ * Ingest gate, in order: empty, too-large, secret-named, binary, secret
+ * content, text. `contentHash` covers the exact stored text.
  */
 export const assessBlob = (
   filePath: string,
@@ -566,13 +497,9 @@ export const normalizeRepositoryUrl = (raw: string): string => {
       `git-source: repositoryUrl protocol ${JSON.stringify(parsed.protocol)} is not supported (use https, ssh, or a local path)`
     );
   }
-  // Credentials embedded in the URL are the one auth shape this source
-  // refuses: they end up in argv, logs, and the manifest. Passwords are
-  // rejected on every scheme; usernames are rejected on the basic-auth
-  // transports (https/git), where a username without a password is the
-  // GitHub PAT-as-username pattern. An ssh username (`ssh://git@host/…`)
-  // is a real account name and stays allowed. Tokens must arrive via
-  // `config.token` or the `GIT_SOURCE_TOKEN`(_FILE) env vars instead.
+  // URL credentials would leak into argv, logs, and the manifest. On
+  // https/git a bare username is the PAT-as-username pattern; an ssh
+  // username is a real account and stays allowed.
   if (parsed.password !== "") {
     throw new Error(
       "git-source: repositoryUrl must not embed a password; pass the token via GitSourceConfig.token or GIT_SOURCE_TOKEN instead"
@@ -590,10 +517,8 @@ export const normalizeRepositoryUrl = (raw: string): string => {
 };
 
 /**
- * Canonical, commit-pinned web URL for one file. Exact for GitHub,
- * GitLab, and Bitbucket; best-effort `<repo>/blob/<sha>/<path>` for other
- * forges; `file://` URL for local checkouts (the commit fields carry the
- * revision there).
+ * Commit-pinned web URL for one file: exact for GitHub, GitLab, and
+ * Bitbucket, best-effort elsewhere, `file://` for local checkouts.
  */
 export const canonicalSourceUrl = (
   repositoryUrl: string,
@@ -648,10 +573,7 @@ export const documentIdFor = (
   ].join("-");
 };
 
-/**
- * Stable store key for one configured source: (namespace, repositoryUrl,
- * ref). Changing the ref starts a fresh manifest — old refs stay intact.
- */
+/** Keyed on (namespace, repositoryUrl, ref): a new ref starts a fresh manifest. */
 export const deriveSourceKey = (resolved: {
   namespace: string;
   ref: string;
@@ -665,11 +587,7 @@ export const deriveSourceKey = (resolved: {
     .digest("hex")
     .slice(0, 24)}`;
 
-/**
- * Reject refs that could smuggle git options or break ref syntax
- * (leading `-`, whitespace, `~^:?*[\`, `..`, `@{`, trailing `.`/`/`,
- * `.lock` suffix) — refs are the only caller-controlled git argument.
- */
+/** Refs are the only caller-controlled git argument; reject option smuggling. */
 export const assertValidGitRef = (ref: string): string => {
   if (
     typeof ref !== "string" ||
@@ -690,13 +608,7 @@ export const assertValidGitRef = (ref: string): string => {
   return ref;
 };
 
-/**
- * One configured knowledge source: repository URL, branch/ref, include and
- * exclude globs, and the knowledge namespace the documents land in. The
- * optional token authorizes private repos and is never persisted anywhere.
- */
 export interface GitSourceConfig {
-  /** Local clone cache directory override (exec adapter). */
   cacheDir?: string | null;
   /** Drop the default dir/lockfile/generated excludes. Default `false`. */
   applyDefaultExcludes?: boolean;
@@ -704,21 +616,16 @@ export interface GitSourceConfig {
   exclude?: string[];
   /** Include globs (gitignore-lite). Defaults to `["**"]`. */
   include?: string[];
-  /** Max blob size to ingest. Defaults to `DEFAULT_MAX_BLOB_BYTES`. */
+  /** Defaults to `DEFAULT_MAX_BLOB_BYTES`. */
   maxBlobBytes?: number;
-  /** Knowledge namespace (collection key, ADR-002 D9). Required. */
   namespace: string;
-  /** Branch, tag, or commit-ish to sync. Required. */
+  /** Branch, tag, or commit-ish. */
   ref: string;
   /** Fetch new commits on open. Default `true`. */
   refresh?: boolean;
-  /** Repository URL (https, ssh/scp, or local path) or clone. Required. */
+  /** https, ssh/scp, or absolute local path. */
   repositoryUrl: string;
-  /**
-   * Access token for private repos; used in-memory only, never stored.
-   * When absent, `GIT_SOURCE_TOKEN_FILE` then `GIT_SOURCE_TOKEN` supply
-   * one. Credentials embedded in the repository URL are always rejected.
-   */
+  /** In-memory only. Falls back to `GIT_SOURCE_TOKEN_FILE`, then `GIT_SOURCE_TOKEN`. */
   token?: string | null;
 }
 
@@ -772,26 +679,12 @@ const validatedToken = (token: string): string => {
   return token;
 };
 
-/**
- * Env var carrying a raw access token for private repos (the
- * `GITHUB_TOKEN` shape the homelab's git auth already uses).
- * Read-only: the value is used per invocation and never persisted.
- */
 export const GIT_SOURCE_TOKEN_ENV = "GIT_SOURCE_TOKEN";
 
-/**
- * Env var naming a file that holds the token (the mounted-Secret shape,
- * mirroring `GITHUB_TOKEN_FILE` in `apps/shared/workspace-lib.sh`).
- * Preferred over `GIT_SOURCE_TOKEN` when both are set.
- */
+/** Path to a mounted token file; preferred over `GIT_SOURCE_TOKEN`. */
 export const GIT_SOURCE_TOKEN_FILE_ENV = "GIT_SOURCE_TOKEN_FILE";
 
-/**
- * Resolve the access token from the environment: the token file first
- * (the mounted-Secret shape), then the raw env var, else `null` (public
- * repos need no token). The file's trailing newline is trimmed; the
- * resolved value is validated and returned for per-invocation use only.
- */
+/** Token file first, then the raw env var, else `null` for public repos. */
 export const resolveGitSourceTokenFromEnv = async (
   env: NodeJS.ProcessEnv = process.env
 ): Promise<string | null> => {
@@ -821,7 +714,6 @@ export const resolveGitSourceTokenFromEnv = async (
   return null;
 };
 
-/** Validate and normalize a source config before any git command runs. */
 export const resolveGitSourceConfig = (
   config: GitSourceConfig
 ): ResolvedGitSourceConfig => {
@@ -858,25 +750,18 @@ export const resolveGitSourceConfig = (
   };
 };
 
-/** One file entry from `git ls-tree -r`: a blob at a path in a commit. */
 export interface GitTreeEntry {
   blobHash: string;
   path: string;
-  /** Blob size in bytes when the repo knows it, else `null`. */
   size: number | null;
 }
 
-/**
- * Minimal repository surface sync consumes. `openGitRepository` builds one
- * from a real clone/fetch; tests can hand-sync with a fixture object.
- */
 export interface GitRepository {
   listBlobs: (commitSha: string) => Promise<GitTreeEntry[]>;
   readBlob: (blobHash: string) => Promise<Uint8Array>;
   resolveCommit: (ref: string) => Promise<string>;
 }
 
-/** Last-ingested state of one path, the unit of incremental sync. */
 export interface GitManifestEntry {
   blobHash: string;
   contentHash: string;
@@ -887,9 +772,8 @@ export interface GitManifestEntry {
 }
 
 export interface GitSourceManifest {
-  /** Commit of the last successful sync; `null` before the first sync. */
+  /** `null` before the first successful sync. */
   commitSha: string | null;
-  /** path → last-ingested entry. */
   entries: Record<string, GitManifestEntry>;
   sourceKey: string;
 }
@@ -937,11 +821,9 @@ const primaryPath = (op: GitSyncOp): string =>
   op.kind === "renamed" ? op.toPath : op.path;
 
 /**
- * Diff the previous manifest against the current tree. Pure and
- * deterministic: ops are grouped unchanged → added → modified → renamed →
- * deleted, each group sorted by path. A deletion is paired with an added
- * path carrying the same blob hash as a rename (one-to-one, sorted order);
- * an identical blob at two live paths is a copy and both stay adds.
+ * Diff the manifest against the current tree, deterministically. A deletion
+ * paired with an add of the same blob is a rename; the same blob at two live
+ * paths is a copy and both stay adds.
  */
 export const planGitSource = (
   manifest: GitSourceManifest,
@@ -998,8 +880,7 @@ export const planGitSource = (
       });
     }
   }
-  // Pair each deletion with an added path carrying the same blob hash:
-  // that is a rename (git mv without edits). Copies keep both adds.
+  // Same blob hash on a delete and an add is a rename (git mv without edits).
   const consumedDeletes = new Set<string>();
   const renamed: Extract<GitSyncOp, { kind: "renamed" }>[] = [];
   for (const add of added) {
@@ -1036,7 +917,6 @@ export const planGitSource = (
   ];
 };
 
-/** One normalized document with full Git provenance (see module header). */
 export interface GitSourceDocument {
   blobHash: string;
   commitSha: string;
@@ -1061,7 +941,6 @@ export interface GitSourceDocument {
   version: number;
 }
 
-/** Tombstone: a path that stopped existing (or moved) at `tombstoneCommitSha`. */
 export interface GitTombstone {
   blobHash: string;
   contentHash: string;
@@ -1074,13 +953,8 @@ export interface GitTombstone {
 }
 
 /**
- * Persistence contract for sync. A durable implementation maps onto the
- * ADR-002 D3 `document` table: `upsertDocument` feeds the chunk+embed
- * ingest worker (`buildIngestJob` below produces its queue payload, and
- * the worker persists the `document`/`document_version` rows), while
- * `tombstoneDocument` maps onto `src/schema.ts`'s
- * `buildDocumentTombstone` + `buildChunkSupersede`. The in-memory store
- * keeps tests offline.
+ * A durable store enqueues `buildIngestJob(document)` on upsert and maps
+ * tombstones onto `buildDocumentTombstone` + `buildChunkSupersede`.
  */
 export interface GitSourceStore {
   loadManifest: (sourceKey: string) => Promise<GitSourceManifest>;
@@ -1127,45 +1001,22 @@ export const createInMemoryGitSourceStore = (): InMemoryGitSourceStore => {
   };
 };
 
-// --- the ingest-queue bridge (#57/#58 worker contract) ---
-
-/**
- * Job kind for one normalized document version, matching the ingest
- * worker's `document-version` jobs (`parseDocumentPayload` shape).
- */
 export const GIT_INGEST_JOB_KIND = "document-version";
 
-/** Worker job ids/kinds are identifiers: `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`. */
 const INGEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
-/**
- * Deterministic job id for one document version: re-emitting the same
- * version (a retried sync, a rebuilt manifest after state loss) enqueues
- * the same id, and the worker's idempotent enqueue (`ON CONFLICT (id) DO
- * NOTHING`) makes it a no-op instead of a duplicate job.
- */
+/** Deterministic, so a re-emitted version hits the queue's `ON CONFLICT DO NOTHING`. */
 export const ingestJobIdFor = (document: {
   documentId: string;
   version: number;
 }): string => `git-${document.documentId}-v${document.version}`;
 
-/**
- * Deterministic `document_version` row id the worker's chunks cite. On
- * conflicts (history is append-only) the worker resolves and reuses the
- * existing row, so a stale prediction here can never fork history.
- */
 export const ingestVersionIdFor = (document: {
   documentId: string;
   version: number;
 }): string => `${document.documentId}-v${document.version}`;
 
-/**
- * The worker payload for one document version: the exact
- * `parseDocumentPayload` fields (`content`, identity, `format` =
- * `contentKind`, citation `title`/`url`) plus a `provenance` object the
- * worker ignores but the durable job row keeps for auditability —
- * repository, commit, blob hashes, path, and rename lineage.
- */
+/** `provenance` is ignored by the worker but kept on the job row for audit. */
 export const toIngestJobPayload = (
   document: GitSourceDocument
 ): Record<string, unknown> => ({
@@ -1194,20 +1045,12 @@ export const toIngestJobPayload = (
   versionId: ingestVersionIdFor(document),
 });
 
-/** One queued ingest job, structurally the worker's `IngestJobSpec` shape. */
 export interface GitIngestJob {
   jobId: string;
   kind: string;
   payload: Record<string, unknown>;
 }
 
-/**
- * Build the ingest job for one synced document: a durable store's
- * `upsertDocument` enqueues exactly this (the worker owns chunking,
- * embedding, and the document/version rows). Ids are validated against
- * the worker's identifier pattern here so a mis-shaped document id fails
- * at the source, not inside the queue.
- */
 export const buildIngestJob = (document: GitSourceDocument): GitIngestJob => {
   const jobId = ingestJobIdFor(document);
   const versionId = ingestVersionIdFor(document);
@@ -1241,8 +1084,7 @@ const buildGitDocument = (
   const previous = op.kind === "added" ? undefined : op.previous;
   const classification = classifyContent(filePath);
   const firstCommitSha = previous?.firstCommitSha ?? commitSha;
-  // A renamed path is a fresh document row (new external_id): version 1,
-  // with the lineage carried by renamedFrom/previous* provenance.
+  // A renamed path is a new document; lineage lives in renamedFrom/previous*.
   const version =
     op.kind === "renamed" || previous === undefined ? 1 : previous.version + 1;
   return {
@@ -1303,7 +1145,7 @@ export interface GitTreeFilter {
 
 export const isDefaultExcluded = (filePath: string): boolean =>
   DEFAULT_EXCLUDE_PATTERNS.some((pattern) => matchGitPath(pattern, filePath));
-/** Include/exclude/default filtering over one commit's blobs. */
+
 export const filterGitTree = (
   tree: GitTreeEntry[],
   resolved: ResolvedGitSourceConfig
@@ -1330,19 +1172,17 @@ export interface GitSyncCounts {
 }
 
 export interface GitSyncReport extends GitSyncCounts {
-  /** Entries kept after include/exclude filtering. */
   excluded: number;
   commitSha: string;
-  /** Changed ops only (add/change/rename/delete); unchanged is a count. */
+  /** Changed ops only; unchanged ops are just counted. */
   ops: GitSyncOp[];
   scanned: number;
   sourceKey: string;
 }
 
 /**
- * Apply one diffed plan. Content reads run concurrently (`Promise.all`)
- * but every store write is derived from the deterministic op order, so
- * the resulting manifest and report are stable for a given commit.
+ * Blob reads run concurrently, but writes follow the deterministic op order,
+ * so the manifest and report are stable for a given commit.
  */
 export const syncGitSource = async (
   repository: GitRepository,
@@ -1410,8 +1250,7 @@ export const syncGitSource = async (
     if (assessment.kind !== "text") {
       skipCount(assessment);
       if (op.kind === "modified") {
-        // The path no longer yields ingestable text: tombstone the stale
-        // document so the old version stops serving.
+        // Tombstone so the last text version stops serving.
         tombstones.push(
           tombstoneOf(op.previous, op.path, resolved.namespace, commitSha, null)
         );
@@ -1469,12 +1308,6 @@ export const syncGitSource = async (
   };
 };
 
-/**
- * Per-invocation basic-auth header for private-repo HTTPS: the token
- * becomes an `http.extraheader` override riding in `GIT_CONFIG_*` env
- * vars — scoped to exactly the spawned git processes, never written to
- * any config file, never part of argv.
- */
 const gitAuthConfig = (token: string): NodeJS.ProcessEnv => {
   const authorization = Buffer.from(
     `x-access-token:${token}`,
@@ -1488,11 +1321,8 @@ const gitAuthConfig = (token: string): NodeJS.ProcessEnv => {
 };
 
 /**
- * Per-invocation auth environment. The token rides in `GIT_CONFIG_*` env
- * vars as an `http.extraheader` override — scoped to exactly these git
- * processes, never written to any config file, never part of argv. Also
- * disables interactive prompts so a private repo with a missing/invalid
- * token fails fast instead of hanging.
+ * The token rides in `GIT_CONFIG_*` env vars, never argv or a config file.
+ * Prompts are disabled so bad credentials fail fast instead of hanging.
  */
 export const gitProcessEnv = (token: string | null): NodeJS.ProcessEnv => {
   const auth = token === null ? {} : gitAuthConfig(token);
@@ -1581,18 +1411,8 @@ const parseGitLsTree = (output: string): GitTreeEntry[] => {
   return entries;
 };
 
-/**
- * Real repository backed by a local clone/fetch cache: one directory per
- * repository URL under `cacheDir` (default
- * `<tmpdir>/knowledge-git-source`), refreshed with `git fetch --prune`.
- * Blobs are read on demand with `git cat-file`; the tree comes from
- * `git ls-tree -r`. Never shells out — every command is a direct exec
- * with validated arguments, and the access token (if any) reaches git
- * only through `GIT_CONFIG_*` env vars.
- */
 export interface OpenGitRepositoryOptions {
   cacheDir?: string | null;
-  /** Fetch new commits on open. Default `true`. */
   refresh?: boolean;
   repositoryUrl: string;
   token?: string | null;
@@ -1609,8 +1429,6 @@ export const openGitRepository = async (
     cacheDir,
     createHash("sha1").update(repositoryUrl, "utf-8").digest("hex").slice(0, 20)
   );
-  // Explicit config token wins; otherwise the environment supplies one
-  // (token file, then raw env var) and public repos stay tokenless.
   const token =
     options.token ?? (await resolveGitSourceTokenFromEnv(process.env));
   const env = gitProcessEnv(token);
@@ -1703,10 +1521,7 @@ export const openGitRepository = async (
   };
 };
 
-/**
- * Convenience: open (clone/fetch) the configured repository, then sync.
- * Reuses the shared local clone cache between runs.
- */
+/** One bare clone per repository URL, cached under `cacheDir` between runs. */
 export const syncGitRepository = async (
   store: GitSourceStore,
   config: GitSourceConfig

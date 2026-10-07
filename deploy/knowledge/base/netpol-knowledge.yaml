@@ -1,18 +1,6 @@
-# Knowledge service isolation. The agents namespace default-denies ingress
-# (deploy/policies/base); these workload-owned rules declare the paths in.
-# Egress: both services opt INTO egress isolation (tighter than the agents
-# baseline, which keeps egress open for t3code/hermes) — the knowledge pair
-# is a fixed-function service with a small, known destination set:
-#
-#   both       → DNS (kube-dns), the knowledge database (5432)
-#   ingest     → public internet 443 (GitHub clones/fetches for git-source
-#                pulls; the OpenAI-compatible embedding provider when
-#                configured) with every private/special range carved out
-#   retrieval  → the ingest service (3100) for the sources/sync passthrough
-#
-# Ingress: the panel (server-side knowledge proxy) reaches both; Tailscale
-# operator proxies reach the retrieval API (the https://knowledge.<tailnet>
-# entrypoint); the ingest API stays cluster-internal.
+# Both services opt into egress isolation (the agents baseline leaves egress
+# open). Ingest stays cluster-internal; retrieval is also reachable over the
+# tailnet and from factory orchestrators.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -24,14 +12,14 @@ spec:
       app: knowledge-retrieval
   policyTypes: [Ingress]
   ingress:
-    - from: # Tailscale operator proxies (https://knowledge.<tailnet>)
+    - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: tailscale
       ports:
         - protocol: TCP
           port: 3000
-    - from: # Factory orchestrator pods (#86): knowledge context into briefs
+    - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: sandbox
@@ -41,7 +29,7 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
-    - from: # Panel server-side knowledge proxy (pod-scoped)
+    - from:
         - podSelector:
             matchLabels:
               app: panel
@@ -60,7 +48,7 @@ spec:
       app: knowledge-ingest
   policyTypes: [Ingress]
   ingress:
-    - from: # Panel sync triggers + the retrieval passthrough (pod-scoped)
+    - from:
         - podSelector:
             matchLabels:
               app: panel
@@ -82,7 +70,7 @@ spec:
       app: knowledge-retrieval
   policyTypes: [Egress]
   egress:
-    - to: # DNS: kube-dns pods only (k3s coredns carries this label)
+    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
@@ -92,7 +80,7 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    - to: # The knowledge database (CNPG primary, deploy/postgres)
+    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: database
@@ -101,7 +89,7 @@ spec:
               cnpg.io/cluster: pg-primary
       ports:
         - { protocol: TCP, port: 5432 }
-    - to: # Ingest passthrough (same namespace, pod-scoped)
+    - to:
         - podSelector:
             matchLabels:
               app: knowledge-ingest
@@ -119,7 +107,7 @@ spec:
       app: knowledge-ingest
   policyTypes: [Egress]
   egress:
-    - to: # DNS: kube-dns pods only
+    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
@@ -129,7 +117,7 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    - to: # The knowledge database (CNPG primary, deploy/postgres)
+    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: database
@@ -138,9 +126,8 @@ spec:
               cnpg.io/cluster: pg-primary
       ports:
         - { protocol: TCP, port: 5432 }
-    - to: # Public internet 443 — git-source clones/fetches (GitHub) and the
-        # OpenAI-compatible embedding provider when configured — with every
-        # private/special range carved out (same list as deploy/policies/base).
+    # Public HTTPS (GitHub, embedding provider), private ranges excluded.
+    - to:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:

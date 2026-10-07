@@ -119,9 +119,8 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
     })
   );
 
-  // Tailnet/internal-network constraint is enforced at the network layer
-  // (ClusterIP + ingress policy); the bearer token from a mounted secret is
-  // the application-layer check. Token compare is constant time.
+  // Network policy limits reachability; this constant-time bearer check is
+  // the application-layer gate.
   app.use(
     "/v1/*",
     createMiddleware<AppEnv>(async (c, next) => {
@@ -346,14 +345,9 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
     }
   });
 
-  // ── ingest passthrough (#65/#64: one base URL for the panel and MCP) ──
-  //
-  // The panel's knowledge client and the MCP adapter speak ONE knowledge API
-  // base URL — this service. Sources, sync triggers, and sync-job status are
-  // the ingest service's surface; these three routes proxy them verbatim
-  // (status + body) so callers never need the ingest URL or its token. The
-  // proxy authenticates with its own configured ingest token; caller tokens
-  // are not forwarded (they are retrieval tokens, not ingest tokens).
+  // Ingest passthrough: the panel and MCP use one knowledge base URL, so the
+  // ingest routes are proxied verbatim. The proxy uses its own ingest token;
+  // caller (retrieval) tokens are never forwarded.
   const ID_PATTERN = /^[\w.:-]{1,128}$/u;
 
   const passthrough = async (upstream: {

@@ -1,19 +1,5 @@
-# work-t3code: an isolated t3code runner for employer/work repositories.
-#
-# Same image as the personal t3code (apps/t3code), deployed as a separate
-# StatefulSet in the `work` namespace with a dedicated, narrowly-scoped
-# GitHub credential. The isolation contract (see README.md):
-#   - Only Secret `work-github-token` is mounted: a fine-grained PAT whose
-#     repository access is limited to the operator's selected work repos
-#     (repo list and token both live in 1Password — this public repo carries
-#     no work identifiers). It cannot read any personal repo, and no
-#     personal credential is reachable from this pod.
-#   - No skills-sync (private personal skills stay out of work sessions) and
-#     no Executor MCP registration (no gateway into the personal cluster's
-#     factory tooling).
-#   - Egress is public-internet-only at the namespace level
-#     (deploy/policies/base): GitHub/npm/model APIs yes; Kubernetes API,
-#     LAN, tailnet, and every other homelab service no.
+# Isolated t3code for work repos: only the work-scoped PAT, no skills-sync,
+# no Executor, no ServiceAccount token, public-internet-only egress.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -21,10 +7,7 @@ metadata:
   namespace: work
 spec:
   serviceName: work-t3code-headless
-  # One replica by design: the t3state claim (see volumes) is
-  # replica-specific — t3state-work-t3code-0, ReadWriteOnce — so a second
-  # replica would have to mount the same PVC. Keep this at 1 (same reasoning
-  # as the personal t3code StatefulSet).
+  # Keep at 1: t3state is a single standalone RWO claim (t3state-pvc.yaml).
   replicas: 1
   selector:
     matchLabels:
@@ -53,39 +36,20 @@ spec:
             - containerPort: 3773
               name: http
           env:
-            # The ONLY GitHub credential in this pod: Secret work-github-token
-            # (ExternalSecret -> 1Password item work-github-writer), a
-            # fine-grained PAT scoped to the selected work repos with
-            # Contents + Pull requests read/write. The entrypoint bridges it
-            # into gh/git for clone AND push; no personal token is mounted.
             - name: GITHUB_TOKEN_FILE
               value: /secrets/token
-            # Workspace repo list rides in the same Secret (key `repos`,
-            # one URL per line) instead of a committed ConfigMap, so the
-            # public repository carries no work identifiers. Deliberately
-            # NOT optional: without the scoped credential the runner must
-            # fail closed (pod stays in CreateContainerConfigError until
-            # ESO syncs) rather than boot an empty workspace.
+            # In the Secret so this public repo has no work identifiers.
+            # Required: fail closed rather than boot an empty workspace.
             - name: WORKSPACE_REPOS
               valueFrom:
                 secretKeyRef:
                   name: work-github-token
                   key: repos
-            # Claude Code headless auth (see claude-oauth.yaml): long-lived
-            # token minted by `claude setup-token`, read fresh by every
-            # claude session. Non-optional on purpose — without it the
-            # runner's claude is dead weight, so fail closed like the
-            # credential above. Rotating = update the 1Password item, wait
-            # for ESO (≤1h), then rollout restart this StatefulSet.
             - name: CLAUDE_CODE_OAUTH_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: work-claude-oauth
                   key: token
-            # Depot build token (see depot-token.yaml). Optional: the item
-            # may be absent — the depot CLI stays inert and the runner
-            # boots regardless. Materializes as soon as the 1Password
-            # item exists (env then lands on the next rollout restart).
             - name: DEPOT_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -95,8 +59,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-            # t3code state (environment-id, pairings, sessions, agent creds).
-            # Standalone PVC declared in t3state-pvc.yaml.
             - name: t3state
               mountPath: /home/node/.t3
             - name: work-github-token
@@ -115,11 +77,7 @@ spec:
             failureThreshold: 30
             periodSeconds: 10
       initContainers:
-        # Runs as root only to fix volume ownership, then exits. Main
-        # containers run as uid 1000 regardless of provisioner fsGroup support.
-        # No skills-sync init container here by design: the personal private
-        # skills repo is authenticated by the personal read token, which this
-        # pod does not have — and personal skills stay out of work sessions.
+        # Root only to chown the volume for uid 1000.
         - name: volume-init
           image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
           command: ["chown", "-R", "1000:1000", "/data"]
@@ -136,16 +94,11 @@ spec:
           secret:
             secretName: work-github-token
             optional: true
-        # Single authoritative claim declaration for the work runner's own
-        # state dir. Same reasoning as the personal t3code: no volumeClaim-
-        # template for t3state (VCTs are immutable after creation); the claim
-        # name carries the replica ordinal and the workload is capped at one
-        # replica.
         - name: t3state
           persistentVolumeClaim:
             claimName: t3state-work-t3code-0
   volumeClaimTemplates:
-    # /data only (repo workspaces — churn is recoverable, they re-clone).
+    # Repo workspaces; disposable, they re-clone.
     - metadata:
         name: data
       spec:

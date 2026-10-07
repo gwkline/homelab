@@ -1,16 +1,8 @@
 /**
- * The durable #56 pipeline sink: `processDocumentVersion` from
- * `apps/knowledge/src/ingest.ts` (chunk → embed → upsert in one transaction)
- * plus two-clock deletion (`buildDocumentTombstone` + `buildChunkSupersede`)
- * for git-source tombstones. Shares the service's pg pool with the queue
- * store; embedding configuration comes from the shared knowledge env knobs
- * (`KNOWLEDGE_EMBEDDING_*` — the deterministic offline provider by default,
- * an OpenAI-compatible server when configured), identical to what the
- * retrieval service uses for query embeddings so vectors always come from one
- * model generation.
- *
- * Also carries the durable git-manifest store (`git_source_manifest`) over
- * the same client, so one DATABASE_URL serves the whole worker.
+ * Postgres pipeline sink: chunk → embed → upsert in one transaction, plus
+ * two-clock deletion for tombstones. Embeddings use the same
+ * `KNOWLEDGE_EMBEDDING_*` config as retrieval so query and document vectors
+ * come from one model.
  */
 
 import { embeddingWorkerConfigFromEnv } from "../../knowledge/src/embedder.ts";
@@ -18,6 +10,7 @@ import type { EmbeddingWorkerConfig } from "../../knowledge/src/embedder.ts";
 import type { GitSourceManifest } from "../../knowledge/src/git-source.ts";
 import { processDocumentVersion } from "../../knowledge/src/ingest.ts";
 import type { DocumentIngestOutcome } from "../../knowledge/src/ingest.ts";
+import type { PgClient } from "../../knowledge/src/pg-client.ts";
 import {
   buildChunkSupersede,
   buildDocumentTombstone,
@@ -37,14 +30,6 @@ export interface PgSinkOptions {
   env?: Record<string, string | undefined>;
   /** Structured sink log (identifiers + counts only). */
   log?: (entry: Record<string, string | number | boolean | null>) => void;
-}
-
-/** Minimal pg-compatible client for the manifest/queue SQL. */
-interface DbClient {
-  query: (
-    text: string,
-    params: unknown[]
-  ) => Promise<{ rows: Record<string, unknown>[] }>;
 }
 
 const asManifest = (
@@ -72,18 +57,13 @@ const asManifest = (
   };
 };
 
-/**
- * Postgres-backed pipeline sink + git manifest store over one client (the
- * service's pg pool). `applySchema` is the base #56 migration (the queue's
- * own schema is applied by the queue store first — ordering matters, see
- * server/index.ts).
- */
+/** Pipeline sink and git manifest store over the service's pg pool. */
 export class PgKnowledgeSink implements PipelineSink, GitManifestStore {
-  private readonly client: DbClient;
+  private readonly client: PgClient;
   private readonly config: EmbeddingWorkerConfig;
   private readonly log: PgSinkOptions["log"];
 
-  constructor(client: DbClient, options: PgSinkOptions = {}) {
+  constructor(client: PgClient, options: PgSinkOptions = {}) {
     this.client = client;
     this.config =
       options.config ??
@@ -91,7 +71,7 @@ export class PgKnowledgeSink implements PipelineSink, GitManifestStore {
     this.log = options.log;
   }
 
-  /** Idempotent base #56 migration (tables the pipeline writes). */
+  /** Idempotent knowledge schema; apply after the queue schema. */
   async applySchema(): Promise<void> {
     await ensureKnowledgeSchema(this.client);
   }
@@ -163,7 +143,7 @@ ON CONFLICT (source_key) DO UPDATE SET
 }
 
 /** Adapt the service's queue pool client to the sink's client surface. */
-export const sinkClientFromPool = (pool: QueueDbClient): DbClient => ({
+export const sinkClientFromPool = (pool: QueueDbClient): PgClient => ({
   query: async (text, params) => {
     const result = await pool.query(text, params ?? []);
     return { rows: (result.rows ?? []) as Record<string, unknown>[] };

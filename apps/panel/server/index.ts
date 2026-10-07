@@ -39,8 +39,8 @@ const knowledge = createKnowledgeClient(knowledgeCfg);
 
 const FACTORY_NS = "sandbox";
 const FACTORY_CRONJOB = "factory-orchestrator";
-// Factory-eligible repos: allowlist (labeling an issue factory/queued here makes
-// the orchestrator pick it up). Extend via FACTORY_EXTRA_REPOS="a/b,c/d" env.
+// Factory-eligible repos; keep in sync with apps/factory/orchestrator/run.sh.
+// Extend via FACTORY_EXTRA_REPOS="a/b,c/d".
 const FACTORY_REPOS = new Set([
   "gwkline/homelab",
   "gwkline/launchpad",
@@ -57,9 +57,7 @@ const FACTORY_REPOS = new Set([
 const FACTORY_PROFILES = new Set(["code-pr", "security"]);
 const DEFAULT_FACTORY_REPO = process.env.FACTORY_REPO ?? "gwkline/launchpad";
 const DEFAULT_FACTORY_PROFILE = process.env.FACTORY_PROFILE ?? "code-pr";
-// RunProfile metadata served by GET /api/factory/profiles (#84) — the closed
-// set of admitted profiles. Anything else is rejected by the create/retry
-// endpoints, so agents can never supply unknown profile overrides.
+// The closed set of admitted RunProfiles; create/retry reject anything else.
 const FACTORY_PROFILE_INFO = [
   {
     description:
@@ -71,8 +69,7 @@ const FACTORY_PROFILE_INFO = [
     name: "security",
   },
 ] as const;
-// Run lifecycle states derived from the ledger labels (ADR-009). First match
-// wins when several factory labels co-exist on one issue.
+// Run states derived from ledger labels; first match wins when several co-exist.
 const FACTORY_RUN_STATES: [string, string][] = [
   ["factory/queued", "queued"],
   ["factory/in-progress", "running"],
@@ -98,12 +95,8 @@ const FACTORY_ACTIVE_LABELS = [
   "factory/pending-approval",
 ];
 const FACTORY_FAILED_LABELS = ["factory/failed", "factory/cancelled"];
-// Caller/run identity for factory audit events (#84): the Executor factory
-// integration sets `X-Factory-Requested-By` host-side, one value per MCP
-// client connection (hermes, t3code). It is never a tool-call argument, so
-// MCP callers cannot claim someone else's identity; direct panel use records
-// as "panel". The charset is Kubernetes-label-safe so the identity can ride
-// both the FACTORY_TRIGGERED_BY env and a Job label into the orchestrator.
+// Executor sets `X-Factory-Requested-By` host-side per MCP client, so callers
+// cannot claim another identity. Label-safe so it can ride a Job label.
 const REQUESTED_BY_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$/u;
 const requestedByFrom = (value: string | undefined): string =>
   value !== undefined && REQUESTED_BY_RE.test(value) ? value : "panel";
@@ -117,14 +110,13 @@ const runStateFor = (issue: GhIssue): string | null => {
   }
   return null;
 };
-// GitHub-derived trend window (weekly buckets). Older trend data comes from
-// the persisted snapshot artifact, not from GitHub (issue #186).
+// Weeks of trend data derived from GitHub; older weeks come from the snapshot file.
 const STATS_WINDOW_WEEKS = 8;
 const FACTORY_STATS_PATH =
   process.env.FACTORY_STATS_PATH ??
   path.join(root, "data", "factory-stats.json");
 
-// ── GitHub API response shapes (structural subset actually dereferenced) ──
+// ── GitHub API response shapes (only the fields we read) ──
 interface GhIssue {
   html_url: string;
   labels: { name: string }[] | null;
@@ -241,9 +233,7 @@ const errStatus = (error: unknown): number | null => {
   return null;
 };
 
-// Map an upstream error to the response status: statuses in `passThrough`
-// surface verbatim (they mean something specific to this route), all else 502.
-// The union is a subset of Hono's ContentfulStatusCode.
+// Statuses in `passThrough` surface verbatim; everything else becomes 502.
 type RespondCode = 400 | 404 | 405 | 409 | 422 | 502;
 const respondStatus = (error: unknown, passThrough: number[]): RespondCode => {
   const status = errStatus(error);
@@ -253,7 +243,6 @@ const respondStatus = (error: unknown, passThrough: number[]): RespondCode => {
   return 502;
 };
 
-// Flatten one Node API object into the panel's cluster-card row.
 const nodeSummary = (n: K8sObject, podsByNode: Record<string, number>) => {
   type NodeMeta = NonNullable<K8sObject["metadata"]>;
   type NodeStatus = NonNullable<K8sObject["status"]>;
@@ -340,10 +329,7 @@ app.get("/api/cluster", async (c) => {
   }
 });
 
-// Dev Tools catalog: the panel's front door for self-hosted developer tools.
-// Read-only — health is derived from cluster state (Services, pod readiness)
-// plus in-cluster endpoint probes through declared Service ports. No
-// credential proxying, no framing; cards link out to tailnet hostnames.
+// Dev Tools catalog: read-only health from cluster state and endpoint probes.
 app.get("/api/devtools", async (c) => {
   try {
     const tailnet = await discoverTailnet(process.env, k8s);
@@ -357,15 +343,9 @@ app.get("/api/devtools", async (c) => {
   }
 });
 
-// ── Knowledge: sources, sync, cited search (#65) ────────────────────────────
-// Proxy-only surface over the knowledge API. The bearer token stays in the
-// panel server env/secret and is never echoed into a response, and the
-// knowledge database is reached exclusively through the knowledge API
-// (ADR-002 D2) — no Postgres client exists in this process.
+// ── Knowledge: sources, sync, cited search ─────────────────────────────────
+// Proxy over the knowledge API; the bearer token never leaves the server.
 
-// Map an upstream knowledge error to the response status: specific upstream
-// meanings surface verbatim (404 unknown job/source, 409 sync already
-// running, 422 invalid search, 504 timeout); everything else is 502.
 const knowledgeStatus = (error: unknown): 404 | 409 | 422 | 502 | 504 => {
   const status = errStatus(error);
   if (
@@ -458,8 +438,7 @@ app.post("/api/knowledge/search", async (c) => {
       400
     );
   }
-  // Strict mirror of the retrieval API's request contract; anything the panel
-  // would reject is rejected here so the upstream never sees a malformed body.
+  // Mirrors the retrieval API's contract so upstream never sees a malformed body.
   const upstream: Record<string, unknown> = { query };
   if (body.namespace !== undefined) {
     const namespace = String(body.namespace).trim();
@@ -504,7 +483,6 @@ app.post("/api/knowledge/search", async (c) => {
   }
 });
 
-// Per-namespace pod listing (agents + tailscale + sandbox are the interesting ones).
 app.get("/api/cluster/pods", async (c) => {
   try {
     const pods = await k8s.listPodsAll();
@@ -525,7 +503,7 @@ app.get("/api/cluster/pods", async (c) => {
   }
 });
 
-// Aggregate view: open issues across ALL factory-eligible repos in one response.
+// Open issues across all factory-eligible repos.
 app.get("/api/factory/all-issues", async (c) => {
   const repos = [...FACTORY_REPOS];
   const results = await Promise.allSettled(
@@ -650,7 +628,6 @@ interface CheckVerdict {
 }
 
 const checksSummary = (checkRuns: GhCheckRuns["check_runs"]): CheckVerdict => {
-  // Aggregate check-run conclusions into one green/pending/red verdict.
   if (!checkRuns?.length) {
     return { conclusion: null, state: "none" };
   }
@@ -744,20 +721,17 @@ app.get("/api/factory/prs", async (c) => {
 });
 
 // ── Factory output stats (health card) ─────────────────────────────────────
-// Bounded enrichment windows: the API cost stays flat no matter how busy the
-// repo is (3 list calls + per-PR detail only for the most recent items).
+// Bounded windows keep GitHub API cost flat regardless of repo activity.
 const STATS_DETAIL_CAP = 20;
 const STATS_OPEN_CAP = 10;
 const STATS_WEEKS = 6;
 
-// PR detail fields used for autonomous output (commits/LOC).
 interface GhPullDetail {
   additions?: number;
   commits?: number;
   deletions?: number;
 }
 
-// Queue depth tallies from factory/* labels on open issues.
 interface FactoryQueue {
   draftPr: number;
   inProgress: number;
@@ -794,7 +768,6 @@ const weekLabel = (ms: number): string => {
   return `${MONTHS_SHORT[d.getUTCMonth()] ?? "?"} ${d.getUTCDate()}`;
 };
 
-// Queue depth from factory/* labels on open issues (GitHub is the ledger).
 const queueCountsFor = (issues: GhIssue[]): FactoryQueue => {
   const queue: FactoryQueue = { draftPr: 0, inProgress: 0, queued: 0 };
   for (const i of issues) {
@@ -815,8 +788,7 @@ const queueCountsFor = (issues: GhIssue[]): FactoryQueue => {
   return queue;
 };
 
-// UTC Monday-aligned week buckets covering the last STATS_WEEKS weeks
-// (oldest first) plus a counter slot per bucket.
+// UTC Monday-aligned week buckets for the last STATS_WEEKS weeks, oldest first.
 const weekBuckets = (): { counts: number[]; starts: number[] } => {
   const currentWeek = weekStartMs(Date.now());
   const starts = Array.from(
@@ -826,7 +798,6 @@ const weekBuckets = (): { counts: number[]; starts: number[] } => {
   return { counts: starts.map(() => 0), starts };
 };
 
-// Review + CI rates over the open factory PRs (bounded enrichment).
 const openPrRates = async (
   repo: string,
   openFactory: GhPull[]
@@ -865,7 +836,6 @@ const openPrRates = async (
   return { ciGreen, ciTotal, reviewApproved };
 };
 
-// Autonomous output: commits/LOC summed over the recent merged factory PRs.
 const autonomousOutput = async (
   repo: string,
   mergedFactory: GhPull[]
@@ -886,8 +856,7 @@ const autonomousOutput = async (
   return out;
 };
 
-// Per-repo stats response (the health card's data). `cached` marks a
-// server-cache hit so views can show staleness without extra round-trips.
+// `cached` marks a server-cache hit so views can show staleness.
 interface FactoryStatsResponse {
   autonomous: { additions: number; commits: number; deletions: number };
   cached: boolean;
@@ -901,18 +870,14 @@ interface FactoryStatsResponse {
   weeks: string[];
 }
 
-// Short per-repo cache (#184): one stats call fans out to a dozen GitHub
-// routes (two searches, three lists, per-PR detail + check-runs + reviews),
-// and the panel refetches on every repo switch or refresh click. Merged-PR
-// history is immutable, so a ~2-minute TTL only adds staleness to the
-// open-PR rates and queue depth; failures are never cached.
+// One stats call fans out to a dozen GitHub requests; merged history is
+// immutable, so a short TTL costs little staleness. Failures are never cached.
 const STATS_CACHE_TTL_MS = 120_000;
 const statsCache = new Map<
   string,
   { at: number; body: Omit<FactoryStatsResponse, "cached"> }
 >();
 
-// Per-repo factory stats: weekly throughput and current health-card data.
 app.get("/api/factory/stats", async (c) => {
   const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
   if (!FACTORY_REPOS.has(repo)) {
@@ -1033,11 +998,8 @@ const mergeGateError = async (
   }
 };
 
-// Strict request shapes for the MCP surface (#84): unknown fields — any
-// attempt to smuggle Kubernetes-side settings (image, service account,
-// resources…) or future profile overrides — are rejected outright instead of
-// silently ignored. The OpenAPI contract marks these bodies
-// additionalProperties: false; the server enforces the same.
+// Strict MCP request shapes: unknown fields (e.g. smuggled Kubernetes
+// settings) are rejected, matching additionalProperties: false in the spec.
 const rejectUnknownFields = (
   body: Record<string, unknown>,
   allowed: string[]
@@ -1048,12 +1010,9 @@ const rejectUnknownFields = (
     : null;
 };
 
-// Kick off a factory run: clone the orchestrator CronJob's pod template into an
-// ad-hoc Job with FACTORY_ISSUE/FACTORY_PROFILE injected. Returns the job name,
-// or the failure message (the queued label is kept either way).
-// `requestedBy` rides as FACTORY_TRIGGERED_BY env + a Job label so the run
-// marker comment (the factory audit event) records which MCP client or panel
-// user requested the run (#84).
+// Clone the orchestrator CronJob into an ad-hoc Job with FACTORY_ISSUE,
+// FACTORY_PROFILE, and FACTORY_TRIGGERED_BY injected. Returns the job name or
+// the failure message; the queued label is kept either way.
 const triggerFactoryJob = async (
   repo: string,
   profile: string,
@@ -1068,7 +1027,7 @@ const triggerFactoryJob = async (
     }
     const ts = Date.now().toString(36);
     const jobName = `factory-issue-${issueNum}-${ts}`.slice(0, 63);
-    // Clone the template so we can inject FACTORY_ISSUE (avoids GH label propagation race)
+    // Inject FACTORY_ISSUE directly to avoid racing GitHub label propagation.
     const spec = structuredClone(template.spec ?? {}) as JobTemplateSpec;
     const containers = spec.template?.spec?.containers ?? [];
     if (containers[0]) {
@@ -1284,7 +1243,7 @@ app.post("/api/factory/run", async (c) => {
     return c.json({ error: `issue #${issueNum} already has a draft PR` }, 409);
   }
 
-  // 1. Label it queued (GitHub is the ledger — orchestrator polls this label)
+  // GitHub labels are the ledger; the orchestrator polls for factory/queued.
   try {
     await ghFetch(`/repos/${repo}/issues/${issueNum}/labels`, {
       body: JSON.stringify({ labels: ["factory/queued"] }),
@@ -1298,12 +1257,11 @@ app.post("/api/factory/run", async (c) => {
     );
   }
 
-  // 2. Immediately trigger the orchestrator (create Job from CronJob), so the user doesn't wait 6h.
-  // The CronJob's Job-from-CronJob run is the same path as the scheduled tick, just ad-hoc.
+  // Trigger the orchestrator now instead of waiting for the next scheduled tick.
   const requestedBy = requestedByFrom(c.req.header("x-factory-requested-by"));
   const trigger = await triggerFactoryJob(repo, profile, issueNum, requestedBy);
   if (typeof trigger !== "string") {
-    // Label already applied — surface the k8s error but don't roll back the label (next tick will pick it up anyway).
+    // Keep the label; the next scheduled tick will pick the issue up.
     return c.json(
       { error: trigger, issue: issueNum, jobName: null, queued: true, repo },
       502
@@ -1322,14 +1280,10 @@ app.post("/api/factory/run", async (c) => {
   );
 });
 
-// ── Factory run surface for MCP agents (#84) ────────────────────────────────
-// The contract for these routes lives in deploy/executor/factory-openapi.json
-// (imported into Executor's OpenAPI integration). Contract tests in
-// tests/factory-mcp.test.ts keep spec and server honest about each other.
+// ── Factory run surface for MCP agents ──────────────────────────────────────
+// Contract: deploy/executor/factory-openapi.json (checked by factory-mcp.test.ts).
 
-// Tool: list profiles — the closed set of admitted RunProfiles plus the
-// allowlisted repos and defaults, so agents can construct valid create calls
-// without ever guessing Kubernetes-side details.
+// Tool: list profiles — admitted profiles, allowlisted repos, and defaults.
 app.get("/api/factory/profiles", (c) =>
   c.json({
     defaultProfile: DEFAULT_FACTORY_PROFILE,
@@ -1339,9 +1293,7 @@ app.get("/api/factory/profiles", (c) =>
   })
 );
 
-// Shared validation for the run lifecycle routes: repo allowlist + issue
-// bounds. Agents can only express (repo, issue, profile) — no Kubernetes
-// fields exist anywhere in the request surface (#84).
+// Repo allowlist + issue bounds for the run lifecycle routes.
 const parseRunTarget = (body: {
   issue?: number | string;
   repo?: string;
@@ -1360,9 +1312,7 @@ const parseRunTarget = (body: {
   return { issue: issueNum, repo };
 };
 
-// Parse the run marker comment (the durable audit event): status/profile/
-// requested-by rows, the redacted log tail, the worker report fence, and the
-// published PR link.
+// Parse the run marker comment: status rows, log tail, report, and PR link.
 const parseMarkerBody = (body: string) => {
   const row = (name: string): string | null => {
     const m = new RegExp(
@@ -1389,8 +1339,7 @@ const parseMarkerBody = (body: string) => {
   };
 };
 
-// Fetch one issue for the run-inspection/lifecycle routes; maps upstream
-// failures to actionable statuses without leaking GitHub internals.
+// Maps upstream failures to actionable statuses without leaking GitHub internals.
 type IssueFetch = { issue: GhIssue } | { error: string; status: 404 | 502 };
 const fetchIssue = async (
   repo: string,
@@ -1408,9 +1357,8 @@ const fetchIssue = async (
   }
 };
 
-// Latest run marker comment = the durable audit event for a Run (ADR-009:
-// created once, edited in place). Absent/failed comment reads degrade to
-// label-only state.
+// The latest run marker comment (created once, edited in place). Read
+// failures degrade to label-only state.
 const fetchRunMarker = async (
   repo: string,
   issueNum: number
@@ -1432,7 +1380,6 @@ const fetchRunMarker = async (
   }
 };
 
-// Worker Jobs (in-flight or recent) labeled for an issue.
 const fetchRunJobs = async (
   issueNum: number
 ): Promise<{ name: string; status: string }[]> => {
@@ -1453,8 +1400,7 @@ const fetchRunJobs = async (
   }
 };
 
-// Tool: get run — ledger state (labels), the live marker comment (status,
-// profile, log tail, report, PR link), and any in-flight Job.
+// Tool: get run — ledger labels, the marker comment, and any in-flight Job.
 app.get("/api/factory/run", async (c) => {
   const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
   if (!FACTORY_REPOS.has(repo)) {
@@ -1499,7 +1445,7 @@ app.get("/api/factory/run", async (c) => {
   });
 });
 
-// Tool: list runs — every open issue carrying a factory/* ledger label.
+// Tool: list runs — open issues carrying a factory/* label.
 app.get("/api/factory/runs", async (c) => {
   const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
   if (!FACTORY_REPOS.has(repo)) {
@@ -1541,8 +1487,7 @@ app.get("/api/factory/runs", async (c) => {
   }
 });
 
-// The active-label swap shared by cancel/retry: remove the labels named in
-// `from` (404 = label absent, fine) and add `to`. Returns the first failure.
+// Label swap shared by cancel/retry. Returns the first failure.
 const swapRunLabels = async (
   repo: string,
   issueNum: number,
@@ -1582,8 +1527,7 @@ const swapRunLabels = async (
   return null;
 };
 
-// Best-effort audit comment on the ledger issue — identity-preserving record
-// of who drove the lifecycle transition through Executor (#84).
+// Best-effort audit comment recording who drove the lifecycle transition.
 const auditComment = async (
   repo: string,
   issueNum: number,
@@ -1600,7 +1544,6 @@ const auditComment = async (
   }
 };
 
-// In-flight factory Jobs for an issue, by ledger label.
 const inFlightJobs = async (issueNum: number): Promise<K8sObject[]> => {
   const all = await k8s.listJobs();
   return (all.items ?? []).filter((j: K8sObject) => {
@@ -1617,8 +1560,7 @@ const inFlightJobs = async (issueNum: number): Promise<K8sObject[]> => {
   });
 };
 
-// Tool: cancel run — converge the ledger to factory/cancelled and stop any
-// in-flight worker Job. Allowed from queued/running/awaiting-approval only.
+// Tool: cancel run — label factory/cancelled and stop any in-flight Job.
 app.post("/api/factory/run/cancel", async (c) => {
   let body: { issue?: number | string; repo?: string };
   try {
@@ -1661,8 +1603,7 @@ app.post("/api/factory/run/cancel", async (c) => {
       409
     );
   }
-  // Stop any in-flight worker Jobs; a failed delete leaves the ledger label
-  // swapped anyway (the next tick converges), but surface the failure.
+  // A failed delete still leaves the label swapped; the next tick converges.
   let stopping: string[] = [];
   try {
     const inFlight = await inFlightJobs(target.issue);
@@ -1719,9 +1660,8 @@ app.post("/api/factory/run/cancel", async (c) => {
   });
 });
 
-// Tool: retry run — re-queue a failed/cancelled Run and trigger the
-// orchestrator immediately. Optional profile re-selection within the closed
-// profile set; anything else is rejected before a label is touched.
+// Tool: retry run — re-queue a failed/cancelled run, optionally with a new
+// profile, and trigger the orchestrator immediately.
 app.post("/api/factory/run/retry", async (c) => {
   let body: { issue?: number | string; profile?: string; repo?: string };
   try {
@@ -1813,7 +1753,7 @@ app.post("/api/factory/run/retry", async (c) => {
   );
 });
 
-// CronJob suspend/resume + schedule edit from the panel schedules card.
+// CronJob suspend/resume + schedule edit.
 app.patch("/api/cronjobs/:name", async (c) => {
   const name = c.req.param("name");
   let body: { suspended?: boolean; schedule?: string };
@@ -1846,7 +1786,6 @@ app.patch("/api/cronjobs/:name", async (c) => {
   }
 });
 
-// Job cleanup: delete completed/failed jobs by name.
 app.delete("/api/jobs/:name", async (c) => {
   const name = c.req.param("name");
   if (!/^[\w-]+$/u.test(name)) {
@@ -1904,8 +1843,7 @@ const contentTypeFor = (rel: string): string => {
   return "text/html";
 };
 
-// Hono middleware: API paths pass through untouched; everything else serves
-// the built SPA (index.html fallback keeps client-side routes working).
+// Non-API paths serve the SPA, with index.html as the client-route fallback.
 app.use("*", async (c, next) => {
   if (c.req.path.startsWith("/api/")) {
     return await next();

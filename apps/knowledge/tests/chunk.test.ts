@@ -41,7 +41,7 @@ Closing paragraph in the prerequisites section.
 
 Run the installer and verify the cluster is healthy afterwards.`;
 
-// --- determinism + identity (#57 acceptance: deterministic boundaries, idempotent ids) ---
+// --- determinism + identity ---
 
 test("chunking is deterministic: same content, same chunks, byte for byte", () => {
   const first = chunkDocumentVersion(
@@ -103,7 +103,7 @@ test("every chunk text is an exact content slice at its offsets", () => {
   }
 });
 
-// --- citation anchors (#57 acceptance: headings, fences, code line ranges) ---
+// --- citation anchors ---
 
 test("markdown chunks cite their heading chain and char offsets", () => {
   const chunks = chunkDocumentVersion(
@@ -231,8 +231,7 @@ test("text format chunks paragraphs without heading anchors", () => {
 test("empty and whitespace-only content produce no chunks", () => {
   assert.deepEqual(chunkDocumentVersion(doc({ content: "" })), []);
   assert.deepEqual(chunkDocumentVersion(doc({ content: "  \n\t\n " })), []);
-  // The code format chunks raw lines, so this is the path where a
-  // whitespace-only line could otherwise survive trimming as a chunk.
+  // Code chunks raw lines, so a whitespace-only line could survive as a chunk.
   assert.deepEqual(
     chunkDocumentVersion(doc({ content: "  \n\t\n ", format: "code" })),
     []

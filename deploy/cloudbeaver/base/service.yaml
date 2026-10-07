@@ -5,8 +5,6 @@ metadata:
   namespace: agents
   annotations:
     tailscale.com/hostname: cloudbeaver
-    # Required so proxy devices carry tag:k8s-operator regardless of the
-    # operator's default tag (see deploy/tailscale/README.md).
     tailscale.com/tags: tag:k8s-operator
 spec:
   type: LoadBalancer
@@ -14,14 +12,11 @@ spec:
   selector:
     app: cloudbeaver
   ports:
-    # Port 80 is what the panel dev-tools catalog
-    # (apps/panel/server/devtools.ts) probes; the Tailscale operator
-    # terminates tailnet HTTPS and forwards to the container's HTTP port.
+    # The panel's Dev Tools health probe expects port 80.
     - name: http
       port: 80
       targetPort: http
 ---
-# Headless Service for the StatefulSet's pod identity/DNS.
 apiVersion: v1
 kind: Service
 metadata:
@@ -35,9 +30,6 @@ spec:
     - name: http
       port: 8978
 ---
-# Workload-owned exposure rule. Default-deny lives in policies/base; this
-# declares the one path allowed in: Tailscale operator proxies. No other
-# ingress exists, so the UI is reachable only through the tailnet.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -57,11 +49,7 @@ spec:
         - protocol: TCP
           port: 8978
 ---
-# Egress: DNS plus PostgreSQL, nothing else. CloudBeaver holds database
-# credentials and runs on the shared agents namespace (which keeps egress open
-# by default), so this policy deliberately re-isolates it. JDBC drivers are
-# bundled in the image - no registry/HTTPS egress needed. When the PostgreSQL
-# cluster lands (#52), tighten the second rule to the CNPG namespace.
+# Egress: DNS and PostgreSQL only (JDBC drivers ship in the image).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -73,7 +61,7 @@ spec:
       app: cloudbeaver
   policyTypes: [Egress]
   egress:
-    - to: # DNS: kube-dns pods only (k3s coredns carries this label)
+    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
@@ -83,14 +71,13 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    - to: # PostgreSQL pods (any namespace until #52 names one)
+    - to:
         - namespaceSelector: {}
           podSelector: {}
       ports:
         - { protocol: TCP, port: 5432 }
-    - to: # Same destinations via pod/service CIDRs (k3s defaults, see
-        # deploy/policies/base/networkpolicy.yaml) - covers CNIs that
-        # evaluate egress before DNAT, i.e. connections to ClusterIPs.
+    # Pod/service CIDRs, for CNIs that evaluate egress before DNAT.
+    - to:
         - ipBlock:
             cidr: 10.42.0.0/16
         - ipBlock:

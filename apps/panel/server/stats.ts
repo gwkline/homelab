@@ -1,6 +1,5 @@
-// Factory stats: per-repo weekly buckets derived from the GitHub API, plus a
-// weekly JSON snapshot artifact that survives the GitHub-derived window.
-// Pure helpers live here so they are unit-testable without a server.
+// Factory stats: weekly buckets from the GitHub API, plus a JSON snapshot
+// history that outlives the GitHub-derived window.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -36,8 +35,7 @@ export interface StatsStore {
   weeks: Record<string, StatsSnapshot>;
 }
 
-// Monday 00:00 UTC that starts the week containing `input`, as YYYY-MM-DD.
-// Week keys are sortable identifiers: history ordering needs no date parsing.
+// Monday 00:00 UTC of the week containing `input`, as a sortable YYYY-MM-DD.
 export const weekStart = (input: Date | number | string): string => {
   const d = new Date(input);
   const back = d.getUTCDay() === 0 ? 6 : d.getUTCDay() - 1;
@@ -62,9 +60,7 @@ export const weekKeysBack = (
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Bucket a timestamp into the weekly series (`weeks` ascending). Returns -1
-// for anything before the window; buckets are aligned to the week keys, so an
-// index is a direct array position.
+// Index of `ts` in the ascending weekly series, or -1 if before the window.
 const bucketIndex = (ts: Date | number | string, weeks: string[]): number => {
   const start = Date.parse(`${weeks[0]}T00:00:00Z`);
   const idx = Math.floor((Date.parse(String(ts)) - start) / WEEK_MS);
@@ -88,11 +84,8 @@ interface GhPullItem {
 
 const emptySeries = (n: number): number[] => Array.from({ length: n }, () => 0);
 
-// One repo's stats over the weekly window. Open counts come from the search
-// API's total_count (exact); weekly activity is bucketed locally from the two
-// list endpoints. The lists cover the newest 100 items — far more than a
-// factory repo sees in 8 weeks — so anything closed/merged inside the window
-// is on page 1 even if it was created before the window.
+// Open counts come from search total_count; weekly activity is bucketed from
+// the newest 100 list items, which comfortably covers the window.
 export const collectRepoStats = async (
   repo: string,
   weeks: string[],
@@ -199,8 +192,7 @@ export const sumWeekStats = (repos: RepoWeekStats[]): StatsTotals => {
 // History beyond 2 years is dead weight for a trend view; trim the oldest.
 const MAX_WEEKS = 520;
 
-// Corrupt or missing artifacts degrade to an empty store — stats stay
-// viewable and the next upsert rewrites a clean file.
+// Corrupt or missing files degrade to an empty store; the next upsert rewrites it.
 export const loadStatsStore = (file: string): StatsStore => {
   try {
     const parsed = JSON.parse(readFileSync(file, "utf-8")) as StatsStore;
@@ -216,8 +208,7 @@ export const loadStatsStore = (file: string): StatsStore => {
 export const upsertSnapshot = (file: string, snapshot: StatsSnapshot): void => {
   const store = loadStatsStore(file);
   store.weeks[snapshot.week] = snapshot;
-  // Week keys are ISO dates, so lexical order is chronological; keep the
-  // newest MAX_WEEKS entries and rewrite the whole file atomically.
+  // Week keys sort lexically; keep the newest MAX_WEEKS and rewrite atomically.
   const kept = Object.entries(store.weeks)
     .toSorted(([a], [b]) => (a < b ? -1 : 1))
     .slice(Math.max(0, Object.keys(store.weeks).length - MAX_WEEKS));

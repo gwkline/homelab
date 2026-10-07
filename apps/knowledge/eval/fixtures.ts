@@ -1,20 +1,13 @@
 /**
- * Deterministic evaluation fixtures for hybrid retrieval (#63).
- *
- * Until #60 (pg_textsearch BM25) and #62 (pgvector) ship real retrievers,
- * each fixture query carries hand-written per-channel rankings that model a
- * documented retrieval scenario. Rankings are chunk-id lists, best first; the
- * ids refer to homelab-docs chunks. Real retrievers replace `channels` without
- * touching the harness.
+ * Fusion fixtures: each query carries hand-written per-channel rankings
+ * (chunk ids, best first) that model one retrieval scenario.
  */
 
 export interface EvalQuery {
   id: string;
-  /** Query text, for report readability only. */
+  /** For report readability only. */
   query: string;
-  /** Chunk ids judged relevant to the query. */
   relevant: string[];
-  /** Per-channel candidate rankings, best first. */
   channels: {
     bm25: string[];
     vector: string[];

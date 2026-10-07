@@ -1,18 +1,10 @@
 #!/bin/sh
-# shellcheck shell=sh
+# SQL smoke tests for the pg-primary CNPG cluster (deploy/postgres/README.md).
 #
-# SQL smoke tests for the pg-primary CNPG cluster (issue #52).
-#
-#   pg-smoke.sh seed     create extensions/rows/both indexes, run the
-#                        vector similarity + BM25 ranked queries
-#   pg-smoke.sh restart  delete the primary pod and wait for readiness +
-#                        a healthy cluster (graceful-shutdown test)
-#   pg-smoke.sh verify   prove rows and both indexes survived the restart
-#                        and still answer the ranked queries
-#
-# Requires: kubectl pointed at the homelab cluster, CNPG operator >= 1.29
-# (issue #49) and the pg-textsearch image from #48 pinned in
-# deploy/postgres/base/cluster.yaml. See deploy/postgres/README.md.
+#   pg-smoke.sh seed     create extensions, rows, HNSW + BM25 indexes; run
+#                        the ranked queries
+#   pg-smoke.sh restart  delete the primary pod; wait for a healthy cluster
+#   pg-smoke.sh verify   rows and indexes survived and still answer
 set -eu
 
 NS="${PG_NS:-database}"
@@ -21,7 +13,6 @@ DB="${PG_DATABASE:-knowledge}"
 DB_USER="${PG_DB_USER:-knowledge_owner}"
 POD="$CLUSTER-1"
 SECRET="$CLUSTER-$DB_USER"
-PLACEHOLDER_DIGEST=sha256:0000000000000000000000000000000000000000000000000000000000000000
 EXPECTED_ROWS=4
 
 fail() {
@@ -62,19 +53,6 @@ check_cluster_healthy() {
     || fail "cluster $CLUSTER not healthy (phase: $phase)"
 }
 
-# The pg-textsearch image is not published until #48; refuse to run against
-# the shipped placeholder so the failure is obvious instead of ImagePullBackoff.
-check_pgtextsearch_pinned() {
-  ref="$(kubectl get cluster -n "$NS" "$CLUSTER" \
-    -o jsonpath='{.spec.postgresql.extensions[?(@.name=="pg-textsearch")].image.reference}')"
-  [ -n "$ref" ] || fail "cluster $CLUSTER does not declare the pg-textsearch extension"
-  case "$ref" in
-    *"$PLACEHOLDER_DIGEST"*)
-      fail "pg-textsearch digest is still the #48 placeholder — pin the published image digest in deploy/postgres/base/cluster.yaml first"
-      ;;
-  esac
-}
-
 check_preload() {
   libs="$(psql_exec -At -c 'SHOW shared_preload_libraries;')"
   case "$libs" in
@@ -113,7 +91,6 @@ check_bm25_query() {
 }
 
 cmd_seed() {
-  check_pgtextsearch_pinned
   check_cluster_healthy
   load_credentials
   psql_exec <<'SQL'
@@ -166,7 +143,6 @@ cmd_restart() {
 }
 
 cmd_verify() {
-  check_pgtextsearch_pinned
   check_cluster_healthy
   load_credentials
   rows="$(psql_exec -At -c 'SELECT count(*) FROM smoke.docs;')"

@@ -1,9 +1,5 @@
-# Declarative application databases. Each app owns its database through a
-# dedicated owner role (created from the Secrets workflow documented in
-# README.md); no cross-app grants are issued, so factory and knowledge cannot
-# see each other's data. The operator runs CREATE EXTENSION as the internal
-# superuser (extensions are not "trusted"), keeping superuser access disabled
-# for applications while still landing the extensions declaratively.
+# One database per app, no cross-grants. The operator runs CREATE EXTENSION
+# as the internal superuser so apps never need superuser.
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
@@ -16,8 +12,7 @@ spec:
     name: pg-primary
   extensions:
     - name: vector
-      # Keep in lockstep with the pgvector image pinned in
-      # cluster-image-catalog.yaml.
+      # Keep in lockstep with the pgvector image in cluster-image-catalog.yaml.
       version: "0.8.6"
     - name: pg_textsearch
 ---

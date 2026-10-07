@@ -12,19 +12,15 @@ if [ -n "${GITHUB_TOKEN_FILE:-}" ] && [ -r "${GITHUB_TOKEN_FILE}" ]; then
   export GH_TOKEN GITHUB_TOKEN
 fi
 setup_git_auth
-# gh (baked into the image, see Dockerfile) authenticates runtime-only:
-# exports GH_TOKEN when a writer token file is mounted (GITHUB_WRITER_TOKEN_FILE);
-# a no-op otherwise — the image itself carries no credentials (#23).
+# A mounted writer token, if any, takes over GH_TOKEN.
 setup_gh_cli
 
 DATA_DIR="${DATA_DIR:-/data}"
 REPOS_DIR="${DATA_DIR}/repos"
 
-# Agent CLI state (.claude/.codex logins, sessions) is container-local by
-# default. Restore from the PVC snapshot so logins survive rollouts; a
-# background sync writes changes back every 60s (see bottom of file).
-# .config/opencode rides along for the same reason: its permission config
-# is operator state that must survive restarts.
+# Agent CLI state (logins, sessions, opencode config) lives in the container;
+# restore it from the PVC and write changes back every 60s so it survives
+# rollouts.
 STATE_SRC="${DATA_DIR}/agent-state"
 for _d in .claude .codex .config/opencode; do
   if [ -d "${STATE_SRC}/${_d}" ]; then
@@ -45,16 +41,9 @@ done
 ) &
 echo "[t3code] agent-state sync started (${STATE_SRC})"
 
-# ---------------------------------------------------------------------------
-# Private skills (#81): the skills-sync init container built the generated
-# store at ${DATA_DIR}/skills-generated from the pinned private-repo commit
-# (t3code-skills-sync ConfigMap; updates are opt-in reviewed CM changes).
-# Link it into the coding CLIs' skill dirs here — AFTER the agent-state
-# restore above — so a snapshot file can never write through a fresh sync
-# symlink. The link step only manages its own symlinks; real user files are
-# reported and never overwritten. A failed sync degrades explicitly: loud
-# warning, server keeps running without private skills.
-# ---------------------------------------------------------------------------
+# Link the skills-sync init container's store into the CLIs' skill dirs.
+# This runs after the agent-state restore so a restored file can never write
+# through a fresh symlink. A failed sync warns and serves without skills.
 . /usr/local/lib/skills-lib.sh
 SKILLS_STORE="${DATA_DIR}/skills-generated"
 SKILLS_STATUS="${DATA_DIR}/skills-sync/status.json"
@@ -70,18 +59,10 @@ fi
 
 sync_repos
 
-# ---------------------------------------------------------------------------
-# Session-friction defaults (2026-10-05): these runners are driven through
-# t3 by the operator, so per-command permission prompts defeat the point.
-# Seeded at every boot, both idempotent and deferential to restored state:
-#   1. opencode global config — allow edits/bash/webfetch (rm -rf asks,
-#      sudo denied) instead of opencode's ask-everything default. Only
-#      written when missing: the restored/synced operator config wins.
-#   2. claude folder-trust for every synced workspace repo — until
-#      hasTrustDialogAccepted is set, claude IGNORES each repo's own
-#      .claude/settings.json allowlist and prompts for everything
-#      (observed: "Ignoring 9 permissions.allow entries").
-# ---------------------------------------------------------------------------
+# Agents here are driven through t3, so per-command permission prompts
+# defeat the point. Seed a permissive opencode config (only if none was
+# restored) and trust every synced repo in claude: untrusted folders make
+# claude ignore the repo's own .claude/settings.json allowlist.
 OC_CONFIG="/home/node/.config/opencode/opencode.json"
 if [ ! -f "${OC_CONFIG}" ]; then
   mkdir -p /home/node/.config/opencode
@@ -138,8 +119,8 @@ register_project() {
 for dir in "${REPOS_DIR}"/*/; do
   [ -d "${dir}.git" ] && register_project "${dir}"
 done
-# Enable the opencode provider in t3code settings (source of truth:
-# $T3_STATE_DIR/settings.json — the UI toggle writes here). Idempotent.
+
+# Enable the opencode provider (the same file the UI toggle writes).
 SETTINGS="/home/node/.t3/userdata/settings.json"
 if [ -d "$(dirname "${SETTINGS}")" ] && ! grep -q '"opencode"' "${SETTINGS}" 2>/dev/null; then
   if command -v python3 >/dev/null; then
@@ -153,9 +134,7 @@ json.dump(s, open(p, 'w'), indent=2)
   fi
 fi
 
-# opencode credentials: symlink its state dir into the PVC-backed agent-state
-# so auth.json survives rollouts (opencode reads
-# ~/.local/share/opencode/auth.json).
+# Keep opencode's auth.json on the PVC so it survives rollouts.
 mkdir -p "${DATA_DIR}/agent-state/opencode/share" /home/node/.local/share
 [ -f "${DATA_DIR}/agent-state/opencode/share/auth.json" ] || \
   cp /home/node/.local/share/opencode/auth.json \

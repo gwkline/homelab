@@ -1,15 +1,8 @@
 #!/bin/sh
-# check-personal-skills.sh — CI contract check for the personal-skills design
-# (ADR-007, homelab#69). Validates the local fixture against the canonical
-# skill contract, then proves the harmless sample skill loads into three
-# harness adapters (claude, hermes, codex) in throwaway sandboxes:
-#   1. manifest <-> directory consistency (nothing unlisted, nothing missing)
-#   2. secret-pattern scan over the fixture
-#   3. sample skill installs into claude + hermes + codex with receipts
-#   4. re-run with an unchanged pin is an idempotent no-op
-#   5. default-deny: empty allowlist installs nothing; unknown names rejected
-#   6. pre-existing user content is never overwritten
-#   7. unreviewed files (fetched code) block installation
+# Contract check for the personal-skills fixture (ADR-007): manifest
+# consistency, secret scan, install into claude/hermes/codex sandboxes,
+# idempotent re-run, default-deny, no overwrite of user content, and
+# rejection of unreviewed files. Run by scripts/verify.sh.
 set -eu
 cd "$(dirname "$0")/.."
 

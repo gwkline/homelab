@@ -18,16 +18,15 @@ import { EVAL_THRESHOLDS, evaluateThresholds } from "./thresholds.ts";
 import type { ThresholdFailure } from "./thresholds.ts";
 
 /**
- * One-command retrieval eval (#59): compares BM25-only, vector-only, and
- * fused modes over the committed corpus and the fusion fixtures, records run
- * provenance, and gates on documented thresholds.
+ * Compares BM25-only, vector-only, and fused retrieval, records provenance,
+ * and gates on thresholds.
  *
  *   npm run eval                 human-readable summary, full dataset
  *   npm run eval -- --json       machine-readable JSON on stdout
  *   npm run eval -- --subset     cheap deterministic CI subset
  *   npm run eval -- --out f.json also write the JSON run record to a file
  *
- * Exit code 0 only when the threshold gate passes, so CI can block regressions.
+ * Exits non-zero when the threshold gate fails.
  */
 
 const args = process.argv.slice(2);
@@ -58,7 +57,6 @@ const metadata = collectRunMetadata(
 );
 
 export interface EvalRun {
-  /** Version of this JSON shape itself. */
   schema: "retrieval-eval-v1";
   metadata: EvalRunMetadata;
   thresholds: typeof EVAL_THRESHOLDS;

@@ -176,7 +176,7 @@ test("aggregate comparison favors fused retrieval on the fixtures", () => {
   );
 });
 
-// --- corpus harness (#59) ---
+// --- corpus harness ---
 
 const corpusReport = runCorpusEval(EVAL_CHUNKS, EVAL_CORPUS_QUERIES);
 const answerableQueries = EVAL_CORPUS_QUERIES.filter((q) => q.answerable);

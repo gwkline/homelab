@@ -16,8 +16,7 @@ const root = path.join(import.meta.dirname, "..");
 const notFound = (name: string) =>
   Object.assign(new Error(`services "${name}" not found`), { status: 404 });
 
-// Shared mock fetch used by evaluateTools tests; resolved through a module-level
-// handler so individual tests can swap behavior (see setFetchHandler).
+// Tests swap the mock fetch's behavior via setFetchHandler.
 type FetchHandler = (url: string) => { status: number };
 let fetchHandler: FetchHandler = () => {
   throw new Error("fetch handler not set");
@@ -27,8 +26,7 @@ const setFetchHandler = (fn: FetchHandler) => {
   fetchHandler = fn;
 };
 
-// Generic catalog schema — runs over every entry in DEV_TOOLS, so adding a
-// tool needs only the config entry and this loop picks it up.
+// Schema check over every DEV_TOOLS entry.
 test("dev tools catalog entries are complete and policy-compliant", () => {
   const seen = new Set<string>();
   for (const t of DEV_TOOLS) {
@@ -75,7 +73,6 @@ test("dev tools catalog entries are complete and policy-compliant", () => {
       }
     }
   }
-  // The issue's initial tool set is in the catalog.
   for (const expected of [
     "Grafana",
     "Headlamp",
@@ -265,8 +262,6 @@ test("evaluateTools distinguishes healthy, unhealthy, unconfigured, and disabled
   const byName = Object.fromEntries(
     states.map((s: ToolState) => [s.name, s] as const)
   ) as Record<string, ToolState>;
-  // Test fixtures guarantee every expected name; non-null assertions local to
-  // this lookup table keep the assertions readable.
   const tool = (name: string): ToolState => {
     const state = byName[name];
     assert.ok(state, `tool state missing: ${name}`);
@@ -424,9 +419,7 @@ test("GET /api/devtools discovers the tailnet and reports catalog states", async
     // The in-cluster probe cannot resolve the service DNS in this mock —
     // a network-level failure must NOT flip the card to unhealthy.
     assert.ok(card("Homepage").detail.includes("not probed"));
-    // Not-yet-deployed tools are unconfigured; the knowledge card is enabled
-    // but its Service is absent from this mock, so it reports unconfigured
-    // (deployed), not disabled.
+    // Enabled tools whose Service is absent report unconfigured, not disabled.
     assert.equal(card("Grafana").status, "unconfigured");
     assert.equal(card("Knowledge").status, "unconfigured");
     // Cards carry the full declarative metadata.

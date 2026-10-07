@@ -1,5 +1,3 @@
-# In-cluster HTTP: Homepage siteMonitor, the stats CronJob, Executor, and the
-# backend of the tailnet Ingress below.
 apiVersion: v1
 kind: Service
 metadata:
@@ -14,8 +12,7 @@ spec:
       port: 3000
       targetPort: http
 ---
-# Tailnet exposure: https://panel.<tailnet>.ts.net. The panel discovers the
-# tailnet suffix from this Ingress's status (apps/panel/server/devtools.ts).
+# The panel reads its tailnet suffix from this Ingress's status.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -33,8 +30,6 @@ spec:
   tls:
     - hosts: [panel]
 ---
-# Workload-owned exposure rule; default-deny lives in policies/base.
-# Tailnet identity is the auth layer, same model as every other service here.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -53,8 +48,6 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
-    # Homepage siteMonitor (issue #14): the only in-cluster path to :3000 —
-    # pod-scoped, so other agents pods stay denied by default-deny-ingress.
     - from:
         - podSelector:
             matchLabels:
@@ -62,8 +55,6 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
-    # factory-stats-snapshot CronJob (issue #186): weekly rollup trigger —
-    # pod-scoped like Homepage above.
     - from:
         - podSelector:
             matchLabels:
@@ -71,11 +62,7 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
-    # Executor MCP gateway (issue #84): the ONLY host-side caller of the
-    # factory API (deploy/executor/factory-openapi.json). Pod-scoped like the
-    # rules above, so MCP agents (hermes, t3code) can reach the factory
-    # surface solely through Executor's policy/approval layer — their pods
-    # stay denied to :3000 by default-deny-ingress.
+    # Executor is the only path agents (hermes, t3code) have to the factory API.
     - from:
         - podSelector:
             matchLabels:

@@ -1,7 +1,4 @@
-# The log collector's identity. This is the fourth deliberate, audited
-# exception to "pods cannot talk to Kubernetes" (see main README): read-only
-# pods list/watch plus pods/log get, cluster-wide — that is what reading every
-# pod's logs via the API takes. No secrets, no nodes, no writes.
+# Cluster-wide read of pods and pods/log; nothing else.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

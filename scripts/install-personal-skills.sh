@@ -1,6 +1,6 @@
 #!/bin/sh
 # install-personal-skills.sh — inject the personal-skills repository into
-# agent harnesses (ADR-007, homelab#69).
+# agent harnesses (ADR-007).
 #
 # Flow: resolve a pinned skills source, apply the manifest allowlist and
 # review gates, install each allowlisted skill into the configured harness
@@ -78,6 +78,7 @@ add_installed() { _installed_json="${_installed_json:+${_installed_json}, }\"$(j
 add_skipped() { _skipped_json="${_skipped_json:+${_skipped_json}, }\"$(jesc "$1")\""; }
 add_rejected() { _rejected_json="${_rejected_json:+${_rejected_json}, }\"$(jesc "$1")\""; }
 
+# shellcheck disable=SC2329 # invoked via trap
 cleanup() {
   if [ -n "${_cleanups}" ]; then
     # shellcheck disable=SC2086  # deliberate word-split of deferred paths

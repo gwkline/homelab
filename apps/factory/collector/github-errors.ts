@@ -1,7 +1,5 @@
-// Typed GitHub API failures for the collector (#78).
-//
-// Error messages carry fixed strings + status codes only — never tokens,
-// URLs with query strings, or response bodies (same redaction stance as #70).
+// Messages carry fixed strings and status codes only — never tokens, URLs
+// with query strings, or response bodies.
 export class GitHubApiError extends Error {
   readonly kind: "http" | "network" | "rate-limit" | "server";
   readonly status: number;

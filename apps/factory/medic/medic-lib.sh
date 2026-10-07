@@ -1,18 +1,12 @@
 #!/bin/sh
-# Factory medic shared helpers (#239) — the ONLY write paths the medic has.
-# Sourced by run-medic.sh and the fixture tests. gh/jq/git are called by name
-# so tests can shim them via PATH.
+# Factory medic helpers — the only write paths the medic has. gh/jq/git are
+# called by name so tests can shim them via PATH.
 #
-# Guardrails enforced here (issue #239):
-#   - the ONLY git write path is medic_publish_patch: a fast-forward push of
-#     exactly the PR's existing factory branch. There is no --force, no
-#     branch creation, no main push anywhere on this file — and the agent
-#     that produced the patch holds no push credential at all (the worker
-#     entrypoint drops GH_TOKEN before the agent starts).
+# The only git write is medic_publish_patch: a fast-forward push of the PR's
+# existing factory branch. No force, no branch creation, no push to main.
 
-# Refuse anything that is not a factory issue branch. Covers main/master by
-# construction; the explicit cases below keep the refusal readable in logs.
-# $1 = branch name; returns 97 on refusal.
+# Refuse anything that is not a factory issue branch; main/master get their
+# own message for readable logs. $1 = branch name; returns 97 on refusal.
 medic_guard_branch() {
   _mgb_branch="${1:-}"
   case "${_mgb_branch}" in
@@ -30,13 +24,12 @@ medic_guard_branch() {
   esac
 }
 
-# Apply the patch to the branch and push it. The ONLY publish path.
+# Apply the patch to the branch and push it.
 #   $1 = repo dir (fresh clone; git identity configured by the caller)
 #   $2 = PR branch (must pass medic_guard_branch)
 #   $3 = patch file (git apply format)
 #   $4 = expected origin head SHA the run was pinned to (fast-forward guard)
-# Returns 0 on success; 9x with a logged reason otherwise. On success the
-# caller reads the new head from the repo dir itself.
+# Returns 0 on success; 9x with a logged reason otherwise.
 medic_publish_patch() {
   _mpp_dir="${1:?repo dir}"
   _mpp_branch="${2:?branch}"
@@ -50,10 +43,8 @@ medic_publish_patch() {
     return 96
   }
 
-  # Fast-forward guarantee: origin must still be exactly the head the run
-  # was pinned to. If it moved (a human or another run pushed meanwhile),
-  # abort — medic never overwrites anyone's commit. This check plus the
-  # refspec below make a force-push structurally impossible on this path.
+  # Abort if origin moved since the run was pinned: never overwrite anyone's
+  # commit.
   _mpp_remote=$(git -C "${_mpp_dir}" ls-remote origin "refs/heads/${_mpp_branch}" | cut -f1)
   if [ -z "${_mpp_remote}" ]; then
     echo "[medic] REFUSED: ${_mpp_branch} does not exist on origin — medic never creates branches" >&2
@@ -77,54 +68,44 @@ this PR branch only; never touches main, never force-pushes." || {
     echo "[medic] nothing to commit after applying patch" >&2
     return 91
   }
-  # Plain push, explicit refspec naming ONLY the PR branch. A non-fast-forward
-  # is rejected by git itself (no force flag exists in this script).
   git -C "${_mpp_dir}" push -q origin "HEAD:refs/heads/${_mpp_branch}" || {
     echo "[medic] push of ${_mpp_branch} rejected by remote (non-fast-forward?)" >&2
     return 90
   }
 }
 
-# --- attempt ledger (GitHub-as-ledger: PR comments carry the markers) -------
+# --- attempt ledger: PR comments carry the markers ---------------------------
 
-# Marker for one failed medic attempt against a PR head SHA. The count of
-# these comments IS the retry budget; a pushed fix changes the head SHA and
-# the budget resets naturally.
+# One failed attempt against a PR head SHA. The count of these comments is the
+# retry budget; a pushed fix changes the head SHA and resets it.
 medic_failed_marker() { # $1 = head sha
   printf '<!-- factory:medic:%s:failed -->' "${1:?sha}"
 }
 
-# Marker for a repair the medic queued against a PR head SHA (embedded in the
-# brief). Seeing the SAME head red again after this marker means that repair
-# failed — the sweep records a failed marker for it.
+# A repair queued against a PR head SHA (embedded in the brief). The same head
+# still red after this marker means the repair failed.
 medic_queued_marker() { # $1 = head sha
   printf '<!-- factory:medic:%s:queued -->' "${1:?sha}"
 }
 
-# Count comments on a PR carrying a marker for a head SHA. The jq filter
-# flattens defensively (`.. | objects`): the comment list arrives as one
-# page array under gh's --slurp, but flat / page-wrapped / slurped shapes
-# all yield the same count, so no response nesting can corrupt the budget
-# (issue #249's slurp-nesting class of bug).
+# Count PR comments containing a marker. `.. | objects` makes the count
+# independent of how --slurp nests the pages.
 medic_count_marker() { # $1 = repo, $2 = PR number, $3 = marker text
   gh api --paginate --slurp "repos/${1:?repo}/issues/${2:?pr}/comments" 2>/dev/null |
     jq -r --arg m "${3:?marker}" \
       '[.. | objects | select(.body | contains($m))] | length'
 }
 
-# Count failed attempts recorded for a PR head SHA.
 #   $1 = repo, $2 = PR number, $3 = head sha
 medic_count_failures() {
   medic_count_marker "${1:?repo}" "${2:?pr}" "$(medic_failed_marker "${3:?sha}")"
 }
 
-# Count repairs the medic queued against a PR head SHA.
 #   $1 = repo, $2 = PR number, $3 = head sha
 medic_count_queued() {
   medic_count_marker "${1:?repo}" "${2:?pr}" "$(medic_queued_marker "${3:?sha}")"
 }
 
-# Record one failed attempt on the PR.
 #   $1 = repo, $2 = PR number, $3 = head sha, $4 = reason markdown
 medic_record_failure() {
   gh api -X POST "repos/${1:?repo}/issues/${2:?pr}/comments" \
@@ -136,9 +117,7 @@ ${4}
 _Automated factory-medic run; comment auto-managed._" >/dev/null
 }
 
-# Escalation: park the linked issue for a human. Retries stop because the
-# failure count for this head SHA already exceeds the budget and every later
-# sweep short-circuits on the count (and skips re-commenting via the label).
+# Park the linked issue for a human; later sweeps skip it via the label.
 #   $1 = repo, $2 = issue number, $3 = PR number, $4 = head sha, $5 = attempts
 medic_mark_stuck() {
   gh issue edit "${2:?issue}" -R "${1:?repo}" --add-label "factory/stuck" >/dev/null

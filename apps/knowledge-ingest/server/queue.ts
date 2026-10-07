@@ -1,44 +1,17 @@
 /**
- * Durable work queue core (#58) — ADR-002 D5 without a broker service.
+ * Pure queue core (ADR-002 D5): schema, SQL, idempotency keys, and backoff
+ * math. No I/O; `PgIngestStore` executes it and `MemoryIngestStore` mirrors
+ * the same state machine.
  *
- * Everything durable lives in four Postgres tables, created idempotently by
- * `INGEST_SCHEMA_SQL`:
- *
- *   ingest_job         — the work queue. Claimed with `FOR UPDATE SKIP LOCKED`
- *                        (single-statement claim, Probe's ingestion_queue
- *                        pattern), retried with exponential backoff,
- *                        dead-lettered after `max_attempts`, recovered from
- *                        stale claims via the `heartbeat_at` lease. Job kinds:
- *                        `document` (an ingest-API event; the worker fetches
- *                        the content by source kind), `document-version` (a
- *                        normalized document version carrying its own content
- *                        — the git-source bridge shape), and `source_sync`
- *                        (re-pull a registered source).
- *   ingest_source      — registered sources (identity + namespace + origin), the
- *                        panel-facing source list (#58/#65 contract).
- *   ingest_document    — the queue's published-version ledger: one row per
- *                        ingested (namespace, source_id, external_id,
- *                        version_id), unique on that identity. This UNIQUE
- *                        constraint is what makes stale-claim recovery safe:
- *                        a re-run after recovery re-publishes the same version
- *                        identity and lands on the same row, so a crashed
- *                        worker can never produce a second copy of a document
- *                        version. Named `ingest_document` (not `document`)
- *                        because the retrieval corpus table in
- *                        apps/knowledge/src/schema.ts is already `document` —
- *                        the two schemas share one database, so the queue's
- *                        ledger must not collide with it.
- *   git_source_manifest — per-source sync state for git sources: the last
- *                        synced commit and the path → blob-hash map that makes
- *                        incremental syncs read only changed blobs
- *                        (apps/knowledge/src/git-source.ts's manifest).
- *
- * This module is pure: SQL text, state constants, idempotency-key derivation
- * and backoff math only — no I/O, no clocks. `PgIngestStore` executes the
- * statements (parameters are positional per statement shape);
- * `MemoryIngestStore` mirrors the same state machine in-process so the
- * offline tests exercise identical enqueue/claim/complete/fail/recover
- * semantics.
+ * Tables:
+ * - `ingest_job`: the queue, claimed with `FOR UPDATE SKIP LOCKED` and leased
+ *   via `heartbeat_at`. `document` jobs carry identity only and the worker
+ *   fetches content; `document-version` jobs carry their own content.
+ * - `ingest_source`: registered sources for the panel.
+ * - `ingest_document`: published-version ledger. Its UNIQUE identity makes
+ *   stale-claim re-runs land on the same row. Not named `document`, which is
+ *   the retrieval corpus table in the same database.
+ * - `git_source_manifest`: last synced commit and blob map per git source.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -75,15 +48,9 @@ export const STALE_RECOVERY_MESSAGE =
   "claim lease expired; recovered for retry";
 
 /**
- * Idempotent schema. `ingest_job.idempotency_key` is globally UNIQUE: the API
- * derives it deterministically from the source event identity (see
- * `deriveIngestIdempotencyKey`) so duplicate delivery of the same
- * source/version event collides on the constraint instead of enqueueing a
- * second job. The claimable partial index serves the SKIP LOCKED scan. The
- * `document-version` kind carries normalized content from the git-source
- * bridge (`apps/knowledge/src/git-source.ts` `buildIngestJob`) — it routes
- * straight into chunk → embed → upsert; `document` jobs carry identity only
- * and the worker fetches content by source kind.
+ * Idempotent schema. The UNIQUE `idempotency_key` makes duplicate event
+ * delivery collide instead of enqueueing twice; the partial index serves the
+ * SKIP LOCKED scan.
  */
 export const INGEST_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS ingest_job (
@@ -156,10 +123,7 @@ export const newJobId = (): string => `job_${randomUUID()}`;
 const hashHex = (value: string): string =>
   createHash("sha256").update(value).digest("hex");
 
-/**
- * Deterministic document id: the same version identity always maps to the
- * same row, in every store. `doc_` + 40 hex chars of the identity digest.
- */
+/** Deterministic document id, so a version identity maps to one row in every store. */
 export const documentIdFor = (
   namespace: string,
   sourceId: string,
@@ -171,10 +135,8 @@ export const documentIdFor = (
   ).slice(0, 40)}`;
 
 /**
- * The default idempotency key: a digest of the full source event identity —
- * source, namespace, external id, version id, and content hash. The same
- * event re-delivered (same version, same content) collides with the first
- * job; any change to the version or content is a new event.
+ * Default idempotency key over (source, namespace, externalId, versionId,
+ * contentHash): redelivery collides, any version or content change is new.
  */
 export const deriveIngestIdempotencyKey = (
   request: IngestRequestInput
@@ -194,13 +156,8 @@ export const newSyncIdempotencyKey = (sourceId: string): string =>
   `sync_${sourceId}_${randomUUID()}`;
 
 /**
- * Deterministic job id for one normalized document version: the same
- * (document, version, content) re-emitted by a retried sync or a rebuilt
- * manifest maps to the same job id, so the enqueue's idempotency key
- * collides and the duplicate is a no-op instead of a second job. Content
- * participates in the digest because this queue treats a changed-content
- * event under the same version id as a NEW event (its idempotency key
- * differs), so its job id must differ too.
+ * Deterministic job id for a document version. Content is part of the digest
+ * because changed content under the same version id is a new event.
  */
 export const documentVersionJobId = (payload: {
   content: string;
@@ -217,12 +174,7 @@ export const documentVersionJobId = (payload: {
   return `dv_${digest}`;
 };
 
-/**
- * Idempotency key for one document-version event: the full identity —
- * document, version, namespace, external id, content hash — so a re-emitted
- * identical version dedupes, while changed content or a new version is a new
- * event.
- */
+/** Idempotency key for a document-version event; identical re-emits dedupe. */
 export const deriveDocumentVersionKey = (payload: {
   content: string;
   documentId: string;
@@ -240,11 +192,7 @@ export const deriveDocumentVersionKey = (payload: {
     ].join("|")
   )}`;
 
-/**
- * Exponential backoff for the Nth failed attempt (attempts is 1-based at
- * fail time). Base delay for the first failure, doubling, capped at max.
- * Pure so tests can pin the sequence.
- */
+/** Exponential backoff for 1-based `attempts`: base, doubling, capped at max. */
 export const retryDelaySeconds = (
   attempts: number,
   baseMs: number,
@@ -256,11 +204,8 @@ export const retryDelaySeconds = (
 };
 
 /**
- * Single-statement claim. The inner SELECT takes up to `limit` claimable rows
- * with `FOR UPDATE SKIP LOCKED` so concurrent workers can never lock — and
- * therefore never claim — the same row; the outer UPDATE flips each claimed
- * row to `running` and stamps the lease in the same statement, so claim +
- * state transition are atomic without an explicit transaction.
+ * Single-statement claim: SKIP LOCKED keeps concurrent workers off the same
+ * rows, and the UPDATE makes claim + lease atomic without a transaction.
  */
 export const CLAIM_SQL = `UPDATE ${INGEST_TABLE} SET
   status = 'running',
@@ -312,11 +257,7 @@ RETURNING status`;
 export const HEARTBEAT_SQL = `UPDATE ${INGEST_TABLE} SET heartbeat_at = now()
 WHERE id = ANY($1::text[]) AND worker_id = $2 AND status = 'running'`;
 
-/**
- * Idempotent enqueue: the INSERT collides on `idempotency_key` for duplicate
- * events and the CTE returns the existing row instead, so a duplicate request
- * observes the original job (and its current state) rather than erroring.
- */
+/** Idempotent enqueue: a duplicate key returns the existing job instead of erroring. */
 export const ENQUEUE_JOB_SQL = `WITH ins AS (
   INSERT INTO ${INGEST_TABLE}
     (id, kind, idempotency_key, source_id, namespace, payload, priority, max_attempts)
@@ -373,11 +314,7 @@ WHERE kind = 'source_sync' AND source_id = $1
 ORDER BY enqueued_at DESC, id ASC
 LIMIT 1`;
 
-/**
- * Panel-facing source list (#58/#65): per-source counts from the published
- * `document` rows, last successful sync, last recorded terminal failure, and
- * the most recent still-active job.
- */
+/** Panel source list: counts, last sync, last terminal failure, active job. */
 export const SOURCE_LIST_SQL = `SELECT s.source_id, s.kind, s.namespace, s.repo, s.ref, s.url, s.path,
   COALESCE((
     SELECT SUM(d.chunk_count) FROM ${DOCUMENT_TABLE} d
@@ -408,8 +345,7 @@ export const SOURCE_LIST_SQL = `SELECT s.source_id, s.kind, s.namespace, s.repo,
 FROM ${SOURCE_TABLE} s
 ORDER BY s.source_id ASC`;
 
-/** Publish is a no-op on version identity: same (namespace, source, external
- * id, version) never creates a second row. */
+/** Publish is a no-op when the version identity already exists. */
 export const PUBLISH_DOCUMENT_SQL = `INSERT INTO ${DOCUMENT_TABLE}
   (document_id, namespace, source_id, external_id, version_id, content_hash,
    title, commit_ref, chunk_count, provenance)

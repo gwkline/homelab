@@ -1,18 +1,10 @@
 #!/bin/sh
-# Creates the github-app Secret used by the #70 token service to mint
-# short-lived factory installation tokens (replacing the writer PAT).
+# Create Secret github-app (app-id, installation-id, private-key, optional
+# webhook-secret) for minting factory installation tokens (docs/github-app.md).
 #
-# Values come from the dedicated 1Password item (see docs/github-app.md):
-#   app-id            numeric GitHub App ID
-#   installation-id   numeric installation ID
-#   private-key       the App .pem private key, verbatim
-#   webhook-secret    optional; only if a webhook receiver is ever deployed
-#
-# Usage:
-#   ./create-github-app-secret.sh <namespace>...
-# Values are read from env (GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID,
-# GITHUB_APP_PRIVATE_KEY, optional GITHUB_APP_WEBHOOK_SECRET) or prompted,
-# and never stored in this repo.
+# Usage: ./create-github-app-secret.sh <namespace>...
+# Values come from env (GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID,
+# GITHUB_APP_PRIVATE_KEY, GITHUB_APP_WEBHOOK_SECRET) or prompts.
 set -eu
 
 if [ "$#" -eq 0 ]; then

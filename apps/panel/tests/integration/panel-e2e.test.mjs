@@ -1,8 +1,6 @@
-// Panel list-and-launch e2e driver (issue #27).
-//
-// Proves, against a real Kubernetes API, that a deployed panel — running
-// with its production ServiceAccount and the cluster CA — lists sandbox
-// state and creates locked-down Jobs that actually run to completion:
+// Panel list-and-launch e2e driver. Against a real Kubernetes API, checks that
+// a deployed panel lists sandbox state and creates locked-down Jobs that run
+// to completion:
 //   1. GET /api/state returns the seeded Job and CronJob
 //   2. POST /api/jobs creates a sandbox Job carrying the requested command
 //      and the locked-down container fields (non-root, caps dropped, no SA
@@ -10,12 +8,8 @@
 //   3. the created Job reaches a terminal state in the disposable cluster
 //   4. invalid command and issue inputs stay rejected (400)
 //
-// Host-side driver: talks to the panel over PANEL_E2E_URL (the smoke script
-// sets up a port-forward into the panel pod) and reads live cluster state
-// with kubectl. TLS trust and RBAC failures surface as non-200 responses;
-// bodies are printed with targeted hints instead of being swallowed.
-//
-// Reusable standalone (see docs/panel-e2e.md):
+// Talks to the panel over PANEL_E2E_URL and reads live state with kubectl.
+// Standalone usage (see docs/panel-e2e.md):
 //   PANEL_E2E_URL=http://127.0.0.1:3933 \
 //     node --test apps/panel/tests/integration/panel-e2e.test.mjs
 import assert from "node:assert/strict";
@@ -26,9 +20,7 @@ import { test } from "node:test";
 const base = process.env.PANEL_E2E_URL ?? "";
 const ns = process.env.PANEL_E2E_NS ?? "sandbox";
 const seedJob = process.env.PANEL_E2E_SEED_JOB ?? "panel-e2e-seed";
-// E2e-only fixture name (scripts/panel-e2e-smoke.sh seeds it) — deliberately
-// not a production sandbox object, so standalone runs against a real cluster
-// assert against a fixture this suite owns.
+// Seeded by scripts/panel-e2e-smoke.sh; never a production object.
 const seedCronJob = process.env.PANEL_E2E_CRONJOB ?? "panel-e2e-seed-cronjob";
 const seedSchedule = process.env.PANEL_E2E_SCHEDULE ?? "0 9 * * *";
 const command = process.env.PANEL_E2E_COMMAND ?? "echo panel-e2e-launch-ok";
@@ -38,8 +30,7 @@ const commandOutput =
   process.env.PANEL_E2E_COMMAND_OUTPUT ?? "panel-e2e-launch-ok";
 const issue = process.env.PANEL_E2E_ISSUE ?? "27";
 const jobWaitMs = Number(process.env.PANEL_E2E_JOB_WAIT ?? "300") * 1000;
-// The smoke script reads the created Job's name from here for its preserved
-// output and scoped cleanup; empty when run standalone.
+// The smoke script reads the created Job's name from here for cleanup.
 const createdFile = process.env.PANEL_E2E_CREATED_FILE ?? "";
 
 const skip =
@@ -50,9 +41,8 @@ const skip =
 const kubectl = (...args) =>
   execFileSync("kubectl", args, { encoding: "utf-8" });
 
-// API calls keep the upstream error body visible: TLS trust and RBAC drift
-// both reach the driver as panel 502s carrying the upstream message, and
-// each shape gets a targeted hint so failures are diagnosable in one look.
+// TLS trust and RBAC failures both arrive as panel 502s; print the upstream
+// body with a targeted hint.
 const call = async (path, init) => {
   let res;
   try {
@@ -117,8 +107,7 @@ test(
     const { name } = JSON.parse(res.body);
     assert.match(name, /^panel-[a-z0-9-]+$/u);
 
-    // Assert on the live cluster object, not the panel's response: RBAC, the
-    // sandbox namespace, and every locked-down field are proven end to end.
+    // Assert on the live cluster object, not the panel's response.
     const job = JSON.parse(kubectl("get", "job", name, "-n", ns, "-o", "json"));
     assert.equal(job.metadata.namespace, ns);
     assert.equal(job.metadata.labels["app.kubernetes.io/managed-by"], "panel");
@@ -162,7 +151,6 @@ test("the created Job reaches a terminal state", { skip }, async () => {
         logs.includes(commandOutput),
         `Job pod logs missing the command output: ${logs}`
       );
-      // The live API state must reflect the terminal status through the panel.
       // Capturing the name keeps the callback's reference loop-safe.
       const launched = created;
       const state = JSON.parse((await call("/api/state")).body);

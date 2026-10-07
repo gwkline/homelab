@@ -1,5 +1,3 @@
-# Governs the StatefulSet's pod identity. Headless: DNS resolves to pod IPs
-# and the declared port is what Homepage's siteMonitor targets.
 apiVersion: v1
 kind: Service
 metadata:
@@ -14,8 +12,6 @@ spec:
       port: 3773
       targetPort: http
 ---
-# Tailnet exposure, same pattern as t3code-0:
-# https://work-t3code-0.<tailnet>.ts.net via a Tailscale Ingress.
 apiVersion: v1
 kind: Service
 metadata:

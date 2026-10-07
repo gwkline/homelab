@@ -1,4 +1,3 @@
-# Governs pod identity. Hermes is reached via kubectl exec / gateway, not HTTP.
 apiVersion: v1
 kind: Service
 metadata:

@@ -1,44 +1,12 @@
-# clusters/home — root cluster entry point (issue #20)
+# clusters/home
 
-One Kustomization composing the complete normal cluster workload set — namespaces, policies, platform prerequisites, and workloads. Plain `kubectl` only; no Flux, no helm expansion:
+The root cluster entry point: one Kustomization composing the core set (namespaces, network policies, image policy, secret plumbing, postgres, workloads), listed in dependency order in [base/kustomization.yaml](base/kustomization.yaml).
 
 ```sh
-kubectl kustomize clusters/home   # render the full inventory
-kubectl apply -k clusters/home    # apply it
+kubectl kustomize clusters/home   # render
+kubectl apply -k clusters/home    # apply
 ```
 
-## Layout
+Before the first apply on a fresh cluster: the 1Password service-account Secrets (`scripts/create-onepassword-service-account.sh`), then the server-side/helm operators whose CRDs the core set uses — ESO ([deploy/eso](../../deploy/eso/README.md)), CNPG ([deploy/cnpg](../../deploy/cnpg/README.md)), and policy-controller. Install tailscale-operator ([deploy/tailscale](../../deploy/tailscale/README.md)) after. [docs/rebuild-runbook.md](../../docs/rebuild-runbook.md) has the full sequence.
 
-```
-clusters/home/
-├── kustomization.yaml          # entry point: includes base
-└── base/kustomization.yaml     # the normal set — resource list + ordering contract
-```
-
-## The normal set (base)
-
-The resource list in `base/kustomization.yaml` is a topological order of the dependency graph:
-
-| # | Layer | Sources | Ordering constraint (verified dependency) |
-| --- | --- | --- | --- |
-| 1 | namespaces | `deploy/namespaces` | agents/sandbox/work/database carry the PSA + `policy.sigstore.dev/include` labels everything else relies on; `kubectl apply` sorts Namespaces first, so they land before all namespaced objects |
-| 2 | network policies | `deploy/policies/base` | default-deny ingress/egress in force before workload pods exist (no admit window) |
-| 3 | image admission policy | `deploy/image-policy/base` | the ClusterImagePolicy needs the policy-controller CRD (pre-apply) and the webhook must be in force before any workload pod below is admitted (ADR-004) |
-| 4 | secret plumbing | `deploy/github-tokens/base` | per-namespace `onepassword` SecretStores + GitHub token ExternalSecrets — before every workload that mounts `github-token`(+writer)/`work-github-token` (t3code, hermes, factory jobs, panel, work-t3code) |
-| 5 | tailscale stack | `deploy/tailscale` | tailscale namespace + SecretStore + operator-oauth ExternalSecret (the operator itself is helm, post-apply) |
-| 6 | postgres | `deploy/postgres/base` | CNPG `Cluster`/`Database` CRs — the API server rejects them until the cnpg CRDs are Established (pre-apply); its clients are the factory/knowledge workloads in layer 7 |
-| 7 | workloads | t3code, hermes, homepage, panel, headlamp, factory, deployer, work-t3code | depend on layers 1–4 (namespaces, netpols, admission, mounted secrets), never on each other's apply order |
-| 8 | operational CronJobs | `deploy/chaos/base`, `deploy/node-cleanup/base` | chaos deletes pods (never races bring-up by being last; kill switch: its configmap `enabled` key); node-cleanup prunes node disk pressure (#253) — both need only their namespace + RBAC |
-
-### Server-side / helm controllers (deliberately not composed)
-
-Four pieces cannot ride along in a plain `kubectl apply -k` and stay documented steps in [docs/rebuild-runbook.md](../docs/rebuild-runbook.md) §4 — `scripts/recovery-drill.sh` times the same order stage by stage:
-
-1. **External Secrets Operator** — `deploy/eso/base` carries the operator's CRDs (two serialize >340KB, past the 262144-byte annotation limit kubectl's client-side apply writes), so it applies with `--server-side` in two passes with waits (CRDs Established → rollout Ready → smoke ExternalSecret Ready proves reconciliation) **before** this root: every ExternalSecret in layers 4–6 reconciles through it.
-2. **CloudNativePG operator** — `deploy/cnpg/base` is the pinned upstream bundle (Cluster CRD >1MB, same server-side requirement). One `kubectl apply --server-side -k deploy/cnpg/base` + CRD-Established + rollout wait **before** this root: the postgres Cluster/Database CRs in layer 6 are rejected until the CRDs exist.
-3. **policy-controller** — helm install (pinned chart) **before** the root apply, so the ClusterImagePolicy CRD exists and the webhook is in force before any workload pod is admitted.
-4. **tailscale-operator** — helm install (pinned chart + values file) **after** the root apply; it consumes the operator-oauth Secret the root syncs from 1Password.
-
-The hand-entered 1Password service-account token (`scripts/create-onepassword-service-account.sh` → agents, sandbox, work, tailscale) is also a manual runbook step — secrets are never rendered into Git.
-
-Further per-component applies (cloudbeaver, executor) are documented beside their manifests under `deploy/` and in [runbook-server-cluster.md](../docs/runbook-server-cluster.md); they are intentionally not part of the fast-recovery normal set.
+executor, knowledge, and cloudbeaver are not in the core set; apply them individually from `deploy/`.

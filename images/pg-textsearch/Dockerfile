@@ -5,10 +5,9 @@
 # extensions[] entry at /extensions/<name> and appends those paths to
 # dynamic_library_path / extension_control_path automatically.
 #
-# ABI: built against the exact operand in
-# deploy/postgres/base/cluster-image-catalog.yaml (PostgreSQL 18,
-# Debian trixie, amd64) — same base image, digest-pinned. Rebuild (and
-# re-pin the digest in cluster.yaml) whenever the operand changes.
+# ABI: BASE must be the exact operand image in
+# deploy/postgres/base/cluster-image-catalog.yaml. Rebuild (and re-pin this
+# image's digest in cluster.yaml) whenever the operand changes.
 ARG BASE=ghcr.io/cloudnative-pg/postgresql:18.6-202608310817-minimal-trixie@sha256:5c389b0268d9e637ca55efa41a7fafa3996332b5ea3c6099d0861c5f31acb00e
 FROM $BASE AS builder
 USER 0

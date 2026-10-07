@@ -1,11 +1,5 @@
-# Read-only cluster view for t3 agent sessions (operator direction
-# 2026-10-06): agents building dashboards / auditing deployments need
-# live cluster state and logs, not just repo manifests. Get/list only —
-# no watch/exec/patch/create/delete, and NO secrets access anywhere
-# (grafana-admin, work tokens, tailscale OAuth all stay invisible to
-# agent sessions). The work runner deliberately has NO ServiceAccount
-# token (see deploy/work-t3code: automountServiceAccountToken: false,
-# no serviceAccountName) — this grant is personal-runner only.
+# Read-only cluster view for personal t3 sessions: get/list only, no secrets,
+# no exec, no writes. The work runner has no ServiceAccount token at all.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -21,8 +15,6 @@ metadata:
   labels:
     app.kubernetes.io/part-of: homelab
 rules:
-  # Core state + logs: pods, pod logs, events, nodes, namespaces,
-  # services, configmaps (non-secret config visibility), PVCs.
   - apiGroups: [""]
     resources:
       [
@@ -36,15 +28,12 @@ rules:
         "persistentvolumeclaims",
       ]
     verbs: ["get", "list"]
-  # Workload rollouts for deployment/statefulset auditing.
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets"]
     verbs: ["get", "list"]
-  # CronJobs/Jobs (factory cadence inspection).
   - apiGroups: ["batch"]
     resources: ["cronjobs", "jobs"]
     verbs: ["get", "list"]
-  # Live usage metrics (dashboard context).
   - apiGroups: ["metrics.k8s.io"]
     resources: ["pods", "nodes"]
     verbs: ["get", "list"]

@@ -1,17 +1,13 @@
-# Canonical skills manifest — the trust registry of a personal-skills
-# repository (ADR-007, homelab#69).
+# Skills manifest: the trust registry of a personal-skills repository
+# (docs/adr/adr-007-personal-skills-injection.md). Copy this directory to
+# seed the private repo; personal skills never live in this public one.
 #
-# Rules:
-# - One entry per skill directory under skills/; every directory must be
-#   registered here (scripts/check-personal-skills.sh enforces both ways).
-# - allow: false (the default) means "not reviewed yet" — installers skip it.
-#   Flipping to allow: true is the human review gate and happens via PR.
-# - files: lists every non-markdown file in the skill dir that a human has
-#   reviewed for execution safety. Any unlisted file makes the whole skill
-#   un-installable (fetched code never ships without review).
-# - This public fixture seeds the private skills repository (human gate in
-#   #69): the operator copies this directory to create the private repo.
-#   Personal skills are never committed to the public homelab repo.
+# - Every directory under skills/ has exactly one entry here
+#   (scripts/check-personal-skills.sh enforces both ways).
+# - allow: false (the default) means unreviewed; installers skip it.
+#   Flipping to true is the human review gate.
+# - files: lists every reviewed non-markdown file. Any unlisted file makes
+#   the whole skill uninstallable.
 skills:
   - name: tailnet-etiquette
     description: Naming and phrasing etiquette for tailnet services

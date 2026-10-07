@@ -1,60 +1,31 @@
 /**
- * Reciprocal Rank Fusion (RRF) for hybrid keyword + semantic retrieval (#63).
- *
- * BM25 scores and embedding distances are not comparable — one is unbounded
- * term relevance, the other a distance in vector space — so fusion trusts only
- * ordinal positions. Each channel contributes `1 / (k + rank)` per candidate
- * (Cormack et al. 2009); the fused score is the sum over channels where the
- * chunk appeared. The default `k = 60` dampens the head of the list so a
- * single channel's top hit cannot dominate a two-channel consensus, and it is
- * configurable for tuning on the eval harness (`eval/run-eval.ts`).
- *
- * This module is pure: no I/O, no clocks, no randomness. Same input, same
- * output — always.
+ * Reciprocal Rank Fusion (Cormack et al. 2009). BM25 scores and vector
+ * distances are not comparable, so fusion trusts only ranks: each channel
+ * contributes `1 / (k + rank)`. Pure and deterministic.
  */
 
-/** A single retriever channel's output, best candidate first. */
 export interface ChannelRanking {
-  /** Channel id, e.g. `"bm25"` (keyword, #60) or `"vector"` (pgvector, #62). */
   channel: string;
-  /** Ranked chunk ids, best first. Ranks are 1-based positions in this list. */
+  /** Best first; ranks are 1-based positions. */
   candidates: string[];
 }
 
 export interface FusionOptions {
-  /**
-   * RRF constant: the contribution of rank `r` is `1 / (k + r)`. Higher values
-   * flatten the curve and make deep ranks matter more. Must be finite and > 0.
-   */
+  /** Higher values flatten the curve so deep ranks matter more. */
   k?: number;
-  /**
-   * Per-channel candidate window: only the first `windowSize` candidates of
-   * each channel participate in fusion. Bounds the influence of long tails.
-   * Must be an integer >= 1.
-   */
+  /** Only the first `windowSize` candidates of each channel participate. */
   windowSize?: number;
 }
 
-/** One fused candidate: ranks are kept for debugging, not for rescoring. */
 export interface FusedCandidate {
   chunkId: string;
-  /**
-   * RRF score: sum of `1 / (k + rank)` over the channels that returned the
-   * chunk. Not comparable to raw BM25 or distance scores.
-   */
   score: number;
-  /**
-   * 1-based rank within each contributing channel (e.g. `ranks.bm25` and
-   * `ranks.vector`). Channels that did not return the chunk are absent, so a
-   * single-channel candidate is identifiable and stays eligible.
-   */
+  /** Per contributing channel; channels that missed the chunk are absent. */
   ranks: Record<string, number>;
 }
 
-/** Cormack et al. (2009) default; tune via eval evidence, not vibes. */
 export const DEFAULT_RRF_K = 60;
 
-/** Generous default window; callers with strong retrievers can tighten it. */
 export const DEFAULT_WINDOW_SIZE = 100;
 
 const validateOptions = (k: number, windowSize: number): void => {
@@ -68,11 +39,7 @@ const validateOptions = (k: number, windowSize: number): void => {
   }
 };
 
-/**
- * Deterministic tie-breaking (after fused score, descending):
- *  1. lower best source rank (the strongest single-channel evidence),
- *  2. chunk id lexicographically ascending.
- */
+/** Ties break on best single-channel rank, then chunk id. */
 const compareFusedCandidates = (
   a: FusedCandidate,
   b: FusedCandidate
@@ -91,13 +58,7 @@ const compareFusedCandidates = (
   return 0;
 };
 
-/**
- * Fuse ranked channel lists into one deterministic hybrid ranking.
- *
- * Duplicate chunk ids within one channel list throw — a ranked list may not
- * contain the same chunk twice. The same chunk returned by several channels
- * collapses to one candidate with all source ranks preserved.
- */
+/** A chunk repeated within one channel throws; across channels it merges. */
 export const fuseReciprocalRank = (
   rankings: ChannelRanking[],
   options: FusionOptions = {}
@@ -127,7 +88,6 @@ export const fuseReciprocalRank = (
     windowed.set(channel, windowSlice);
   }
 
-  // chunkId -> channel -> 1-based rank within that channel.
   const hits = new Map<string, Map<string, number>>();
   for (const [channel, candidates] of windowed) {
     for (const [index, chunkId] of candidates.entries()) {
@@ -142,8 +102,7 @@ export const fuseReciprocalRank = (
 
   const fused: FusedCandidate[] = [];
   for (const [chunkId, ranks] of hits) {
-    // Sum in sorted channel order so the float total is identical no matter
-    // which order the lists were passed in.
+    // Sum in sorted channel order so the float total is order-independent.
     const ordered = [...ranks.entries()].toSorted((x, y) =>
       x[0] < y[0] ? -1 : 1
     );

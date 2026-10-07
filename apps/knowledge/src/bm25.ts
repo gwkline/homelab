@@ -1,65 +1,17 @@
 /**
- * BM25 keyword retrieval via pg_textsearch (#60).
+ * BM25 keyword retrieval via pg_textsearch over a partial index on live
+ * chunks (ADR-002 D7), so superseded text never skews corpus statistics.
  *
- * The keyword channel ranks the shared knowledge `chunks` table (ADR-002
- * D3; the base schema/migration lives in `src/schema.ts`) with a partial
- * single-column BM25 index — the "final index shape" from ADR-002 D7:
+ * pg_textsearch skips partial indexes for the implicit `text <@> 'terms'`
+ * form, so every query names the index via `to_bm25query`. `<@>` returns the
+ * negative BM25 score (best first) and raw scores are not comparable across
+ * queries; fusion consumes only the 1-based `rank`.
  *
- *   CREATE INDEX chunks_text_bm25 ON chunks USING bm25 (text)
- *     WITH (text_config = 'english') WHERE valid_to IS NULL;
- *
- * The partial predicate keeps superseded chunks out of the corpus statistics
- * (document counts, average length, per-term IDF), so rankings always reflect
- * the live chunk corpus. Because the index is partial — and because this
- * module always sends a `WHERE` clause — every query names the index
- * explicitly with `to_bm25query($1, 'chunks_text_bm25')`: pg_textsearch skips
- * partial indexes when resolving the implicit `text <@> 'terms'` form, and
- * explicit naming is required for WHERE-clause scoring.
- *
- * Query form (always ORDER BY + LIMIT so Block-Max WAND can drive the scan):
- *
- *   SELECT chunk_id, document_id, version_id, namespace, text, anchors,
- *          (text <@> to_bm25query($1, 'chunks_text_bm25')) AS score
- *   FROM chunks
- *   WHERE namespace = $2 AND valid_to IS NULL
- *   ORDER BY (text <@> to_bm25query($1, 'chunks_text_bm25')) ASC
- *   LIMIT $3;
- *
- * Scores: `<@>` returns the *negative* BM25 score — Postgres only supports
- * ASC index scans on the operator — so the best match sorts first and has the
- * most negative `score`. Raw scores are query-dependent (they depend on the
- * query's IDF and length normalization) and are therefore NOT comparable
- * across queries; the 1-based `rank` field is the stable ordering contract
- * the fusion consumes (ADR-002 D7: "ranks are all the fusion consumes").
- *
- * Namespace filtering (the collection key, ADR-002 D9) is a validated bind
- * parameter supported by the `chunks_namespace_active` B-tree index. With a
- * B-tree-backed filter the planner chooses between pg_textsearch's two
- * documented filter paths:
- *
- * - **Pre-filter** (selective namespaces): the B-tree reduces rows to the
- *   namespace before BM25 scoring — the best case when the filter matches
- *   <10% of the corpus. The EXPLAIN integration test proves this plan on a
- *   sparse namespace fixture.
- * - **Post-filter** (wide namespaces): the BM25 index scan returns rows in
- *   score order and rechecks the namespace predicate during the scan. Because
- *   the top-k is computed against the indexed corpus before filtering,
- *   pg_textsearch may return FEWER than LIMIT rows when a post-filter
- *   eliminates most candidates — increase `limit` and re-limit in the caller
- *   if a guaranteed row count matters. The EXPLAIN integration test proves
- *   the BM25 index path on a wide namespace fixture.
- *
- * `includeSuperseded: true` drops the `valid_to IS NULL` predicate; the
- * partial BM25 index cannot serve that query, so it degrades to a sequential
- * scan (exact, like the pgvector channel's equivalent mode).
- *
- * This module has no hard dependency on a live database: SQL construction
- * (`buildBm25SearchQuery`) and row mapping (`parseBm25Rows`) are pure and
- * covered by offline unit tests. `searchBm25` takes any pg-compatible client
- * (`{ query(text, params) }`), and `withBm25ClientFromEnv` is the only piece
- * that touches `DATABASE_URL` / opens a connection (integration path).
+ * On wide namespaces the planner may post-filter, which can return fewer than
+ * `limit` rows; over-fetch if a guaranteed count matters.
  */
 
+import type { PgClient } from "./pg-client.ts";
 import { parseAnchors } from "./pgvector.ts";
 import type { CitationAnchor } from "./pgvector.ts";
 import { KNOWLEDGE_SCHEMA_MIGRATION_SQL } from "./schema.ts";
@@ -71,21 +23,11 @@ export const BM25_INDEX_NAME = "chunks_text_bm25";
 export const BM25_TEXT_CONFIG = "english";
 export const DEFAULT_NAMESPACE = "default";
 
-/** Default candidate count when the caller does not specify `limit`. */
 export const DEFAULT_BM25_LIMIT = 10;
 
-/** Schema/migration version to record in eval provenance once applied. */
 export const BM25_SCHEMA_VERSION = "1-bm25-chunks";
 
-/**
- * Idempotent migration: the durable knowledge base schema (ADR-002 D3/#56,
- * defined in `src/schema.ts`) plus this channel's pg_textsearch extension,
- * the namespace B-tree supporting the collection filter, and the partial BM25
- * index this module queries. Composing the base schema makes this migration
- * self-sufficient against an empty database, and every statement is
- * `IF NOT EXISTS`, so re-applying against a fully migrated cluster (or after
- * `ensurePgvectorSchema`) is a no-op.
- */
+/** Composes the base schema, so it is self-sufficient and idempotent. */
 export const BM25_MIGRATION_SQL = `${KNOWLEDGE_SCHEMA_MIGRATION_SQL}
 CREATE EXTENSION IF NOT EXISTS pg_textsearch;
 CREATE INDEX IF NOT EXISTS chunks_namespace_active
@@ -95,12 +37,7 @@ CREATE INDEX IF NOT EXISTS chunks_text_bm25
   WITH (text_config = 'english')
   WHERE valid_to IS NULL;`;
 
-/**
- * One ranked keyword hit. Result shape matches the vector channel's candidate
- * contract: the chunk (id + text), its document version, its rank/score, and
- * citation anchors. `score` is the raw negative BM25 value (lower = better);
- * `rank` is the 1-based position in the returned order.
- */
+/** `score` is the raw negative BM25 value (lower is better); `rank` is 1-based. */
 export interface Bm25Hit {
   anchors: CitationAnchor[];
   chunkId: string;
@@ -113,34 +50,13 @@ export interface Bm25Hit {
 }
 
 export interface Bm25SearchOptions {
-  /**
-   * Max candidates to return. Must be an integer >= 1.
-   * Defaults to `DEFAULT_BM25_LIMIT`.
-   */
   limit?: number;
-  /** Namespace (collection key) to search. Defaults to `DEFAULT_NAMESPACE`. */
   namespace?: string;
-  /**
-   * BM25 index named in `to_bm25query`. Defaults to `BM25_INDEX_NAME`.
-   * Must be a bare identifier (letters, digits, underscore).
-   */
   indexName?: string;
-  /**
-   * Include superseded chunks (`valid_to` set). Defaults to `false`; because
-   * the partial BM25 index only covers live chunks, `true` scans sequentially.
-   */
+  /** The partial BM25 index covers only live chunks, so this scans sequentially. */
   includeSuperseded?: boolean;
 }
 
-/** Minimal pg-compatible client surface; satisfied by `pg` Pool/Client. */
-export interface Bm25DbClient {
-  query: (
-    text: string,
-    params: unknown[]
-  ) => Promise<{ rows: Record<string, unknown>[] }>;
-}
-
-/** Parameterized SELECT text plus bind params for `client.query`. */
 export interface Bm25SearchQuery {
   text: string;
   params: unknown[];
@@ -181,12 +97,8 @@ const validatedQueryText = (query: string): string => {
 };
 
 /**
- * Build the parameterized keyword query. Pure — no I/O, safe to unit test
- * without a database. The query text, namespace, and limit are bind
- * parameters (never interpolated); the index name is allow-list validated and
- * inlined as a quoted literal because `to_bm25query` resolves it as an index
- * identity. Ranking/order uses the exact expression the partial BM25 index
- * serves; the same expression in the SELECT list exposes the raw score.
+ * The index name is allow-listed and inlined because `to_bm25query` resolves
+ * it as an index identity; everything else is a bind parameter.
  */
 export const buildBm25SearchQuery = (
   query: string,
@@ -213,12 +125,6 @@ LIMIT $3`,
   };
 };
 
-/**
- * Map raw driver rows to hits, assigning 1-based ranks in returned order.
- * Throws on malformed rows (missing ids, non-numeric score, broken anchors)
- * rather than silently ranking garbage; missing chunk text coerces to ""
- * exactly like the vector mapper (the column is NOT NULL anyway).
- */
 export const parseBm25Rows = (rows: Record<string, unknown>[]): Bm25Hit[] =>
   rows.map((row, position) => {
     const context = `bm25: row ${position}`;
@@ -251,13 +157,8 @@ export const parseBm25Rows = (rows: Record<string, unknown>[]): Bm25Hit[] =>
     };
   });
 
-/**
- * Ranked keyword search over the live chunks of one namespace. Best match
- * first (`score` ascending — scores are negative BM25). Throws on empty
- * query / bad namespace / bad limit before touching the client.
- */
 export const searchBm25 = async (
-  client: Bm25DbClient,
+  client: PgClient,
   query: string,
   options: Bm25SearchOptions = {}
 ): Promise<Bm25Hit[]> => {
@@ -266,18 +167,13 @@ export const searchBm25 = async (
   return parseBm25Rows(result.rows);
 };
 
-/** Run the idempotent migration (`BM25_MIGRATION_SQL`) on `client`. */
-export const ensureBm25Schema = async (client: Bm25DbClient): Promise<void> => {
+export const ensureBm25Schema = async (client: PgClient): Promise<void> => {
   await client.query(BM25_MIGRATION_SQL, []);
 };
 
-/**
- * Integration path: connect with `DATABASE_URL`, hand the live client to
- * `fn`, always close afterwards. `pg` is imported lazily so unit tests and
- * offline consumers never need the driver installed.
- */
+/** `pg` is imported lazily so offline consumers never need the driver. */
 export const withBm25ClientFromEnv = async <T>(
-  fn: (client: Bm25DbClient) => Promise<T>
+  fn: (client: PgClient) => Promise<T>
 ): Promise<T> => {
   const connectionString = process.env["DATABASE_URL"];
   if (!connectionString) {

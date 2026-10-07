@@ -1,10 +1,6 @@
 /**
- * Deterministic fixture worker (#58 scope boundary): proves queue completion
- * without source-specific fetching, chunking, or embeddings. For a document
- * job it publishes the document version idempotently (re-runs after stale
- * recovery report zero new documents) with a chunk count derived purely from
- * the content hash; for a source resync it completes with zero counts. Real
- * extract → chunk → embed → upsert handlers land with the retrieval issues.
+ * Deterministic test handler: publishes document versions idempotently with a
+ * chunk count derived from the content hash, and completes syncs with zeros.
  */
 
 import type { JobHandler } from "./worker.ts";

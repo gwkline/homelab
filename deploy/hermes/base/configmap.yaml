@@ -7,12 +7,9 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/part-of: homelab
 data:
-  # Git URLs cloned into the hermes pod. One URL per line.
-  # Private repos need the github-token secret (see README -> Private repos).
+  # Cloned on start, one URL per line.
   repos: |
     https://github.com/gwkline/homelab.git
-  # What the pod runs on start (run-hermes.sh execs this). Default gateway
-  # keeps the agent reachable on its messaging channels; override for
-  # one-shot debugging (e.g. "sleep infinity").
+  # Exec'd by run-hermes.sh; set to "sleep infinity" to debug.
   command: |
     hermes gateway run

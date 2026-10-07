@@ -12,9 +12,6 @@ const logger = createJsonLogger();
 
 try {
   const config = configFromEnv(process.env);
-  // Postgres (the #56 knowledge schema + both channel indexes) when a
-  // DATABASE_URL is configured; the deterministic in-memory store otherwise
-  // (offline dev/CI-smoke). The store is interchangeable behind RetrievalStore.
   const { databaseUrl } = config;
   const pool =
     databaseUrl === undefined || databaseUrl === null
@@ -34,10 +31,8 @@ try {
     );
   } else {
     if (config.applySchemaOnBoot) {
-      // Both channel migrations compose the idempotent base #56 schema and
-      // add their own indexes (bm25 + HNSW); the extensions themselves are
-      // installed declaratively by the CNPG Database resource
-      // (deploy/postgres/base/databases.yaml).
+      // Extensions are installed by the CNPG Database resource
+      // (deploy/postgres/base/databases.yaml), not here.
       await ensureBm25Schema(pool);
       await pool.query(PGVECTOR_MIGRATION_SQL, []);
       logger.info("knowledge schema + channel indexes applied", {});

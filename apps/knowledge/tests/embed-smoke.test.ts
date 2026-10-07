@@ -7,17 +7,11 @@ import {
 } from "../src/embedder.ts";
 
 /**
- * Opt-in smoke test against the real selected provider (#57). Everything
- * else in this package runs on deterministic fakes; this test is skipped
- * unless explicitly pointed at a live, self-hosted embeddings endpoint:
+ * Opt-in smoke test against a live embeddings endpoint; skipped otherwise:
  *
  *   KNOWLEDGE_EMBEDDING_SMOKE_URL=http://tei.home.svc:80/v1 \
  *   KNOWLEDGE_EMBEDDING_SMOKE_MODEL=BAAI/bge-small-en-v1.5 \
  *   npm test
- *
- * It exercises the same contract the worker relies on: batched inputs,
- * explicit timeout/retry limits, and vectors that match the configured
- * dimension — never a silently wrong shape.
  */
 
 const smokeUrl = process.env.KNOWLEDGE_EMBEDDING_SMOKE_URL;

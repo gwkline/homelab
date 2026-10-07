@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 
 import { ensureBm25Schema } from "../src/bm25.ts";
+import type { PgClient } from "../src/pg-client.ts";
 import { ensurePgvectorSchema, parseAnchors } from "../src/pgvector.ts";
 import {
   buildChunkReactivateCurrent,
@@ -19,7 +20,7 @@ import {
   KNOWLEDGE_SCHEMA_MIGRATION_SQL,
   KNOWLEDGE_SCHEMA_VERSION,
 } from "../src/schema.ts";
-import type { ChunkUpsertInput, SchemaDbClient } from "../src/schema.ts";
+import type { ChunkUpsertInput } from "../src/schema.ts";
 
 const sha256 = (text: string): string =>
   createHash("sha256").update(text).digest("hex");
@@ -28,7 +29,6 @@ const sha256 = (text: string): string =>
 
 test("migration defines the full document/version/chunk/provenance model", () => {
   const sql = KNOWLEDGE_SCHEMA_MIGRATION_SQL;
-  // All five tables of the #56 model (ADR-002 D3/D5/D9).
   for (const table of [
     "knowledge_namespace",
     "document",
@@ -41,8 +41,7 @@ test("migration defines the full document/version/chunk/provenance model", () =>
       `missing table ${table}`
     );
   }
-  // Stable external/source identity is separate from content versions:
-  // identity key on document, append-only versions with their own hashes.
+  // Source identity is separate from content versions.
   assert.ok(
     sql.includes("UNIQUE (namespace, source, external_id)"),
     "document identity must be (namespace, source, external_id)"
@@ -51,20 +50,18 @@ test("migration defines the full document/version/chunk/provenance model", () =>
     sql.includes("UNIQUE (document_id, version)"),
     "document_version must be unique per (document, version)"
   );
-  // Content-addressed chunks: re-ingesting unchanged text is a DB-level no-op.
+  // Re-ingesting unchanged text is a DB-level no-op.
   assert.ok(
     sql.includes("UNIQUE (document_id, content_hash)"),
     "chunks must be content-addressed by (document_id, content_hash)"
   );
-  // Provenance chain: chunk → version → document, cascading for GC.
   for (const fk of [
     "document_id TEXT NOT NULL REFERENCES document(id) ON DELETE CASCADE",
     "version_id TEXT NOT NULL REFERENCES document_version(id) ON DELETE CASCADE",
   ]) {
     assert.ok(sql.includes(fk), `missing FK ${fk}`);
   }
-  // Source identity and citation fields live on the document row (D8):
-  // every chunk result must resolve to a source, title, and url.
+  // Every chunk result must resolve to a source, title, and url (ADR-002 D8).
   for (const column of [
     "source TEXT NOT NULL CHECK (length(source) > 0)",
     "title TEXT",
@@ -73,23 +70,18 @@ test("migration defines the full document/version/chunk/provenance model", () =>
   ]) {
     assert.ok(sql.includes(column), `missing document column ${column}`);
   }
-  // Namespace scoping is a real, validated collection key.
   assert.ok(
     sql.includes("REFERENCES knowledge_namespace(name)"),
     "document and chunks must scope to the namespace registry"
   );
-  // Chunks carry citation anchors (source offsets / headings) and ordered idx.
   assert.ok(sql.includes("anchors JSONB NOT NULL DEFAULT '[]'::jsonb"));
   assert.ok(sql.includes("idx INT NOT NULL DEFAULT 0"));
-  // Validity windows for supersession + tombstone clock.
   assert.ok(
     sql.includes("valid_from TIMESTAMPTZ NOT NULL DEFAULT now()") &&
       sql.includes("valid_to TIMESTAMPTZ")
   );
-  // pgvector dimension pinned (ADR-002 D6); model generation tagged.
   assert.ok(sql.includes("embedding vector(384)"));
   assert.ok(sql.includes("embedding_model TEXT"));
-  // Ingestion queue (ADR-002 D5) with claimable state.
   assert.ok(
     sql.includes("status TEXT NOT NULL DEFAULT 'queued'") &&
       sql.includes("attempts INT NOT NULL DEFAULT 0") &&
@@ -146,7 +138,7 @@ test("migration upgrades pre-#56 chunk tables and is idempotent by construction"
 
 test("ensureKnowledgeSchema runs the base migration as one script", async () => {
   const seen: { text?: string; params?: unknown[] } = {};
-  const client: SchemaDbClient = {
+  const client: PgClient = {
     query: (text, params) => {
       seen.text = text;
       seen.params = params;
@@ -401,13 +393,10 @@ const hasLiveDb = Boolean(process.env["DATABASE_URL"]);
 const SCRATCH_SCHEMA = "knowledge_schema_test_56";
 const NAMESPACE = "k56-test";
 
-/** 384-d unit vector literal (pgvector text format) for typmod/index tests. */
 const unitVector384 = (index: number): string =>
   `[${Array.from({ length: 384 }, (_, i) => (i === index ? 1 : 0)).join(",")}]`;
 
-const catalogConstraints = async (
-  client: SchemaDbClient
-): Promise<string[]> => {
+const catalogConstraints = async (client: PgClient): Promise<string[]> => {
   const result = await client.query(
     `SELECT conname FROM pg_constraint c
      JOIN pg_class rel ON c.conrelid = rel.oid
@@ -418,7 +407,7 @@ const catalogConstraints = async (
   return result.rows.map((row) => String(row["conname"]));
 };
 
-const catalogIndexes = async (client: SchemaDbClient): Promise<string[]> => {
+const catalogIndexes = async (client: PgClient): Promise<string[]> => {
   const result = await client.query(
     "SELECT indexname FROM pg_indexes WHERE schemaname = $1",
     [SCRATCH_SCHEMA]
@@ -436,9 +425,8 @@ test(
       options: `-c search_path=${SCRATCH_SCHEMA},public`,
     });
     try {
-      // Extensions are pre-installed on the knowledge CNPG cluster
-      // (deploy/postgres/base/databases.yaml). SCHEMA public keeps a first
-      // install out of the scratch schema so cleanup can never drop it.
+      // SCHEMA public keeps a first install out of the scratch schema so
+      // cleanup can never drop it.
       await pool.query("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public");
       await pool.query(
         "CREATE EXTENSION IF NOT EXISTS pg_textsearch SCHEMA public"
@@ -499,8 +487,7 @@ test(
         assert.ok(indexes.includes(index), `missing index ${index}`);
       }
 
-      // Channel migrations compose the core schema; re-running everything is
-      // a no-op and adds only the channel indexes.
+      // Re-running everything is a no-op that adds only the channel indexes.
       await ensurePgvectorSchema(pool);
       await ensureBm25Schema(pool);
       const indexesAfterChannels = await catalogIndexes(pool);
@@ -590,7 +577,6 @@ test(
       );
       assert.equal(chunkCount.rows[0]?.["n"], 3);
 
-      // Citation anchors round-trip through the strict read-side parser.
       const anchorRow = await pool.query(
         "SELECT anchors FROM chunks WHERE chunk_id = $1",
         ["k56-c2"]
@@ -671,8 +657,7 @@ test(
       );
       assert.equal(versionCount.rows[0]?.["n"], 1);
 
-      // Same content-hash chunk upserts reuse the row; embeddings survive
-      // without a re-embed (ADR-002 D10).
+      // Embeddings survive without a re-embed (ADR-002 D10).
       await pool.query(
         `UPDATE chunks SET embedding = $1::vector, embedding_model = 'k56-test-model'
          WHERE chunk_id = 'k56-c1'`,
@@ -719,8 +704,7 @@ test(
       );
       assert.equal(liveAfterSupersede.rows[0]?.["n"], 0);
 
-      // New version carries one unchanged chunk (reactivated, same content
-      // hash) and one new chunk; the dropped chunk stays superseded.
+      // One reactivated chunk, one new; the dropped chunk stays superseded.
       const reactivatedUpsert = buildChunkUpsert({
         ...unchangedChunk,
         chunk_id: "k56-c1-new",
@@ -808,8 +792,7 @@ test(
         "restore must bring back exactly the current version's chunks"
       );
 
-      // D8 citation guarantee: every live chunk resolves to a live document
-      // carrying its source, title, and url — no result without a citation.
+      // ADR-002 D8: no result without a citation.
       const citations = await pool.query(
         `SELECT c.chunk_id, d.source, d.title, d.url
          FROM chunks c JOIN document d ON d.id = c.document_id

@@ -1,26 +1,5 @@
-// Declarative configuration for the durable issue collector (#78).
+// Collector configuration, read entirely from CronJob env (see README).
 import { createHash } from "node:crypto";
-//
-// Every knob the collector needs is environment-declared on the CronJob
-// (deploy/factory/base/collector-cronjob.yaml) — nothing about work selection
-// is embedded in shell commands or manifests:
-//
-//   FACTORY_REPOS                comma-separated owner/name allowlist (required)
-//   FACTORY_ELIGIBILITY_LABEL    optional label gate; empty = every open,
-//                                non-PR issue without a factory lifecycle label
-//   FACTORY_DEFAULT_PROFILE      RunProfile recorded on collected Runs
-//                                (default: code-pr — the profile the
-//                                orchestrator runs for label-claimed issues)
-//   FACTORY_RULE_VERSION         collector eligibility-rule version; part of
-//                                the Run idempotency key (#71)
-//   FACTORY_SINCE                optional ISO-8601 polling cursor; empty = full
-//                                scan. The collector prints the next cursor
-//                                after every tick (see README).
-//   FACTORY_QUEUED_LABEL         label that admits an issue into the factory
-//                                (default: factory/queued)
-//   FACTORY_COLLECTOR_DRY_RUN    "true" logs actions without any write
-//   GITHUB_API_BASE              override for tests / GHES
-//   FACTORY_MAX_PAGES / FACTORY_MAX_RETRIES   client safety caps
 
 export class ConfigError extends Error {
   readonly exitCode = 78;
@@ -43,9 +22,8 @@ export interface CollectorConfig {
   maxRetries: number;
 }
 
-// The full factory lifecycle label set (matches apps/panel/server/index.ts
-// FACTORY_LABELS and the orchestrator's label machine). An issue carrying any
-// of these already maps to a logical Run — the collector never touches it.
+// Every factory lifecycle label. An issue carrying any of these already maps
+// to a logical Run.
 export const FACTORY_LIFECYCLE_LABELS: readonly string[] = [
   "factory/queued",
   "factory/in-progress",
@@ -102,8 +80,6 @@ const positiveInt = (
   return value;
 };
 
-// The cursor is an ISO-8601 instant or empty. GitHub's `since` parameter and
-// the collector's next-cursor output share this format.
 export const parseSince = (env: NodeJS.ProcessEnv): string | null => {
   const since = optionalTrimmed(env, "FACTORY_SINCE");
   if (since === null) {
@@ -151,9 +127,8 @@ export const loadConfig = (env: NodeJS.ProcessEnv): CollectorConfig => {
   };
 };
 
-// Run identity per #71: one repository/issue/rule version maps to exactly one
-// logical Run. The key is deterministic and logged for audit; the durable
-// ledger in v1 is the GitHub label set (see README — "Idempotency").
+// One repository/issue/rule version maps to exactly one logical Run. The key
+// is logged for audit; the durable ledger is the GitHub label set.
 export const runIdempotencyKey = (
   repo: string,
   issueNumber: number,

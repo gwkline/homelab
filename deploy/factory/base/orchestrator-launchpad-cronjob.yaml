@@ -7,12 +7,9 @@ metadata:
     app.kubernetes.io/part-of: homelab
     factory.gwkline.io/component: orchestrator
 spec:
-  # Second orchestrator instance targeting gwkline/launchpad (ADR-009 ledger).
-  # Staggered 7 past the homelab tick so two workers rarely overlap on the
-  # single node. Reuses the factory-orchestrator ServiceAccount/RBAC below —
-  # same permissions (Jobs + pods in sandbox ONLY).
+  # gwkline/launchpad instance; reuses factory-orchestrator's SA, RBAC, netpol.
   concurrencyPolicy: Forbid
-  schedule: "7,17,27,37,47,57 * * * *" # every 10 min, offset from homelab (:00,:10,…)
+  schedule: "7,17,27,37,47,57 * * * *" # offset from the homelab orchestrator
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
@@ -38,11 +35,7 @@ spec:
               env:
                 - name: FACTORY_REPO
                   value: gwkline/launchpad
-                # The in-cluster kubernetes Service VIP is unreachable from
-                # isolated sandbox pods on the current node (same as the
-                # homelab orchestrator): point kubectl at
-                # the API server's node endpoint explicitly — the
-                # allow-factory-orchestrator policy permits it.
+                # See orchestrator-cronjob.yaml.
                 - name: KUBERNETES_SERVICE_HOST
                   value: 192.168.1.2
                 - name: KUBERNETES_SERVICE_PORT
@@ -51,7 +44,6 @@ spec:
                   valueFrom:
                     secretKeyRef: { name: factory-opencode-auth, key: auth-b64 }
                 - name: KNOWLEDGE_SEARCH_URL
-                  # #86 knowledge context: cited retrieval into worker briefs.
                   value: http://knowledge-retrieval-http.agents.svc.cluster.local:3000/v1/search
                 - name: KNOWLEDGE_TOKEN_FILE
                   value: /secrets-knowledge/token

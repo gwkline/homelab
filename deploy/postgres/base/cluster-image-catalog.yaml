@@ -1,13 +1,5 @@
-# Digest-pinned PostgreSQL 18 operand catalog with the pgvector extension.
-#
-# Trimmed on 2026-09-02 from the official CloudNativePG catalog
-# (https://github.com/cloudnative-pg/artifacts, image-catalogs-extensions/
-# catalog-minimal-trixie.yaml, dated 20260831): only the major-18 entry and
-# the pgvector extension this repo uses are kept. SHA256 digests make the
-# operand and extension images immutable; update this file only through a
-# reviewed commit (e.g. renovate or a manual refresh from upstream) so
-# rollouts and audits stay reproducible. pg_textsearch is NOT in this catalog
-# — it is defined directly in cluster.yaml (issue #48 image).
+# Trimmed from cloudnative-pg/artifacts catalog-minimal-trixie.yaml: PG 18 +
+# pgvector only. pg-textsearch is declared in cluster.yaml.
 apiVersion: postgresql.cnpg.io/v1
 kind: ClusterImageCatalog
 metadata:

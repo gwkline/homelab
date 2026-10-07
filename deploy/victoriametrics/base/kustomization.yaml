@@ -4,6 +4,7 @@ kind: Kustomization
 labels:
   - pairs:
       app.kubernetes.io/part-of: homelab
+      app.kubernetes.io/managed-by: kustomize
     includeSelectors: false
 
 resources:

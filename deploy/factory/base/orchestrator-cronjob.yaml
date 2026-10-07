@@ -7,15 +7,13 @@ metadata:
     app.kubernetes.io/part-of: homelab
     factory.gwkline.io/component: orchestrator
 spec:
-  # Single-instance by construction: overlapping ticks are skipped (ADR-009).
+  # One issue per tick; Forbid skips overlapping ticks.
   concurrencyPolicy: Forbid
-  schedule: "*/10 * * * *" # every 10 min: near-zero-latency pickup (empty tick ≈ 5s);
-    # one issue per tick, so frequent ticks drain the queue without overlap (Forbid)
+  schedule: "*/10 * * * *"
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      # 24h: finished Jobs GCd; live ledger is GitHub labels, not Job objects.
       ttlSecondsAfterFinished: 86400
       activeDeadlineSeconds: 3900 # 65 min: covers 3600s worker + publish overhead
       backoffLimit: 0 # a failed tick stays failed — visible
@@ -36,11 +34,9 @@ spec:
               image: ghcr.io/gwkline/homelab/factory/orchestrator:latest
               env:
                 - name: FACTORY_REPO
-                  value: gwkline/homelab # self-iteration target per operator
-                # The in-cluster kubernetes Service VIP is unreachable from
-                # isolated sandbox pods on the current node: point kubectl at
-                # the API server's node endpoint explicitly —
-                # allow-factory-orchestrator (below) permits it.
+                  value: gwkline/homelab
+                # The Service VIP is unreachable from sandbox pods; use the
+                # node endpoint, which allow-factory-orchestrator permits.
                 - name: KUBERNETES_SERVICE_HOST
                   value: 192.168.1.2
                 - name: KUBERNETES_SERVICE_PORT
@@ -49,8 +45,7 @@ spec:
                   valueFrom:
                     secretKeyRef: { name: factory-opencode-auth, key: auth-b64 }
                 - name: KNOWLEDGE_SEARCH_URL
-                  # #86 knowledge context: cited retrieval into worker briefs.
-                  # Fail-open contract — an outage never fails a run.
+                  # Fail-open: a retrieval outage never fails a run.
                   value: http://knowledge-retrieval-http.agents.svc.cluster.local:3000/v1/search
                 - name: KNOWLEDGE_TOKEN_FILE
                   value: /secrets-knowledge/token
@@ -85,8 +80,7 @@ spec:
                   - key: token
                     path: token
 ---
-# Orchestrator RBAC: create/watch Jobs in sandbox ONLY. No secrets, no other
-# namespaces, no write anywhere else.
+# Jobs and pods in sandbox only; no secrets.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -109,7 +103,7 @@ rules:
     resources: ["pods/exec"] # kubectl cp for patch retrieval
     verbs: ["create", "get"]
   - apiGroups: [""]
-    resources: ["configmaps"] # read-only: resolve worker image from the profile (single source of truth)
+    resources: ["configmaps"] # worker image comes from the profile
     resourceNames: ["factory-profile-code-pr", "factory-profile-security"]
     verbs: ["get"]
 ---
@@ -127,15 +121,9 @@ roleRef:
 subjects:
   - { kind: ServiceAccount, name: factory-orchestrator, namespace: sandbox }
 ---
-# Orchestrator egress. Without a
-# profile label the orchestrator pod fell into sandbox-egress-public-only,
-# which excepts 10.0.0.0/8 — so once netpol enforcement settled on the pod,
-# EVERY kubectl call (worker-image resolution, Job spawn, patch extraction)
-# failed with "connection refused" to the API server, and every tick died
-# after picking an issue (2026-10-06: six queued issues stuck for days).
-# Applies to both orchestrator CronJobs and panel-spawned runs — all carry
-# factory.gwkline.io/component=orchestrator (the panel clones the CronJob
-# pod template, so the label rides along).
+# Covers both orchestrator CronJobs and panel-spawned runs (the panel clones
+# this pod template). Orchestrators need the API server, which the sandbox
+# public-only policy blocks.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -156,14 +144,13 @@ spec:
         - ipBlock: { cidr: 104.16.0.0/12 }
       ports: [{ protocol: TCP, port: 443 }]
     - ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
-    - to: # in-cluster Service VIP (kubectl), belt-and-braces alongside the
-        # node-endpoint env override above
+    - to: # Service VIP
         - ipBlock: { cidr: 10.43.0.1/32 }
       ports: [{ protocol: TCP, port: 443 }]
-    - to: # API server node endpoint (KUBERNETES_SERVICE_HOST override)
+    - to: # API server node endpoint
         - ipBlock: { cidr: 192.168.1.2/32 }
       ports: [{ protocol: TCP, port: 6443 }]
-    - to: # #86 knowledge context: the retrieval service in agents
+    - to: # knowledge retrieval
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: agents

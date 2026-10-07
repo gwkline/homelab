@@ -1,45 +1,18 @@
 #!/bin/sh
-# node-cleanup.sh — evict pod debris and prune unused containerd images (#252).
-#
-# Why: the node's root fs sat at 83% with ~50 Evicted pods in `agents`; at
-# 85% kubelet's imagefs threshold (15% free) starts evicting everything on
-# that disk — the factory CronJobs, the knowledge Postgres, the panel. The
-# debris itself is worthless; letting it accumulate is the problem.
-#
-# What it deletes (debris, not data — controllers recreate what they need,
-# and finished-job logs ship to Loki within seconds via alloy):
-#   1. Evicted pods, all namespaces, any age. The kubelet already recorded
-#      the eviction as an event; the pod object is all that is left.
-#   2. Completed (Succeeded) pods older than 24h. ttlSecondsAfterFinished
-#      covers the CronJobs that set it; this sweeps stragglers.
-#   3. Unused containerd images (`crictl rmi --prune`) — the factory worker
-#      image is ~1GiB and CI publishes new digests daily, so the unused-image
-#      pool is the main disk consumer. kubelet re-pulls on demand; nothing
-#      referenced by a running container is ever removed.
-#
-# Where it runs:
-#   - On the node (by hand or crontab): both halves run — kubectl reaches
-#     the local cluster (/etc/rancher/k3s/k3s.yaml), crictl the local
-#     containerd socket. Weekly crontab example (/etc/cron.d/node-cleanup):
-#       23 6 * * 0 root /usr/local/bin/node-cleanup.sh >>/var/log/node-cleanup.log 2>&1
-#   - Anywhere with cluster credentials: the pod cleanup runs, the image
-#     prune is skipped with a notice (crictl needs the node).
-#   - Pod debris is ALSO swept in-cluster by the weekly CronJob in
-#     deploy/node-cleanup/base (kubectl-only, no hostPath — its README
-#     explains why image pruning stays node-side).
+# Delete Evicted pods and Succeeded pods older than 24h in all namespaces,
+# then prune unused containerd images (crictl rmi --prune) when run on the
+# node. Off the node the image prune is skipped. The in-cluster CronJob in
+# deploy/node-cleanup does the pod half weekly.
 #
 # Usage: node-cleanup.sh [--dry-run]
-# Requires: kubectl + GNU date for the pod halves; crictl (k3s ships it)
-# for the image prune. Disk-usage alerting is tracked under #44 — this
-# script only cleans up.
-
+# Node crontab (/etc/cron.d/node-cleanup):
+#   23 6 * * 0 root /usr/local/bin/node-cleanup.sh >>/var/log/node-cleanup.log 2>&1
 set -eu
 
 usage() {
   printf 'Usage: %s [--dry-run]\n' "$0"
   printf 'Deletes Evicted pods and Succeeded pods older than 24h across all\n'
   printf 'namespaces, then prunes unused containerd images when run on the node.\n'
-  printf 'Full contract in the header comment of this file (#252).\n'
 }
 
 DRY_RUN=0

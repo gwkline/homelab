@@ -68,12 +68,11 @@ cat > "${FIX}/comments-4.json" <<'EOF'
 EOF
 : > "${FIX}/writes.log"
 
-# Issue 1 is oldest and eligible for exactly one requeue. The other actions
-# must not happen in the same tick.
+# Issue 1 is oldest and past its cooldown, so it gets the single requeue;
+# the others must wait for a later tick.
 GH_AUTH_SKIP=1 GH_TOKEN=test GH_BIN="${SHIM}/gh" GH_FIXTURE_DIR="${FIX}" \
 FACTORY_REPOS=gwkline/launchpad FACTORY_RECLAIM_DRY_RUN=false \
-RECLAIMER_FIX_CUTOFF=2026-09-03T17:43:00Z RECLAIMER_MAX_ATTEMPTS=4 \
-RECLAIMER_COOLDOWN_H=24 PATH="${SHIM}:${PATH}" \
+RECLAIMER_MAX_ATTEMPTS=4 RECLAIMER_COOLDOWN_H=24 PATH="${SHIM}:${PATH}" \
   sh "${ROOT}/apps/factory/orchestrator/run-reclaimer.sh"
 
 writes=$(grep -c '^issue ' "${FIX}/writes.log" || true)

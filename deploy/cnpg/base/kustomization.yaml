@@ -1,28 +1,6 @@
-# CloudNativePG operator 1.30.0 (issue #49).
-#
-# `upstream.yaml` is the verbatim operator bundle from the official v1.30.0
-# release (https://github.com/cloudnative-pg/cloudnative-pg/releases/tag/v1.30.0,
-# asset cnpg-1.30.0.yaml; same bytes as
-# https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/v1.30.0/releases/cnpg-1.30.0.yaml).
-# Do NOT hand-edit it — refresh it from the next release instead (see
-# ../README.md "Upgrading").
-#
-# The local mutations are (repo convention, issue #91):
-#   1. the digest pin below: the operator Deployment image resolves to
-#      ghcr.io/cloudnative-pg/cloudnative-pg:1.30.0 pinned to the multi-arch
-#      manifest digest, and OPERATOR_IMAGE_NAME is set to the same reference
-#      so anything the operator spawns from that env var pulls immutable
-#      bytes too. The tag portion is kept so any tag-parsing logic keeps
-#      working.
-#   2. pod-security labels on the cnpg-system namespace (platform convention:
-#      operator namespaces carry the same baseline PSA as external-secrets,
-#      deploy/eso/base/namespace.yaml).
-#   3. the standard prometheus.io/* pod annotations: the discovery contract
-#      the ADR-005 metrics stack (single-node VictoriaMetrics, kubernetes_sd)
-#      scrapes — see ../README.md "Metrics".
-#   4. explicit resource bounds on the manager, matching upstream's own
-#      values, so a future upstream.yaml refresh cannot silently change the
-#      reviewed footprint (ADR-005 D1 budget).
+# Vendored upstream bundle (cnpg-1.30.0.yaml from the GitHub release); never
+# hand-edit upstream.yaml. Local changes: digest pin (also fed to
+# OPERATOR_IMAGE_NAME), baseline PSA, scrape annotations, resource bounds.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -41,11 +19,6 @@ images:
     digest: sha256:a2701eb97cdd2a34b1fdb2cb51987f544b706e40bec72ae7146cd8580efefebb
 
 patches:
-  # Baseline PSA, same as the external-secrets operator namespace
-  # (deploy/eso/base/namespace.yaml). The manager pod already satisfies
-  # restricted (non-root 10001, all capabilities dropped, read-only root
-  # filesystem, RuntimeDefault seccomp); baseline is the platform convention
-  # for operator namespaces and leaves room for upstream helpers.
   - target:
       version: v1
       kind: Namespace
@@ -74,8 +47,6 @@ patches:
         template:
           metadata:
             annotations:
-              # Metrics discovery (ADR-005): the controller-manager serves
-              # Prometheus text on the container's "metrics" port (8080).
               prometheus.io/scrape: "true"
               prometheus.io/port: "8080"
           spec:
@@ -84,10 +55,7 @@ patches:
                 env:
                   - name: OPERATOR_IMAGE_NAME
                     value: ghcr.io/cloudnative-pg/cloudnative-pg:1.30.0@sha256:a2701eb97cdd2a34b1fdb2cb51987f544b706e40bec72ae7146cd8580efefebb
-                # Upstream v1.30.0's own bounds, re-asserted so bundle
-                # refreshes keep the reviewed footprint: 100m/100Mi
-                # requested, 100m/200Mi capped — a rounding error against
-                # the machine's ~4.2Gi request headroom (ADR-005 D1).
+                # Upstream's values, pinned so a bundle refresh can't drift.
                 resources:
                   requests:
                     cpu: 100m

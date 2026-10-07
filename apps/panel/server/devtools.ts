@@ -1,21 +1,11 @@
-// Dev Tools catalog — the panel as the front door for self-hosted developer
-// tools. Adding a tool is one entry in DEV_TOOLS below plus the schema test
-// in tests/devtools.test.mjs, which validates every entry automatically.
+// Dev Tools catalog. Adding a tool is one DEV_TOOLS entry; tests/devtools.test.ts
+// validates every entry.
 //
-// Policy, encoded here rather than hoped for:
-// - URLs use the {tailnet} placeholder, resolved at runtime from the panel
-//   Service's LoadBalancer hostname (or PANEL_TAILNET_NAME). Personal
-//   domains are never hard-coded; scripts/verify.sh rejects them anyway.
-// - Health checks respect NetworkPolicies and valid Service ports: readiness
-//   is derived from the Kubernetes API (Service exists, configured port is
-//   actually declared on it, backing pods Ready), and the declared health
-//   endpoint is probed over HTTP only through that Service port. A probe
-//   that dies at the network layer (default-deny ingress drop, DNS, refusal)
-//   is never mistaken for an outage — pods Ready stays the verdict and the
-//   card says the endpoint was not probed.
-// - The panel links out. It never iframes a tool (noEmbed records that most
-//   forbid framing) and never proxies credentials — the API only ships
-//   statuses and links.
+// - URLs use a {tailnet} placeholder resolved at runtime; personal domains are
+//   never hard-coded.
+// - Readiness comes from the Kubernetes API. A health probe that fails at the
+//   network layer (e.g. default-deny ingress) is not treated as an outage.
+// - The panel links out; it never iframes tools or proxies credentials.
 import type { K8sObject } from "./k8s.js";
 
 export interface ToolHealth {
@@ -28,7 +18,7 @@ export interface ToolHealth {
 export interface ToolDef {
   name: string;
   description: string;
-  // lucide-react component name, mapped in web/src/components/DevToolsCard.tsx
+  // lucide-react component name, mapped in web/src/components/dev-tools-card.tsx
   icon: string;
   category: string;
   // https://<hostname>.{tailnet} — {tailnet} substituted at runtime
@@ -168,11 +158,8 @@ export interface DevToolsK8s {
   listPodsAll: () => Promise<{ items?: K8sObject[] }>;
 }
 
-// Tailnet DNS suffix, configured or discovered:
-// 1. PANEL_TAILNET_NAME env (mirrors the homepage single-source-of-truth
-//    ConfigMap value; "<tailnet>" placeholders don't count).
-// 2. Discovered from the panel's own Tailscale Ingress — its status
-//    hostname is panel.<tailnet>.ts.net, so the suffix falls out.
+// Tailnet DNS suffix: PANEL_TAILNET_NAME, else derived from the panel's own
+// Tailscale Ingress hostname (panel.<tailnet>.ts.net).
 export const discoverTailnet = async (
   env: NodeJS.ProcessEnv,
   k8s: DevToolsK8s
@@ -189,7 +176,7 @@ export const discoverTailnet = async (
       return suffix;
     }
   } catch {
-    // not assigned yet (operator slow, env override missing) — unconfigured
+    // hostname not assigned yet
   }
   return null;
 };
@@ -213,9 +200,8 @@ type ProbeResult =
   | { kind: "http-error"; status: number }
   | { kind: "network"; reason: string };
 
-// Probe the tool's declared health endpoint through its Service port.
-// 2xx/3xx → ok; 4xx/5xx → the app answered and is unhappy; network-level
-// failures are reported as such so callers can defer to API-derived health.
+// Network-level failures are reported separately so callers can defer to
+// API-derived readiness.
 const probeHealth = async (
   url: string,
   fetchFn: typeof fetch,
@@ -269,8 +255,7 @@ const withBase = (
   ...rest,
 });
 
-// API-derived readiness — unaffected by NetworkPolicies. Returns the failure
-// detail, or null when the tool's pods are ready (or no selector to check).
+// Returns the failure detail, or null when the tool's pods are ready.
 const readinessError = async (
   health: ToolHealth,
   svc: K8sObject | undefined,
@@ -301,7 +286,6 @@ const readinessError = async (
   return null;
 };
 
-// Resolve a single catalog entry to one of the four card states.
 const evaluateOne = async (
   tool: ToolDef,
   ctx: {
@@ -338,7 +322,6 @@ const evaluateOne = async (
   }
   const { service, namespace, port, path } = tool.health;
 
-  // 1. Dependency deployed?
   let svc: K8sObject | undefined;
   try {
     svc = (await shared(`svc:${namespace}/${service}`, () =>
@@ -353,8 +336,7 @@ const evaluateOne = async (
     });
   }
 
-  // 2. The configured port must actually be declared on the Service —
-  //    never probe or advertise an invented port.
+  // Never probe or advertise a port the Service doesn't declare.
   const declaredPorts = svc?.spec?.ports ?? [];
   if (!declaredPorts.some((p) => p.port === port)) {
     const declared = declaredPorts.map((p) => p.port).join(", ") || "none";
@@ -365,15 +347,13 @@ const evaluateOne = async (
     });
   }
 
-  // 3. API-derived readiness — unaffected by NetworkPolicies.
   const readiness = await readinessError(tool.health, svc, k8s, shared);
   if (readiness !== null) {
     return withBase(tool, { detail: readiness, status: "unhealthy", url });
   }
 
-  // 4. Endpoint probe through the declared Service port. A network-level
-  //    failure (typically the tool's default-deny ingress dropping the
-  //    panel) is not an outage: keep the API verdict, say we didn't probe.
+  // A network-level failure (typically default-deny ingress) is not an
+  // outage: keep the API verdict and say we didn't probe.
   const probe = await probeHealth(
     probeUrlFor(tool.health),
     fetchFn,

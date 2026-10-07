@@ -1,11 +1,5 @@
-# node-cleanup is the second identity (after chaos-monkey) allowed to delete
-# pods, and the only one scoped cluster-wide: debris lands in every
-# namespace (49 Evicted pods in `agents` in a single day — issue #252), so a
-# namespaced Role like chaos-monkey's would leave kube-system and friends
-# un-swept. RBAC is the blast radius, the script is the aim: cleanup.sh
-# deletes only Evicted pods (any age) and Succeeded pods older than 24h —
-# never anything Running, never any other resource kind. It cannot see
-# secrets, nodes, CRDs, or PVCs.
+# Cluster-wide pod delete: debris lands in every namespace. cleanup.sh only
+# targets Evicted pods and Succeeded pods older than 24h.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

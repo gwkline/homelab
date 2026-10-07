@@ -3,7 +3,7 @@
 # connection (agents namespace, keys: user, password).
 #
 # The role must be least-privilege (no superuser) - see the grants in
-# deploy/cloudbeaver/base/README.md. Values are pasted from your password
+# deploy/cloudbeaver/README.md. Values are pasted from your password
 # manager at the prompt and are never stored in this repo, argv, or history.
 #
 # Usage: ./create-cloudbeaver-secret.sh [namespace]

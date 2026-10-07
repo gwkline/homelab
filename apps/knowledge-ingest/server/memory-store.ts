@@ -69,7 +69,7 @@ interface DocumentRow {
 }
 
 export interface MemoryStoreOptions {
-  /** Injectable clock; defaults to the real time. Tests pin time to drive leases. */
+  /** Injectable clock so tests can drive leases. */
   maxAttempts?: number;
   now?: () => Date;
 }
@@ -169,12 +169,9 @@ const sourceStatus = (
 };
 
 /**
- * In-process mirror of the Postgres queue semantics (same states, same claim
- * guards, same idempotency rule, same recovery). Every store operation reads
- * and mutates synchronously — under the JavaScript event loop that makes each
- * operation atomic, which is exactly the guarantee `FOR UPDATE SKIP LOCKED`
- * provides across real connections in `PgIngestStore`. Not durable: for tests
- * and local dev only.
+ * In-process mirror of the Postgres queue semantics, for tests and local dev.
+ * Each operation is synchronous, which gives the atomicity SKIP LOCKED
+ * provides in Postgres. Not durable.
  */
 export const createMemoryIngestStore = (
   options: MemoryStoreOptions = {}
@@ -295,8 +292,7 @@ export const createMemoryIngestStore = (
           return Promise.resolve({ duplicate: true, job: toRecord(row) });
         }
       }
-      // Register a minimal source row when absent (never overwrites a
-      // richer registration) so the source list carries the ledger counts.
+      // Register a minimal source row if absent so the source list shows counts.
       if (!sources.has(sourceId)) {
         sources.set(sourceId, {
           kind: payload.source === "git" ? "github" : "url",

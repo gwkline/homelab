@@ -1,9 +1,4 @@
-# t3code's own state dir: environment-id, browser pairings, sessions, agent
-# credentials. This file is the single authoritative claim declaration for
-# t3state: the StatefulSet mounts it by name and deliberately declares no
-# volumeClaimTemplate for it (VCTs are immutable after creation). The claim
-# name carries the replica ordinal — the workload is capped at one replica,
-# so scaling the StatefulSet out is not supported without per-replica claims.
+# t3code state: environment id, browser pairings, sessions, agent credentials.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

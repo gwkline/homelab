@@ -1,11 +1,8 @@
 #!/bin/sh
-# Fixture task for the factory worker image (#74): proves the full run
-# contract offline — a fixture "agent" edits a repository, the verify command
-# runs, and a patch + structured report are emitted WITHOUT pushing anything.
-# Also proves graceful shutdown (SIGTERM) preserves artifacts but scrubs
-# credentials. Runs the real entrypoint.sh with TASK_DIR/OUT_DIR/WORK_DIR
-# redirected to a temp dir; the origin is a local git remote (file://), so no
-# network and no real credentials are involved.
+# Offline run-contract test for the worker entrypoint: a stub agent edits a
+# local file:// origin, verify runs, and a patch + report are emitted without
+# pushing. Also checks schema rejection and that SIGTERM keeps artifacts but
+# scrubs credentials.
 set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
@@ -29,9 +26,8 @@ mkdir -p "${FIX}/bin"
 cat > "${FIX}/bin/fake-cli" << 'EOF'
 #!/bin/sh
 # Minimal agent: edits the repo, exits 0. Repo is the cwd the worker gave it.
-# When PROMPT_DUMP is set it keeps the exact prompt it received (#86) so tests
-# can assert what the agent was told, and it attributes any supplied citation
-# id it saw using the context-used convention.
+# PROMPT_DUMP captures the prompt; a seen [K1] citation is attributed via the
+# context-used convention.
 cat > "${PROMPT_DUMP:-/dev/null}"
 if grep -q '\[K1\]' "${PROMPT_DUMP:-/dev/null}"; then
   echo "context-used: K1"
@@ -49,10 +45,7 @@ EOF
 chmod +x "${FIX}/bin/slow-cli"
 
 # --- 1. happy path: edit -> verify -> patch + report, no push ------------------
-# The brief carries a cited knowledge section (#86): status ok, one citation
-# with full provenance (source kind/file + url null proves the schema's union
-# types). The fixture agent must see it as UNTRUSTED reference data and
-# attribute it in the report.
+# One cited knowledge chunk (url null exercises the schema's union type).
 mkdir -p "${FIX}/task" "${FIX}/out" "${FIX}/work"
 cat > "${FIX}/task/brief.json" << 'EOF'
 {
@@ -106,12 +99,11 @@ git -C "${FIX}/work/repo" remote get-url origin | grep -q "fixture-secret-token"
   && { echo "FAIL: token leaked into clone remote"; exit 1; } || true
 grep -q "fixture-secret-token" "${FIX}/out/patch.diff" \
   && { echo "FAIL: token leaked into patch"; exit 1; } || true
-# Typed input + pinned skills installed into the agent home.
+# Pinned skills installed into the agent home.
 grep -q "pinned" "${FIX}/log" || { echo "FAIL: skills not installed"; cat "${FIX}/log"; exit 1; }
 test -f "${FIX}/home/.claude/skills/p-stack/SKILL.md" \
   || { echo "FAIL: skills not present in agent home"; exit 1; }
-# Knowledge context (#86): cited, labeled untrusted, delivered to the agent,
-# attributed in the report.
+# Knowledge context: labeled untrusted in the prompt, attributed in the report.
 grep -q "UNTRUSTED DATA" "${FIX}/prompt.txt" \
   || { echo "FAIL: knowledge context not labeled untrusted in prompt"; cat "${FIX}/prompt.txt"; exit 1; }
 grep -q "^\[K1\] Fixture conventions — docs/conventions.md" "${FIX}/prompt.txt" \
