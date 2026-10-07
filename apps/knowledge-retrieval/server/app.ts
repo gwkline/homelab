@@ -11,9 +11,14 @@ import {
   searchResponseSchema,
 } from "./contract.ts";
 import type { Logger } from "./log.ts";
+import { renderMetrics } from "./metrics.ts";
 import { reciprocalRankFusion } from "./rank.ts";
 import type { FusedCandidate } from "./rank.ts";
-import type { RankedCandidate, RetrievalStore } from "./store.ts";
+import type {
+  EmbeddingReport,
+  RankedCandidate,
+  RetrievalStore,
+} from "./store.ts";
 
 interface AppEnv {
   Variables: { requestId: string };
@@ -193,7 +198,9 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
         422
       );
     }
-    const mode = body.mode ?? config.defaultMode;
+    const requestedMode = body.mode ?? config.defaultMode;
+    // Without a real embedding model the vector channel is noise.
+    const mode = store.vectorSearch === false ? "bm25" : requestedMode;
     const namespace = body.namespace ?? config.defaultNamespace;
     const topK = body.topK ?? config.defaultTopK;
     const runId = `run_${randomUUID()}`;
@@ -295,6 +302,7 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
         namespace,
         queryLength: query.length,
         requestId,
+        requestedMode,
         results: payload.results.length,
         runId,
         topK,
@@ -459,6 +467,23 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
   });
 
   app.get("/healthz", (c) => c.json({ status: "ok" }));
+
+  app.get("/metrics", async (c) => {
+    let report: EmbeddingReport | null = null;
+    if (store.embeddingReport !== undefined) {
+      try {
+        report = await store.embeddingReport();
+      } catch (error) {
+        logger.warn("metrics unavailable", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        return c.text("embedding report unavailable\n", 503);
+      }
+    }
+    return c.text(renderMetrics(store.vectorSearch !== false, report), 200, {
+      "content-type": "text/plain; version=0.0.4; charset=utf-8",
+    });
+  });
 
   app.notFound((c) =>
     c.json(

@@ -17,8 +17,6 @@ export interface RetrievalConfig {
   seedFile: string | null;
   /** Postgres connection string; null runs the in-memory store (dev/tests). */
   databaseUrl: string | null;
-  /** Apply the knowledge schema and channel indexes at startup. */
-  applySchemaOnBoot: boolean;
   /** In-cluster ingest API base for the sources/sync passthrough routes. */
   ingestBaseUrl: string | null;
   /** Bearer token for the ingest passthrough; defaults to the local token. */
@@ -128,9 +126,6 @@ export const configFromEnv = (
   const defaultMode = modeFromEnv(env);
   const port = positiveInt(env, "PORT", CONFIG_DEFAULTS.port);
   return {
-    applySchemaOnBoot:
-      env.KNOWLEDGE_APPLY_SCHEMA !== "0" &&
-      env.KNOWLEDGE_APPLY_SCHEMA !== "false",
     channelWindowFactor: CONFIG_DEFAULTS.channelWindowFactor,
     databaseUrl:
       env.KNOWLEDGE_RETRIEVAL_DATABASE_URL?.trim() ||
@@ -176,7 +171,6 @@ export const baseConfig = (
   token: string,
   overrides: Partial<RetrievalConfig> = {}
 ): RetrievalConfig => ({
-  applySchemaOnBoot: true,
   channelWindowFactor: CONFIG_DEFAULTS.channelWindowFactor,
   databaseUrl: null,
   defaultMode: CONFIG_DEFAULTS.defaultMode,

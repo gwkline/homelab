@@ -35,6 +35,7 @@ export const ScheduleRow = ({
       });
       const j = await res.json();
       if (res.ok) {
+        setEditing(false);
         onSaved();
       } else {
         setErr(j.error ?? "failed");

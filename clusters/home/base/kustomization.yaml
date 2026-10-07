@@ -23,4 +23,3 @@ resources:
   - ../../../deploy/factory/base
   - ../../../deploy/deployer
   - ../../../deploy/work-t3code/base
-  - ../../../deploy/chaos/base

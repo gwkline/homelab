@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { PgClient } from "../src/pg-client.ts";
+import type { PgClient, PgPool } from "../src/pg-client.ts";
 import {
   buildBackfillCountQuery,
   buildEfSearchStatement,
@@ -12,23 +12,27 @@ import {
   DISTANCE_OPERATOR,
   EMBEDDING_DIMENSIONS,
   EMBEDDING_MODEL,
-  ensurePgvectorSchema,
   hnswRecall,
   parseAnchors,
   parseBackfillCounts,
   parsePgvectorRows,
   PGVECTOR_EXACT_SCAN_GUARD,
-  PGVECTOR_MIGRATION_SQL,
   searchPgvector,
   searchPgvectorExact,
   toPgvectorLiteral,
   validateQueryEmbedding,
   withPgvectorClientFromEnv,
 } from "../src/pgvector.ts";
+import { migrateKnowledgeSchema } from "../src/schema.ts";
+import { fakePool } from "./fake-pool.ts";
+import type { FakePool } from "./fake-pool.ts";
 
 interface RecordedClient {
+  calls: FakePool["calls"];
   client: PgClient;
   params: unknown[][];
+  pool: PgPool;
+  releases: FakePool["releases"];
   statements: string[];
 }
 
@@ -45,7 +49,8 @@ const stubClient = (responses: Record<string, unknown>[][]): RecordedClient => {
       return Promise.resolve({ rows });
     },
   };
-  return { client, params, statements };
+  const { calls, pool, releases } = fakePool(client);
+  return { calls, client, params, pool, releases, statements };
 };
 
 const vectorAt = (index: number): number[] => {
@@ -214,7 +219,7 @@ test("searchPgvector runs ef_search + SELECT in one transaction, maps hits", asy
     [],
   ]);
 
-  const hits = await searchPgvector(recorded.client, embedding, {
+  const hits = await searchPgvector(recorded.pool, embedding, {
     efSearch: 80,
     limit: 2,
     namespace: "default",
@@ -226,6 +231,8 @@ test("searchPgvector runs ef_search + SELECT in one transaction, maps hits", asy
     buildPgvectorSearchQuery(embedding, { efSearch: 80, limit: 2 }).text,
     "COMMIT",
   ]);
+  assert.ok(recorded.calls.every((call) => call.checkout === 1));
+  assert.deepEqual(recorded.releases, [{ checkout: 1, error: undefined }]);
   assert.deepEqual(recorded.params[2], [
     toPgvectorLiteral(embedding),
     "default",
@@ -263,7 +270,7 @@ test("searchPgvectorExact forces a sequential scan and never sets ef_search", as
   const embedding = vectorAt(2);
   const recorded = stubClient([[], [], [], []]);
 
-  const hits = await searchPgvectorExact(recorded.client, embedding, {
+  const hits = await searchPgvectorExact(recorded.pool, embedding, {
     efSearch: 5,
     limit: 3,
   });
@@ -290,7 +297,10 @@ test("searchPgvectorExact rolls back and rethrows on failure", async () => {
       return Promise.resolve({ rows: [] });
     },
   };
-  await assert.rejects(() => searchPgvectorExact(client, vectorAt(0)), /boom/u);
+  const { calls, pool, releases } = fakePool(client);
+  await assert.rejects(() => searchPgvectorExact(pool, vectorAt(0)), /boom/u);
+  assert.equal(calls.at(-1)?.text, "ROLLBACK");
+  assert.deepEqual(releases, [{ checkout: 1, error: undefined }]);
 });
 
 test("searchPgvector validates before opening a transaction", async () => {
@@ -301,16 +311,18 @@ test("searchPgvector validates before opening a transaction", async () => {
       return Promise.resolve({ rows: [] });
     },
   };
-  await assert.rejects(() => searchPgvector(client, [1, 2]), /dimensions/u);
+  const { pool, releases } = fakePool(client);
+  await assert.rejects(() => searchPgvector(pool, [1, 2]), /dimensions/u);
   await assert.rejects(
-    () => searchPgvector(client, vectorAt(0), { efSearch: 0 }),
+    () => searchPgvector(pool, vectorAt(0), { efSearch: 0 }),
     /efSearch/u
   );
   await assert.rejects(
-    () => searchPgvector(client, vectorAt(0), { limit: 0 }),
+    () => searchPgvector(pool, vectorAt(0), { limit: 0 }),
     /limit/u
   );
   assert.equal(calls, 0);
+  assert.deepEqual(releases, [], "no connection is checked out");
 });
 
 const validRow = (
@@ -390,34 +402,6 @@ test("parsePgvectorRows coerces missing text, parses JSON-string anchors", () =>
     text: "",
     versionId: "v",
   });
-});
-
-test("ensurePgvectorSchema runs the migration: extension, table, hnsw index", async () => {
-  const recorded = stubClient([[]]);
-  await ensurePgvectorSchema(recorded.client);
-  assert.equal(
-    recorded.statements[0],
-    PGVECTOR_MIGRATION_SQL,
-    "migration runs as one idempotent script"
-  );
-  assert.ok(
-    PGVECTOR_MIGRATION_SQL.includes("CREATE EXTENSION IF NOT EXISTS vector"),
-    "migration must enable pgvector"
-  );
-  assert.ok(
-    PGVECTOR_MIGRATION_SQL.includes("embedding vector(384)"),
-    "migration must pin the model dimension"
-  );
-  assert.ok(
-    PGVECTOR_MIGRATION_SQL.includes("USING hnsw (embedding vector_cosine_ops)"),
-    "index operator class must match the cosine metric"
-  );
-  assert.ok(
-    PGVECTOR_MIGRATION_SQL.includes(
-      "WHERE valid_to IS NULL AND embedding IS NOT NULL"
-    ),
-    "hnsw index must be partial over live, embedded chunks"
-  );
 });
 
 test("backfill counts expose missing embeddings and model migrations", async () => {
@@ -564,12 +548,12 @@ test("HNSW vs exact on the deterministic fixture through the full search path", 
   // The builder requires the indexed dimension; the fixture math is dimension-independent.
   const paddedQuery = padToDimensions(FIXTURE_QUERY, EMBEDDING_DIMENSIONS);
   const exactHits = await searchPgvectorExact(
-    stubClient([[], [], exactRows, []]).client,
+    stubClient([[], [], exactRows, []]).pool,
     paddedQuery,
     { limit: 3 }
   );
   const hnswHits = await searchPgvector(
-    stubClient([[], [], hnswRows, []]).client,
+    stubClient([[], [], hnswRows, []]).pool,
     paddedQuery,
     { efSearch: 2, limit: 3 }
   );
@@ -593,7 +577,7 @@ test(
   { skip: !hasLiveDb },
   async () => {
     await withPgvectorClientFromEnv(async (client) => {
-      await ensurePgvectorSchema(client);
+      await migrateKnowledgeSchema(client);
       const namespace = "pgvector-test";
       await client.query("DELETE FROM chunks WHERE namespace = $1", [
         namespace,

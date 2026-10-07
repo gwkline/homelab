@@ -9,16 +9,16 @@
  */
 
 import { chunkDocumentVersion, CHUNKER_VERSION, sha256Hex } from "./chunk.ts";
-import type { ChunkFormat, NormalizedDocumentVersion } from "./chunk.ts";
+import type { NormalizedDocumentVersion } from "./chunk.ts";
 import { embedChunkTexts } from "./embedder.ts";
 import type { EmbeddingWorkerConfig } from "./embedder.ts";
-import type { PgClient } from "./pg-client.ts";
+import type { PgPool } from "./pg-client.ts";
+import { withTransaction } from "./pg-client.ts";
 import type { CitationAnchor } from "./pgvector.ts";
 import { toPgvectorLiteral } from "./pgvector.ts";
 import {
   buildDocumentUpsert,
   buildDocumentVersionInsert,
-  buildIngestJobClaim,
   buildNamespaceRegistration,
 } from "./schema.ts";
 import type { SchemaQuery } from "./schema.ts";
@@ -33,184 +33,7 @@ export interface IngestDocumentVersion extends NormalizedDocumentVersion {
 }
 
 const NAMESPACE_PATTERN = /^[\w.-]{1,128}$/u;
-const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const HASH_PATTERN = /^[0-9a-f]{64}$/u;
-
-export const isIngestIdentifier = (value: string): boolean =>
-  ID_PATTERN.test(value);
-
-export const MAX_JOB_ERROR_CHARS = 2000;
-
-const truncateJobError = (message: string): string =>
-  message.length > MAX_JOB_ERROR_CHARS
-    ? message.slice(0, MAX_JOB_ERROR_CHARS)
-    : message;
-
-export interface IngestJobSpec {
-  /** Idempotency key for the enqueue. */
-  jobId: string;
-  kind: string;
-  payload: Record<string, unknown>;
-  /** Higher runs first. Default 0. */
-  priority?: number;
-}
-
-export const buildEnqueueJobQuery = (job: IngestJobSpec): SchemaQuery => {
-  if (!isIngestIdentifier(job.jobId)) {
-    throw new TypeError(`ingest: invalid job id ${JSON.stringify(job.jobId)}`);
-  }
-  if (typeof job.kind !== "string" || !isIngestIdentifier(job.kind)) {
-    throw new TypeError(`ingest: invalid job kind ${JSON.stringify(job.kind)}`);
-  }
-  if (job.payload === null || typeof job.payload !== "object") {
-    throw new TypeError("ingest: job payload must be a JSON object");
-  }
-  const priority = job.priority ?? 0;
-  if (!Number.isInteger(priority) || priority < 0) {
-    throw new TypeError(
-      `ingest: priority must be an integer >= 0, got ${String(job.priority)}`
-    );
-  }
-  return {
-    params: [job.jobId, job.kind, JSON.stringify(job.payload), priority],
-    text: `INSERT INTO ingest_job (id, kind, payload, priority)
-VALUES ($1, $2, $3::jsonb, $4)
-ON CONFLICT (id) DO NOTHING`,
-  };
-};
-
-export const buildClaimJobQuery = (): SchemaQuery => buildIngestJobClaim();
-
-export const buildCompleteJobQuery = (jobId: string): SchemaQuery => ({
-  params: [jobId],
-  text: `UPDATE ingest_job
-SET status = 'done', heartbeat_at = now(), error = NULL
-WHERE id = $1`,
-});
-
-export const buildFailJobQuery = (
-  jobId: string,
-  error: string
-): SchemaQuery => ({
-  params: [jobId, truncateJobError(error)],
-  text: `UPDATE ingest_job
-SET status = 'failed', heartbeat_at = now(), error = $2
-WHERE id = $1`,
-});
-
-export interface IngestJobRecord {
-  attempts: number;
-  jobId: string;
-  kind: string;
-  payload: unknown;
-}
-
-export const parseIngestJobRow = (
-  row: Record<string, unknown>
-): IngestJobRecord => {
-  const { attempts, id: jobId } = row;
-  const { kind, payload } = row;
-  if (typeof jobId !== "string" || jobId.length === 0) {
-    throw new TypeError("ingest: claimed job has no string id");
-  }
-  if (typeof kind !== "string" || kind.length === 0) {
-    throw new TypeError(`ingest: claimed job ${jobId} has no string kind`);
-  }
-  let attemptsValue = Number.NaN;
-  if (typeof attempts === "number") {
-    attemptsValue = attempts;
-  } else if (typeof attempts === "string" && /^\d+$/u.test(attempts)) {
-    attemptsValue = Number(attempts);
-  }
-  if (!Number.isInteger(attemptsValue) || attemptsValue < 0) {
-    throw new TypeError(
-      `ingest: claimed job ${jobId} has a malformed attempts count`
-    );
-  }
-  return { attempts: attemptsValue, jobId, kind, payload };
-};
-
-const payloadRequiredString = (
-  record: Record<string, unknown>,
-  key: string,
-  jobId: string
-): string => {
-  const value = record[key];
-  if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`ingest: job ${jobId} payload has no string ${key}`);
-  }
-  return value;
-};
-
-const payloadChunkFormat = (
-  record: Record<string, unknown>,
-  jobId: string
-): ChunkFormat | undefined => {
-  const { format } = record;
-  if (format === undefined) {
-    return undefined;
-  }
-  if (format !== "markdown" && format !== "code" && format !== "text") {
-    throw new TypeError(
-      `ingest: job ${jobId} payload format ${JSON.stringify(format)} is not a chunk format`
-    );
-  }
-  return format;
-};
-
-const payloadNullableString = (
-  record: Record<string, unknown>,
-  key: string,
-  jobId: string
-): string | null | undefined => {
-  const value = record[key];
-  if (value === undefined || value === null || typeof value === "string") {
-    return value;
-  }
-  throw new TypeError(
-    `ingest: job ${jobId} payload ${key} must be a string or null`
-  );
-};
-
-export const parseDocumentPayload = (
-  job: IngestJobRecord
-): IngestDocumentVersion => {
-  const record =
-    typeof job.payload === "object" && job.payload !== null
-      ? (job.payload as Record<string, unknown>)
-      : null;
-  if (record === null) {
-    throw new TypeError(
-      `ingest: job ${job.jobId} payload is not a JSON object`
-    );
-  }
-  const { jobId } = job;
-  const content = payloadRequiredString(record, "content", jobId);
-  const documentId = payloadRequiredString(record, "documentId", jobId);
-  const externalId = payloadRequiredString(record, "externalId", jobId);
-  const source = payloadRequiredString(record, "source", jobId);
-  const versionId = payloadRequiredString(record, "versionId", jobId);
-  const namespace = payloadRequiredString(record, "namespace", jobId);
-  if (!NAMESPACE_PATTERN.test(namespace)) {
-    throw new TypeError(
-      `ingest: job ${jobId} payload has an invalid namespace`
-    );
-  }
-  const format = payloadChunkFormat(record, jobId);
-  const title = payloadNullableString(record, "title", jobId);
-  const url = payloadNullableString(record, "url", jobId);
-  return {
-    content,
-    documentId,
-    externalId,
-    namespace,
-    source,
-    versionId,
-    ...(format === undefined ? {} : { format }),
-    ...(title === undefined ? {} : { title }),
-    ...(url === undefined ? {} : { url }),
-  };
-};
 
 /** Used when the version-bump upsert returns nothing because content is unchanged. */
 export const buildDocumentCurrentVersionQuery = (
@@ -421,7 +244,7 @@ export interface IngestRunOptions {
  * do not, and are reported per chunk as `status: "partial"`.
  */
 export const processDocumentVersion = async (
-  client: PgClient,
+  pool: PgPool,
   doc: IngestDocumentVersion,
   options: IngestRunOptions
 ): Promise<DocumentIngestOutcome> => {
@@ -454,103 +277,105 @@ export const processDocumentVersion = async (
     provider: config.provider.name,
     versionId: doc.versionId,
   });
-  await client.query("BEGIN", []);
-  let { documentId, versionId } = doc;
-  try {
-    const registerNamespace = buildNamespaceRegistration(doc.namespace);
-    await client.query(registerNamespace.text, registerNamespace.params);
-    const documentUpsert = buildDocumentUpsert({
-      content_hash: contentHash,
-      external_id: doc.externalId,
-      id: doc.documentId,
-      namespace: doc.namespace,
-      source: doc.source,
-      ...(doc.title === undefined ? {} : { title: doc.title }),
-      ...(doc.url === undefined ? {} : { url: doc.url }),
-    });
-    const upserted = await client.query(
-      documentUpsert.text,
-      documentUpsert.params
-    );
-    let documentVersion: number;
-    const [documentRow] = upserted.rows;
-    if (documentRow === undefined) {
-      // Unchanged content: the DO UPDATE guard filtered the upsert.
-      const current = buildDocumentCurrentVersionQuery(
-        doc.namespace,
-        doc.source,
-        doc.externalId
-      );
-      const selected = await client.query(current.text, current.params);
-      const [row] = selected.rows;
-      if (row === undefined) {
-        throw new Error(
-          `ingest: document ${doc.namespace}/${doc.source}/${doc.externalId} vanished between upsert and read`
-        );
-      }
-      documentId = readRowString(row["id"], "document id");
-      documentVersion = readRowVersion(row["version"], "document version");
-    } else {
-      documentId = readRowString(documentRow["id"], "document upsert id");
-      documentVersion = readRowVersion(
-        documentRow["version"],
-        "document upsert version"
-      );
-    }
-    const versionInsert = buildDocumentVersionInsert({
-      content_hash: contentHash,
-      document_id: documentId,
-      id: doc.versionId,
-      version: documentVersion,
-    });
-    const inserted = await client.query(
-      versionInsert.text,
-      versionInsert.params
-    );
-    const [versionRow] = inserted.rows;
-    if (versionRow === undefined) {
-      // Version already recorded; cite the existing row.
-      const existing = buildDocumentVersionIdQuery(documentId, documentVersion);
-      const selected = await client.query(existing.text, existing.params);
-      const [row] = selected.rows;
-      if (row === undefined) {
-        throw new Error(
-          `ingest: document ${documentId} version ${documentVersion} vanished between insert and read`
-        );
-      }
-      versionId = readRowString(row["id"], "document version id");
-    }
-    for (const [index, chunk] of chunks.entries()) {
-      const embedding = embeddings.get(index) ?? null;
-      const built = buildChunkUpsertQuery({
-        anchors: chunk.anchors,
-        chunkId: chunk.chunkId,
-        chunkerVersion: chunk.chunkerVersion,
-        contentHash: chunk.contentHash,
-        documentId,
-        embedding,
-        embeddingModel: embedding === null ? null : config.provider.model,
-        idx: chunk.idx,
-        namespace: chunk.namespace,
-        text: chunk.text,
-        versionId,
+  const { documentId, versionId } = await withTransaction(
+    pool,
+    async (client) => {
+      const registerNamespace = buildNamespaceRegistration(doc.namespace);
+      await client.query(registerNamespace.text, registerNamespace.params);
+      const documentUpsert = buildDocumentUpsert({
+        content_hash: contentHash,
+        external_id: doc.externalId,
+        id: doc.documentId,
+        namespace: doc.namespace,
+        source: doc.source,
+        ...(doc.title === undefined ? {} : { title: doc.title }),
+        ...(doc.url === undefined ? {} : { url: doc.url }),
       });
-      await client.query(built.text, built.params);
+      const upserted = await client.query(
+        documentUpsert.text,
+        documentUpsert.params
+      );
+      let storedDocumentId: string;
+      let documentVersion: number;
+      const [documentRow] = upserted.rows;
+      if (documentRow === undefined) {
+        // Unchanged content: the DO UPDATE guard filtered the upsert.
+        const current = buildDocumentCurrentVersionQuery(
+          doc.namespace,
+          doc.source,
+          doc.externalId
+        );
+        const selected = await client.query(current.text, current.params);
+        const [row] = selected.rows;
+        if (row === undefined) {
+          throw new Error(
+            `ingest: document ${doc.namespace}/${doc.source}/${doc.externalId} vanished between upsert and read`
+          );
+        }
+        storedDocumentId = readRowString(row["id"], "document id");
+        documentVersion = readRowVersion(row["version"], "document version");
+      } else {
+        storedDocumentId = readRowString(
+          documentRow["id"],
+          "document upsert id"
+        );
+        documentVersion = readRowVersion(
+          documentRow["version"],
+          "document upsert version"
+        );
+      }
+      const versionInsert = buildDocumentVersionInsert({
+        content_hash: contentHash,
+        document_id: storedDocumentId,
+        id: doc.versionId,
+        version: documentVersion,
+      });
+      const inserted = await client.query(
+        versionInsert.text,
+        versionInsert.params
+      );
+      let storedVersionId = doc.versionId;
+      const [versionRow] = inserted.rows;
+      if (versionRow === undefined) {
+        // Version already recorded; cite the existing row.
+        const existing = buildDocumentVersionIdQuery(
+          storedDocumentId,
+          documentVersion
+        );
+        const selected = await client.query(existing.text, existing.params);
+        const [row] = selected.rows;
+        if (row === undefined) {
+          throw new Error(
+            `ingest: document ${storedDocumentId} version ${documentVersion} vanished between insert and read`
+          );
+        }
+        storedVersionId = readRowString(row["id"], "document version id");
+      }
+      for (const [index, chunk] of chunks.entries()) {
+        const embedding = embeddings.get(index) ?? null;
+        const built = buildChunkUpsertQuery({
+          anchors: chunk.anchors,
+          chunkId: chunk.chunkId,
+          chunkerVersion: chunk.chunkerVersion,
+          contentHash: chunk.contentHash,
+          documentId: storedDocumentId,
+          embedding,
+          embeddingModel: embedding === null ? null : config.provider.model,
+          idx: chunk.idx,
+          namespace: chunk.namespace,
+          text: chunk.text,
+          versionId: storedVersionId,
+        });
+        await client.query(built.text, built.params);
+      }
+      const supersede = buildSupersedeChunksQuery(
+        storedDocumentId,
+        chunks.map((chunk) => chunk.contentHash)
+      );
+      await client.query(supersede.text, supersede.params);
+      return { documentId: storedDocumentId, versionId: storedVersionId };
     }
-    const supersede = buildSupersedeChunksQuery(
-      documentId,
-      chunks.map((chunk) => chunk.contentHash)
-    );
-    await client.query(supersede.text, supersede.params);
-    await client.query("COMMIT", []);
-  } catch (error) {
-    try {
-      await client.query("ROLLBACK", []);
-    } catch {
-      // The original failure is the one worth surfacing.
-    }
-    throw error;
-  }
+  );
   const failedChunks = [...failures.entries()]
     .toSorted(([a], [b]) => a - b)
     .map(([index, reason]) => {
@@ -582,65 +407,4 @@ export const processDocumentVersion = async (
     totalChunks: chunks.length,
     versionId,
   };
-};
-
-export interface IngestJobResult {
-  error?: string;
-  outcome?: DocumentIngestOutcome;
-  status: "done" | "failed";
-}
-
-/** Per-chunk embedding failures are a `partial` outcome, not a job failure. */
-export const runIngestJob = async (
-  client: PgClient,
-  job: IngestJobRecord,
-  options: IngestRunOptions
-): Promise<IngestJobResult> => {
-  try {
-    const doc = parseDocumentPayload(job);
-    const outcome = await processDocumentVersion(client, doc, {
-      ...options,
-      jobId: job.jobId,
-    });
-    const complete = buildCompleteJobQuery(job.jobId);
-    await client.query(complete.text, complete.params);
-    return { outcome, status: "done" };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const fail = buildFailJobQuery(job.jobId, message);
-    await client.query(fail.text, fail.params);
-    return { error: truncateJobError(message), status: "failed" };
-  }
-};
-
-export const claimIngestJob = async (
-  client: PgClient
-): Promise<IngestJobRecord | null> => {
-  const built = buildClaimJobQuery();
-  const result = await client.query(built.text, built.params);
-  const [row] = result.rows;
-  return row === undefined ? null : parseIngestJobRow(row);
-};
-
-/** Claims and runs jobs until the queue is empty or `maxJobs` have run. */
-export const drainIngestJobs = async (
-  client: PgClient,
-  options: IngestRunOptions,
-  limits: { maxJobs?: number } = {}
-): Promise<IngestJobResult[]> => {
-  const maxJobs = limits.maxJobs ?? 10;
-  if (!Number.isInteger(maxJobs) || maxJobs < 1) {
-    throw new TypeError(
-      `ingest: maxJobs must be an integer >= 1, got ${String(limits.maxJobs)}`
-    );
-  }
-  const results: IngestJobResult[] = [];
-  while (results.length < maxJobs) {
-    const job = await claimIngestJob(client);
-    if (job === null) {
-      break;
-    }
-    results.push(await runIngestJob(client, job, options));
-  }
-  return results;
 };

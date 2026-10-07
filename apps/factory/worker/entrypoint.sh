@@ -6,6 +6,7 @@
 #   /out/patch.diff    git diff of the change
 #   /out/report.json   structured result {success, summary, tests, base_sha, run_id, profile}
 #   exit 0             success; non-zero = failed attempt
+#   exit 65            patch rejected: it adds agent state or exceeds the size cap
 #   exit 78            invalid run input / misconfiguration
 #
 # Credentials arrive only at runtime (Secret env or mounted files), never touch
@@ -32,6 +33,35 @@ elif [ -d /usr/local/share/worker/skills ]; then
 else
   SKILLS_SRC="${_ENTRYPOINT_DIR}/skills"
 fi
+if [ -f /usr/local/lib/skills-lib.sh ]; then
+  SKILLS_LIB=/usr/local/lib/skills-lib.sh
+else
+  SKILLS_LIB="${_ENTRYPOINT_DIR}/../../shared/skills-lib.sh"
+fi
+# Above this, a patch is runaway output (vendored trees, caches), not a change.
+PATCH_MAX_BYTES="${WORKER_PATCH_MAX_BYTES:-524288}"
+
+# Agent CLIs and package managers keep databases, caches and config under
+# HOME. An agent that points HOME into the clone must not ship them: these go
+# to .git/info/exclude before the agent runs (gitignore syntax: a bare name
+# matches at any depth; tracked files are unaffected).
+AGENT_STATE_EXCLUDES='.opencode/
+.cursor/
+.claude/
+.claude.json
+.codex/
+.local/
+.cache/
+.npm/
+**/.config/opencode/
+**/.config/cursor/
+**/.config/gh/
+*.db
+*.db-*
+*.sqlite*'
+# The same state as added paths that got past the excludes (a repo .gitignore
+# negation, or an agent commit). Any match rejects the patch.
+AGENT_STATE_RE='(^|/)(\.opencode|\.cursor|\.claude|\.codex|\.local|\.cache|\.npm|\.ssh|\.gnupg)/|(^|/)\.config/(opencode|cursor|gh)/|(^|/)(\.claude\.json|\.gitconfig|\.[a-z_]+_history)$|\.(db|sqlite[0-9]*)(-[a-z]+)?$'
 OC_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
 OC_CONFIG_FILE="${HOME}/.config/opencode/opencode.jsonc"
 
@@ -119,7 +149,7 @@ interrupted_exit() {
   if [ -d "${WORK_DIR}/repo" ]; then
     # Partial work is still a result: capture the diff as of the interruption.
     git -C "${WORK_DIR}/repo" add -A 2>/dev/null || true
-    git -C "${WORK_DIR}/repo" diff --cached --binary > "${OUT_DIR}/patch.diff" 2>/dev/null || true
+    git -C "${WORK_DIR}/repo" diff --cached --binary "${BASE_SHA:-HEAD}" > "${OUT_DIR}/patch.diff" 2>/dev/null || true
     [ -s "${OUT_DIR}/patch.diff" ] || rm -f "${OUT_DIR}/patch.diff"
   fi
   write_report "interrupted" "run interrupted by SIGTERM/SIGINT (artifacts preserved, credentials scrubbed)"
@@ -136,10 +166,30 @@ agent_wait() {
   fi
 }
 
+# Not publishable: no patch artifact, a report that says why, exit 65.
+reject_patch() { # $1 = reason
+  echo "[worker] REJECTED: $1 — not publishing" >&2
+  rm -f "${OUT_DIR}/patch.diff"
+  write_report "rejected" "$1" "${BASE_SHA}" "${RUN_ID}" "${PROFILE}"
+  emit_artifacts
+  exit 65
+}
+
 trap on_signal TERM INT
 trap scrub_credentials EXIT
 
 mkdir -p "${OUT_DIR}"
+
+# State written under HOME or an XDG dir would land in the patch if either
+# pointed into the clone.
+for _state_dir in "${HOME}" "${XDG_CONFIG_HOME:-}" "${XDG_DATA_HOME:-}" "${XDG_STATE_HOME:-}" "${XDG_CACHE_HOME:-}"; do
+  case "${_state_dir}/" in
+    "${WORK_DIR}/repo/"*)
+      echo "[worker] FATAL: agent state dir ${_state_dir} is inside the clone" >&2
+      exit 78
+      ;;
+  esac
+done
 
 # --- credentials: runtime-only mounts/exports --------------------------------
 # GITHUB_TOKEN_FILE is used only when GH_TOKEN is unset.
@@ -206,7 +256,8 @@ export BRIEF # write_report reads its knowledge section
 
 # Pinned private skills (apps/shared/skills-lib.sh). On failure the run
 # continues without them; the status lands in /out/skills-sync.json.
-. /usr/local/lib/skills-lib.sh
+# shellcheck source=apps/shared/skills-lib.sh
+. "${SKILLS_LIB}"
 SKILLS_SYNC_RC=0
 skills_sync || SKILLS_SYNC_RC=$?
 if [ "$SKILLS_SYNC_RC" -eq 0 ]; then
@@ -216,7 +267,7 @@ if [ "$SKILLS_SYNC_RC" -eq 0 ]; then
   done
   echo "[worker] skills-sync: $(cat "${SKILLS_STATUS_FILE}")"
 else
-  echo "[worker] WARNING: skills sync FAILED (rc=${SKILLS_SYNC_RC}) — continuing WITHOUT private skills (see ${SKILLS_STATUS_FILE})" >&2
+  echo "[worker] WARNING: skills sync FAILED (rc=${SKILLS_SYNC_RC}) — continuing WITHOUT private skills (see ${SKILLS_STATUS_FILE:-the log above})" >&2
 fi
 
 # Brief arrives via env (base64 JSON) or mounted file — support both.
@@ -340,6 +391,9 @@ unset GH_TOKEN GITHUB_TOKEN CLONE_URL
 [ "${SHUTDOWN}" = "0" ] || interrupted_exit
 cd repo
 BASE_SHA=$(git rev-parse HEAD)
+_exclude_file="$(git rev-parse --git-path info/exclude)"
+mkdir -p "$(dirname "${_exclude_file}")"
+printf '%s\n' "${AGENT_STATE_EXCLUDES}" >> "${_exclude_file}"
 
 # --- pinned verification skills ---------------------------------------------
 # Copied into agent-global skill dirs, never the repo (would pollute the patch).
@@ -416,6 +470,7 @@ The p-stack verification skill is installed at ~/.claude/skills/p-stack
 Rules:
 - Implement the change described above. Keep it minimal and focused.
 - Do NOT touch files outside the scope of the task.
+- Keep scratch files, and any HOME you set for a tool, under $TMPDIR, never in the repository.
 - {'Run `' + b.get('verify_command','') + '` and make it pass.' if b.get('verify_command') else 'Ensure the project still builds/tests cleanly.'}
 - When done, print a one-paragraph summary of what changed and why.
 - {ctx_rule}""")
@@ -449,8 +504,10 @@ else
 fi
 
 # --- capture patch --------------------------------------------------------
+# Diffed against the clone's base, so commits the agent made are included and
+# checked like everything else.
 git add -A
-if git diff --cached --quiet; then
+if git diff --cached --quiet "${BASE_SHA}"; then
   echo "[worker] no changes produced"
   echo "[worker] --- agent output (tail, no-changes path) ---"
   tail -40 /tmp/task-prompt-output.log 2>/dev/null || echo "[worker] (no agent output file)"
@@ -459,7 +516,16 @@ if git diff --cached --quiet; then
   emit_artifacts
   exit 1
 fi
-git diff --cached --binary > "${OUT_DIR}/patch.diff"
+git diff --cached --binary "${BASE_SHA}" > "${OUT_DIR}/patch.diff"
+PATCH_BYTES=$(wc -c < "${OUT_DIR}/patch.diff" | tr -d ' ')
+echo "[worker] patch: ${PATCH_BYTES} bytes (cap ${PATCH_MAX_BYTES})"
+STATE_PATHS=$(git diff --cached --name-only --diff-filter=A "${BASE_SHA}" | grep -E "${AGENT_STATE_RE}" || true)
+if [ -n "${STATE_PATHS}" ]; then
+  reject_patch "patch adds agent state: $(printf '%s' "${STATE_PATHS}" | head -5 | tr '\n' ' ')"
+fi
+if [ "${PATCH_BYTES}" -gt "${PATCH_MAX_BYTES}" ]; then
+  reject_patch "patch is ${PATCH_BYTES} bytes, over the ${PATCH_MAX_BYTES}-byte cap"
+fi
 
 # --- verification ----------------------------------------------------------
 # Without a verify command, every changed *.sh is parsed with dash -n.
@@ -468,7 +534,7 @@ if [ -n "${VERIFY}" ]; then
   echo "[worker] running verify: ${VERIFY}"
   if sh -c "${VERIFY}"; then TESTS="passed"; else TESTS="failed"; fi
 else
-  CHANGED_SH=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.sh$' || true)
+  CHANGED_SH=$(git diff --cached --name-only --diff-filter=ACMR "${BASE_SHA}" | grep '\.sh$' || true)
   if [ -n "${CHANGED_SH}" ]; then
     RC_VERIFY=0
     while IFS= read -r f; do
