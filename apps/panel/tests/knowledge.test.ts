@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+import { jsonAs, writeAuthDir } from "./helpers.ts";
+
 const root = path.join(import.meta.dirname, "..");
 
 const iso = (msAgo: number): string =>
@@ -245,6 +247,7 @@ const startPanel = async (
   const child = spawn(process.execPath, [path.join(stage, "index.js")], {
     env: {
       ...process.env,
+      PANEL_AUTH_DIR: writeAuthDir(),
       PANEL_K8S_BASE: "http://127.0.0.1:1",
       PANEL_ROOT: stage,
       PORT: String(port),
@@ -290,7 +293,7 @@ const withPanel = async (
         await record(
           await fetch(`${base}${route}`, {
             body: JSON.stringify(payload),
-            headers: { "content-type": "application/json" },
+            headers: jsonAs(),
             method: "POST",
           })
         ),
@@ -533,14 +536,14 @@ test("knowledge card degrades explicitly when the knowledge API is not configure
 
     const search = await fetch(`${base}/api/knowledge/search`, {
       body: JSON.stringify({ query: "x" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(search.status, 503);
 
     const sync = await fetch(`${base}/api/knowledge/sync`, {
       body: JSON.stringify({ sourceId: "homelab-docs" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(sync.status, 503);

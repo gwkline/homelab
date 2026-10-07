@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+import { jsonAs, writeAuthDir } from "./helpers.ts";
+
 const root = path.join(import.meta.dirname, "..");
 
 const iso = (msAgo: number): string =>
@@ -574,6 +576,7 @@ test("POST /api/factory/review + /merge guard and forward (write path)", async (
       ...process.env,
       GH_API_BASE: `http://127.0.0.1:${ghPort}`,
       GH_TOKEN: "test-token",
+      PANEL_AUTH_DIR: writeAuthDir(),
       PANEL_K8S_BASE: "http://127.0.0.1:1",
       PANEL_ROOT: stage,
       PORT: String(port),
@@ -600,7 +603,7 @@ test("POST /api/factory/review + /merge guard and forward (write path)", async (
       (
         await fetch(`${base}/api/factory/review`, {
           body: JSON.stringify({ event: "APPROVE", pr: 8, repo: "evil/r" }),
-          headers: { "content-type": "application/json" },
+          headers: jsonAs(),
           method: "POST",
         })
       ).status,
@@ -614,7 +617,7 @@ test("POST /api/factory/review + /merge guard and forward (write path)", async (
             pr: -1,
             repo: "gwkline/launchpad",
           }),
-          headers: { "content-type": "application/json" },
+          headers: jsonAs(),
           method: "POST",
         })
       ).status,
@@ -628,7 +631,7 @@ test("POST /api/factory/review + /merge guard and forward (write path)", async (
             pr: 8,
             repo: "gwkline/launchpad",
           }),
-          headers: { "content-type": "application/json" },
+          headers: jsonAs(),
           method: "POST",
         })
       ).status,
@@ -643,7 +646,7 @@ test("POST /api/factory/review + /merge guard and forward (write path)", async (
         pr: 8,
         repo: "gwkline/launchpad",
       }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(rv.status, 200);
@@ -657,6 +660,27 @@ test("POST /api/factory/review + /merge guard and forward (write path)", async (
     assert.equal(postedBody.event, "APPROVE");
     assert.equal(postedBody.body, "LGTM via panel");
 
+    // review guard: a non-factory head is refused before anything is posted
+    ghCalls.length = 0;
+    const reviewOther = await fetch(`${base}/api/factory/review`, {
+      body: JSON.stringify({
+        event: "APPROVE",
+        pr: 999,
+        repo: "gwkline/launchpad",
+      }),
+      headers: jsonAs(),
+      method: "POST",
+    });
+    assert.equal(reviewOther.status, 409);
+    assert.match(
+      ((await reviewOther.json()) as { error: string }).error,
+      /not a factory branch/u
+    );
+    assert.ok(
+      !ghCalls.some((c) => c.method === "POST"),
+      "no review posted for a non-factory PR"
+    );
+
     // merge guard: non-factory head must be rejected
     ghCalls.length = 0;
     const badHead = await fetch(`${base}/api/factory/merge`, {
@@ -665,7 +689,7 @@ test("POST /api/factory/review + /merge guard and forward (write path)", async (
         repo: "gwkline/launchpad",
         strategy: "squash",
       }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(badHead.status, 409);
@@ -677,7 +701,7 @@ test("POST /api/factory/review + /merge guard and forward (write path)", async (
         repo: "gwkline/launchpad",
         strategy: "squash",
       }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(mg.status, 200);
@@ -812,6 +836,7 @@ test("server serves SPA and lists sandbox state; no route launches commands", as
   const child = spawn(process.execPath, [path.join(stage, "index.js")], {
     env: {
       ...process.env,
+      PANEL_AUTH_DIR: writeAuthDir(),
       PANEL_K8S_BASE: `http://127.0.0.1:${mockPort}`,
       PANEL_K8S_TOKEN: "test-token",
       PANEL_ROOT: stage,
@@ -863,7 +888,7 @@ test("server serves SPA and lists sandbox state; no route launches commands", as
 
     const launch = await fetch(`http://127.0.0.1:${port}/api/jobs`, {
       body: JSON.stringify({ command: "node check.mjs", issue: "9" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(launch.status, 404);

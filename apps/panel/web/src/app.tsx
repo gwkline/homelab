@@ -570,6 +570,8 @@ export default function App() {
                   jobs={state.jobs}
                   onDelete={async (name) => {
                     await fetch(`/api/jobs/${encodeURIComponent(name)}`, {
+                      // Every mutating /api route requires a JSON content type.
+                      headers: { "content-type": "application/json" },
                       method: "DELETE",
                     });
                     refresh();

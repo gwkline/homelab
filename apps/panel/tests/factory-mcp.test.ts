@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+import { jsonAs, writeAuthDir } from "./helpers.ts";
+
 const root = path.join(import.meta.dirname, "..");
 const repoRoot = path.join(root, "..", "..");
 
@@ -18,7 +20,11 @@ const readSpec = (): {
     string,
     Record<string, { operationId?: string; "x-factory-policy"?: string }>
   >;
-  components: { schemas: Record<string, Record<string, unknown>> };
+  components: {
+    schemas: Record<string, Record<string, unknown>>;
+    securitySchemes?: Record<string, { scheme?: string; type?: string }>;
+  };
+  security?: Record<string, string[]>[];
   servers: { url: string }[];
 } =>
   JSON.parse(
@@ -76,6 +82,9 @@ test("factory OpenAPI contract: policy classes, strict bodies, no k8s surface", 
   const profile = spec.components.schemas.ProfileName;
   assert.ok(profile, "ProfileName schema exists");
   assert.deepEqual(profile.enum, ["code-pr", "security"]);
+  // Each connection authenticates with its own bearer token.
+  assert.deepEqual(spec.security, [{ panelToken: [] }]);
+  assert.equal(spec.components.securitySchemes?.panelToken?.scheme, "bearer");
   // The spec points Executor at the in-cluster panel service, not any public host.
   const [server] = spec.servers;
   assert.ok(server, "spec declares a server");
@@ -367,6 +376,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
       FACTORY_REPO: "gwkline/launchpad",
       GH_API_BASE: `http://127.0.0.1:${ghPort}`,
       GH_TOKEN: "test-token",
+      PANEL_AUTH_DIR: writeAuthDir(),
       PANEL_K8S_BASE: `http://127.0.0.1:${k8sPort}`,
       PANEL_ROOT: stage,
       PORT: String(port),
@@ -406,7 +416,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     // ── Denied: unknown profile / repo / smuggled k8s fields ──
     const badProfile = await fetch(`${base}/api/factory/run`, {
       body: JSON.stringify({ issue: 6, profile: "bash-1" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(badProfile.status, 400);
@@ -421,7 +431,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
         issue: 6,
         serviceAccountName: "evil",
       }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(k8sSmuggle.status, 400);
@@ -432,17 +442,18 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
 
     const badRepo = await fetch(`${base}/api/factory/run`, {
       body: JSON.stringify({ issue: 6, repo: "evil/repo" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(badRepo.status, 400);
 
-    // ── Success: create run (identity from the host-side header) ──
+    // ── Success: create run (identity from the bearer token) ──
     const create = await fetch(`${base}/api/factory/run`, {
       body: JSON.stringify({ issue: 7, repo: "gwkline/launchpad" }),
       headers: {
-        "content-type": "application/json",
-        "x-factory-requested-by": "hermes",
+        ...jsonAs("hermes"),
+        // Client-set identity is ignored; the bearer token decides.
+        "x-factory-requested-by": "spoofed",
       },
       method: "POST",
     });
@@ -490,7 +501,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     const jobsBefore = created.length;
     const again = await fetch(`${base}/api/factory/run`, {
       body: JSON.stringify({ issue: 7, repo: "gwkline/launchpad" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(again.status, 409);
@@ -503,16 +514,27 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
       jobsBefore,
       "no duplicate Job on idempotent refusal"
     );
-    // Direct panel call without the Executor header records as panel.
-    const selfCreate = await fetch(`${base}/api/factory/run`, {
+    // Without credentials nothing is queued.
+    const anonymous = await fetch(`${base}/api/factory/run`, {
       body: JSON.stringify({ issue: 12 }),
       headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    assert.equal(anonymous.status, 401);
+    assert.ok(
+      !findIssue("gwkline/launchpad", 12)?.labels.some(
+        (l) => l.name === "factory/queued"
+      )
+    );
+    const selfCreate = await fetch(`${base}/api/factory/run`, {
+      body: JSON.stringify({ issue: 12 }),
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(selfCreate.status, 201);
     assert.equal(
       ((await selfCreate.json()) as { requestedBy: string }).requestedBy,
-      "panel"
+      "tester"
     );
 
     // ── Get run: ledger state + audit comment parse + artifacts ──
@@ -589,8 +611,9 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     const cancel = await fetch(`${base}/api/factory/run/cancel`, {
       body: JSON.stringify({ issue: 9, repo: "gwkline/launchpad" }),
       headers: {
-        "content-type": "application/json",
-        "x-factory-requested-by": "hermes",
+        ...jsonAs("hermes"),
+        // Client-set identity is ignored; the bearer token decides.
+        "x-factory-requested-by": "spoofed",
       },
       method: "POST",
     });
@@ -614,7 +637,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     // ── Cancel refusals: published run + unknown run ──
     const cancelDone = await fetch(`${base}/api/factory/run/cancel`, {
       body: JSON.stringify({ issue: 8, repo: "gwkline/launchpad" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(cancelDone.status, 409);
@@ -624,7 +647,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     );
     const cancelNone = await fetch(`${base}/api/factory/run/cancel`, {
       body: JSON.stringify({ issue: 999, repo: "gwkline/launchpad" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(cancelNone.status, 404);
@@ -636,10 +659,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
         profile: "security",
         repo: "gwkline/launchpad",
       }),
-      headers: {
-        "content-type": "application/json",
-        "x-factory-requested-by": "t3code",
-      },
+      headers: jsonAs("t3code"),
       method: "POST",
     });
     assert.equal(retry.status, 201);
@@ -670,7 +690,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     );
     const retryRunning = await fetch(`${base}/api/factory/run/retry`, {
       body: JSON.stringify({ issue: 11, repo: "gwkline/launchpad" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(retryRunning.status, 409);
@@ -680,7 +700,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     );
     const retryBadProfile = await fetch(`${base}/api/factory/run/retry`, {
       body: JSON.stringify({ issue: 10, profile: "bash-1" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(retryBadProfile.status, 400);
@@ -688,13 +708,13 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     // ── Malformed bodies are denied, not crashing ──
     const badJson = await fetch(`${base}/api/factory/run/cancel`, {
       body: "not-json",
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(badJson.status, 400);
     const noIssue = await fetch(`${base}/api/factory/run/retry`, {
       body: JSON.stringify({ repo: "gwkline/launchpad" }),
-      headers: { "content-type": "application/json" },
+      headers: jsonAs(),
       method: "POST",
     });
     assert.equal(noIssue.status, 400);
