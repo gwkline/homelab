@@ -14,7 +14,9 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Pinned so a rebuild installs exactly what was tested. Override only for a
 # deliberate upgrade; version and installer sha256 change together.
+# renovate: datasource=github-releases depName=k3s-io/k3s versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)\+k3s(?<build>\d+)$
 K3S_VERSION="${K3S_VERSION:-v1.36.4+k3s1}"
+# renovate: datasource=github-releases depName=tailscale/tailscale extractVersion=^v(?<version>.+)$
 TAILSCALE_VERSION="${TAILSCALE_VERSION:-1.102.4}"
 K3S_INSTALLER_SHA256="${K3S_INSTALLER_SHA256:-46177d4c99440b4c0311b67233823a8e8a2fc09693f6c89af1a7161e152fbfad}"
 TAILSCALE_INSTALLER_SHA256="${TAILSCALE_INSTALLER_SHA256:-805e85ed6f6f81a7ea2e70d52d47e7d5290863299e5c922b2787d71aa312f22e}"
