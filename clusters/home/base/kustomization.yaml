@@ -47,7 +47,7 @@
 #   - backup (overlays/backup) — production backup execution is excluded
 #     until its B2 credentials exist
 #   - gvisor (overlays/gvisor) — replaces the stock loop-agent runtime
-#   - grafana, loki, cloudbeaver, executor — applied
+#   - cloudbeaver, executor — applied
 #     per-component when wanted
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -87,6 +87,9 @@ resources:
   - ../../../deploy/homepage/base
   - ../../../deploy/panel/base
   - ../../../deploy/headlamp/base
+  - ../../../deploy/loki/base
+  - ../../../deploy/victoriametrics/base
+  - ../../../deploy/grafana/base
   - ../../../deploy/dispatcher/base
   - ../../../deploy/factory/base
   - ../../../deploy/deployer

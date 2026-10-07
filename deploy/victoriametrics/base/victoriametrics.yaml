@@ -108,6 +108,7 @@ spec:
     spec:
       # kubernetes_sd_configs reads the in-cluster API (node discovery) with
       # this account — rbac.yaml keeps it read-only.
+      serviceAccountName: victoriametrics
       automountServiceAccountToken: true
       securityContext:
         seccompProfile:

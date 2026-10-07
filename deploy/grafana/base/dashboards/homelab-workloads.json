@@ -266,7 +266,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "victoriametrics" },
-          "expr": "kube_statefulset_spec_replicas{namespace=\"agents\"}",
+          "expr": "kube_statefulset_replicas{namespace=\"agents\"}",
           "legendFormat": "{{statefulset}} expected",
           "refId": "B"
         }
