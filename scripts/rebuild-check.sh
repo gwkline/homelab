@@ -9,20 +9,17 @@ cd "$(dirname "$0")/.." || exit 1
 fail=0
 
 echo "== 1. manifest conformance (kubectl diff) =="
-for d in deploy/namespaces deploy/policies/base deploy/t3code/base \
-         deploy/work-t3code/base deploy/hermes/base deploy/loop-agent/base \
-         deploy/panel/base \
-         deploy/homepage/base deploy/headlamp/base deploy/tailscale \
-         deploy/factory/base; do
-  if [ -f "$d" ] || [ -d "$d" ]; then
-    if ! kubectl diff -f "$d" >/dev/null 2>&1 && ! kubectl diff -k "$d" >/dev/null 2>&1; then
-      echo "  DRIFT: $d"
-      fail=1
-    else
-      echo "  ok: $d"
-    fi
-  fi
-done
+# Live homelab images are digests resolved by deploy/deployer while git says
+# :latest, so image lines (and the generation they bump) are not drift.
+drift=$(kubectl diff -k clusters/home \
+  | grep -E '^[-+] ' | grep -vE '^[-+] +(- )?"?(image|generation)"?: ' || true)
+if [ -n "$drift" ]; then
+  printf '%s\n' "$drift" | head -40
+  echo "  DRIFT: clusters/home"
+  fail=1
+else
+  echo "  ok: clusters/home"
+fi
 
 echo "== 2. workloads Running =="
 for pod in hermes-0 t3code-0; do

@@ -33,7 +33,7 @@ The resource list in `base/kustomization.yaml` is a topological order of the dep
 | 5 | tailscale stack | `deploy/tailscale` | tailscale namespace + SecretStore + operator-oauth ExternalSecret + t3code/panel/work serve-fixers; the serve-fixer RBAC reaches into `agents` (needs layer 1) |
 | 6 | postgres | `deploy/postgres/base` | CNPG `Cluster`/`Database` CRs — the API server rejects them until the cnpg CRDs are Established (pre-apply); its clients are the factory/knowledge workloads in layer 7 |
 | 7 | workloads | t3code, hermes, loop-agent, homepage, panel, headlamp, dispatcher, factory, work-t3code | depend on layers 1–4 (namespaces, netpols, admission, mounted secrets), never on each other's apply order |
-| 8 | operational CronJobs | `deploy/chaos/base`, `deploy/node-cleanup/base` | chaos deletes pods (never races bring-up by being last; kill switch: its configmap `enabled` key) — its agents-namespace RBAC is the separate multi-namespace apply `deploy/chaos/agents`; node-cleanup prunes node disk pressure (#253) — both need only their namespace + RBAC |
+| 8 | operational CronJobs | `deploy/chaos/base`, `deploy/node-cleanup/base` | chaos deletes pods (never races bring-up by being last; kill switch: its configmap `enabled` key); node-cleanup prunes node disk pressure (#253) — both need only their namespace + RBAC |
 
 ### Server-side / helm controllers (deliberately not composed)
 
@@ -53,4 +53,4 @@ The hand-entered 1Password service-account token (`scripts/create-onepassword-se
 | backup | `kubectl apply -k clusters/home/overlays/backup` | B2 credentials exist in 1Password (docs/secrets-inventory.md) — production backup execution is excluded from the normal set until they do |
 | gvisor | `kubectl apply -k clusters/home/overlays/gvisor` | runsc registered in each node's containerd config (runbook-server-cluster, "Experimental: gVisor"); replaces the stock loop-agent runtime |
 
-Further per-component applies (grafana, loki, cloudbeaver, executor, auto-deploy) are documented beside their manifests under `deploy/` and in [runbook-server-cluster.md](../docs/runbook-server-cluster.md); they are intentionally not part of the fast-recovery normal set.
+Further per-component applies (grafana, loki, cloudbeaver, executor) are documented beside their manifests under `deploy/` and in [runbook-server-cluster.md](../docs/runbook-server-cluster.md); they are intentionally not part of the fast-recovery normal set.

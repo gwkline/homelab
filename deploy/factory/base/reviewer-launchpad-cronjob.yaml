@@ -15,12 +15,10 @@ spec:
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
-  # Same TTL as the homelab reviewer (#252): without it every finished job
-  # pod parks on the node disk until the next manual sweep.
-  ttlSecondsAfterFinished: 86400
   suspend: false
   jobTemplate:
     spec:
+      ttlSecondsAfterFinished: 86400
       activeDeadlineSeconds: 900
       backoffLimit: 0
       template:
@@ -37,8 +35,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: reviewer
-              image: ghcr.io/gwkline/homelab/factory/reviewer@sha256:0cc59f54b273d9ead7075b35718b778aec0d18a37c27f52b0a0c0617a3e93dca
-              imagePullPolicy: Always
+              image: ghcr.io/gwkline/homelab/factory/reviewer:latest
               env:
                 - name: FACTORY_REPO
                   value: gwkline/launchpad

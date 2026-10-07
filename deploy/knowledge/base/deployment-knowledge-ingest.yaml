@@ -24,11 +24,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: knowledge-ingest
-          # BOOTSTRAP: all-zero placeholder digest — CI publishes the real
-          # image when this lands on main. Pin it with
-          #   scripts/pin-factory-image.sh knowledge/ingest <digest>
-          # (see deploy/knowledge/README.md, "Bootstrap order").
-          image: ghcr.io/gwkline/homelab/knowledge-ingest@sha256:43f6bb3ce81eedfcb13ed924151037737beaed9f4930f840644a956201d95ded
+          image: ghcr.io/gwkline/homelab/knowledge-ingest:latest
           env:
             - name: KNOWLEDGE_INGEST_DATABASE_URL
               valueFrom:
@@ -91,7 +87,7 @@ spec:
               - key: token
                 path: token
         # GitHub PAT for private-repo git sources (read-only clone/fetch;
-        # same secret the auto-deploy watcher and factory use).
+        # same secret the factory uses).
         - name: github-token
           secret:
             secretName: github-token

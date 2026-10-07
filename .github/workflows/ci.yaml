@@ -3,24 +3,17 @@ name: ci
 on:
   push:
     branches: [main]
-    paths:
-      - "apps/**"
-      - "bootstrap/**"
-      - "deploy/**"
-      - "examples/**"
-      - "scripts/**"
-      - ".github/workflows/ci.yaml"
   pull_request:
   workflow_dispatch:
-  # Weekly agent-CLI freshness (2026-10-05): apps/t3code floats t3/codex/
-  # claude-code on npm dist-tags, so each build resolves whatever is
-  # current. Without a code change nothing ever rebuilds, so run the
-  # pipeline every Monday 06:00 ET; the repin-t3code-image job below
-  # rolls the freshly published digest out via an automerging manifest
-  # PR. (Schedule events run on the default branch; the push.paths filter
-  # applies only to pushes.)
+  # Weekly full rebuild: t3code floats its agent CLIs on npm dist-tags and
+  # every image picks up base-image security updates.
   schedule:
     - cron: "0 10 * * 1"
+
+# Main runs queue rather than overlap, so `latest` only ever moves forward.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   REGISTRY: ghcr.io
@@ -316,12 +309,6 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
       - name: Verify (lint, manifests, secrets, image refs)
         run: ./scripts/verify.sh
-      # Immutable digests for homelab image refs (issue #91): admission
-      # signature verification (deploy/image-policy/base) binds to digests,
-      # so every deployed homelab ref must be digest-pinned. Runs beside
-      # verify.sh, not inside it, for the same reason as the tests above.
-      - name: Homelab image digest pins
-        run: sh scripts/check-image-pins.sh
       # Skills-sync fixture tests (#81): a local fixture repo proves
       # pinned-commit verification, allowlist enforcement, idempotent
       # install, obsolete-file removal, private>public precedence, and
@@ -341,11 +328,6 @@ jobs:
       # bare remote, plus the write-guard and stuck-escalation paths.
       - name: Medic fixture test
         run: sh apps/factory/medic/tests/medic.test.sh
-      # Factory image single source of truth: run.sh resolves the worker
-      # image from the profile ConfigMap (never a second hardcoded digest),
-      # the pin helper stamps every copy, and pins agree repo-wide.
-      - name: Factory image pin test
-        run: sh apps/factory/orchestrator/tests/profile-image.test.sh
       # Backup-secret input regression (#10): a stub kubectl proves the
       # emergency fallback captures interactive credentials byte-exactly
       # (no leading/trailing newline), keeps prompts and visual newlines on
@@ -355,9 +337,45 @@ jobs:
       - name: Backup-secret input regression test
         run: sh scripts/tests/create-backup-secret.test.sh
 
+  # Images whose build inputs changed: the image's directory plus every
+  # path its Dockerfile COPYs. On main the diff starts at the last green
+  # run, so a failed build is retried by the next push. Scheduled and manual
+  # runs rebuild everything.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      images: ${{ steps.diff.outputs.images }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          BASE="${PR_BASE:-$(gh run list --workflow ci.yaml --branch main --status success --limit 1 --json headSha --jq '.[0].headSha // ""')}"
+          all=false
+          case "$GITHUB_EVENT_NAME" in schedule | workflow_dispatch) all=true ;; esac
+          git cat-file -e "${BASE}^{commit}" 2>/dev/null || all=true
+          for df in apps/*/Dockerfile apps/factory/*/Dockerfile images/*/Dockerfile; do
+            dir="${df%/Dockerfile}"
+            srcs="$(awk '/^COPY/ && !/--from/ { for (i = 2; i < NF; i++) if ($i !~ /^--/) print $i }' "$df")"
+            # shellcheck disable=SC2086 # srcs is a word list of pathspecs
+            if $all || ! git diff --quiet "$BASE" HEAD -- "$dir" $srcs; then
+              echo "$dir"
+            fi
+          done | jq -Rnc '[inputs | {dir: ., name: sub("^(apps|images)/"; "")}]' > images.json
+          cat images.json
+          echo "images=$(cat images.json)" >> "$GITHUB_OUTPUT"
+
   build:
     needs:
       [
+        changes,
         validate,
         lint,
         panel-smoke,
@@ -368,25 +386,13 @@ jobs:
         knowledge-retrieval-test,
         knowledge-mcp-test,
         github-app-test,
-        github-app-test,
         collector-test,
       ]
+    if: needs.changes.outputs.images != '[]'
+    name: build ${{ matrix.image.name }}
     strategy:
       matrix:
-        include:
-          - app: t3code
-          - app: loop-agent
-          - app: hermes
-          - app: panel
-          - app: factory/worker
-          - app: factory/security
-          - app: factory/orchestrator
-          - app: factory/reviewer
-          - app: factory/collector
-          - app: knowledge-ingest
-          - app: knowledge-retrieval
-          - app: pg-textsearch
-            dockerfile: images/pg-textsearch/Dockerfile
+        image: ${{ fromJSON(needs.changes.outputs.images) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -406,19 +412,17 @@ jobs:
       - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         id: meta
         env:
-          IMAGE_NAME: ${{ github.repository }}/${{ matrix.app }}
+          IMAGE_NAME: ${{ github.repository }}/${{ matrix.image.name }}
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha
-            type=raw,value=latest
+          tags: type=sha
 
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         id: push
         with:
           context: .
-          file: ${{ matrix.dockerfile || format('apps/{0}/Dockerfile', matrix.app) }}
-          push: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' }}
+          file: ${{ matrix.image.dir }}/Dockerfile
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # t3code floats its CLIs on dist-tags; a unique CACHEBUST per run
@@ -427,272 +431,51 @@ jobs:
           # ARG, so it is ignored there.
           build-args: |
             CACHEBUST=${{ github.run_id }}
-          cache-from: type=gha,scope=${{ matrix.app }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
 
       # #74: the worker image must be smoke-tested before it is trusted —
       # every advertised coding CLI answers, non-root holds, pinned skills
       # match their recorded sha. Rebuilds from cache, so it is cheap.
       - name: Smoke test factory/worker image
-        if: matrix.app == 'factory/worker'
+        if: matrix.image.name == 'factory/worker'
         run: |
           docker buildx build --load -t factory-worker-smoke -f apps/factory/worker/Dockerfile .
           docker run --rm --entrypoint /usr/local/bin/smoke-test factory-worker-smoke
 
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
-      - name: Sign image (keyless)
-        # Same condition as push: above — scheduled main builds publish and
-        # must sign, or signature-verifying admission rejects the rollout.
-        if: (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main'
+      # `latest` moves only after the digest is signed, so the deployer never
+      # resolves it to an image admission would reject.
+      - name: Sign and tag latest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
-          IMAGE: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.app }}
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.image.name }}
         run: |
           test -n "${DIGEST}"
           cosign sign --yes "${IMAGE}@${DIGEST}"
+          docker buildx imagetools create --tag "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
 
-  # Floating-CLI rollout loop (2026-10-05). t3code builds resolve current
-  # npm dist-tags, but the StatefulSets pin digests (issue #35) and git is
-  # the only source of what runs — a fresh image alone changes nothing in
-  # the cluster. After any publishing main-line build (merge or weekly
-  # schedule), pin the t3code/work-t3code manifests to the just-published
-  # digest via a PR the auto-deploy watcher then applies. Idempotent: when
-  # the manifests already carry the digest (unchanged CLI resolutions),
-  # the job exits without a PR. Known limitation: pushes with GITHUB_TOKEN
-  # do not trigger CI (GitHub event suppression), so the PR's required
-  # checks will not start and it needs an admin/bypass merge — dropping a
-  # PAT into a repo secret and using it here would make the loop fully
-  # autonomous.
-  repin-t3code-image:
-    needs: [build]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+  # The single required status check: green only when every job above
+  # succeeded or was legitimately skipped.
+  ci:
+    if: always()
+    needs:
+      [
+        lint,
+        validate,
+        panel-smoke,
+        panel-test,
+        panel-e2e,
+        knowledge-eval,
+        knowledge-ingest-test,
+        knowledge-retrieval-test,
+        knowledge-mcp-test,
+        github-app-test,
+        collector-test,
+        changes,
+        build,
+      ]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: read
-      pull-requests: write
     steps:
-      # depth 2: the gate below diffs HEAD~1..HEAD to see whether
-      # apps/t3code changed; a depth-1 clone would make HEAD~1 vanish and
-      # the gate would silently skip every run.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 2
-
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Resolve published t3code digest
-        id: digest
-        run: |
-          d="$(docker buildx imagetools inspect "ghcr.io/${{ github.repository }}/t3code:latest" --format '{{.Manifest.Digest}}')"
-          test -n "$d"
-          echo "digest=$d" >> "$GITHUB_OUTPUT"
-
-      - name: Update manifest pins (no-op when current)
-        id: update
-        env:
-          DIGEST: ${{ steps.digest.outputs.digest }}
-        run: |
-          # Repin only when it can matter. Every main build re-resolves the
-          # floating dist-tags (CACHEBUST), so unrelated merges mint new
-          # digests too; without this gate each one would spawn a repin PR
-          # awaiting an admin merge. Act only on the weekly schedule or
-          # when apps/t3code itself changed (a deploy-relevant rebuild).
-          if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
-            t3_changes="$(git diff --name-only HEAD~1 HEAD -- apps/t3code || true)"
-            if [ -z "${t3_changes}" ]; then
-              echo "not scheduled and apps/t3code unchanged — skipping repin"
-              exit 0
-            fi
-          fi
-          if grep -q "t3code@${DIGEST}" deploy/t3code/base/statefulset.yaml \
-             && grep -q "t3code@${DIGEST}" deploy/work-t3code/base/statefulset.yaml; then
-            echo "manifests already pin ${DIGEST} — nothing to do"
-            exit 0
-          fi
-          sed -i "s#t3code@sha256:[a-f0-9]\\{64\\}#t3code@${DIGEST}#g" \
-            deploy/t3code/base/statefulset.yaml \
-            deploy/work-t3code/base/statefulset.yaml
-          kubectl kustomize deploy/t3code/base >/dev/null
-          kubectl kustomize deploy/work-t3code/base >/dev/null
-          echo "changed=1" >> "$GITHUB_OUTPUT"
-
-      - name: Open repin PR (automerge when possible)
-        if: steps.update.outputs.changed == '1'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DIGEST: ${{ steps.digest.outputs.digest }}
-        run: |
-          open="$(gh pr list --state open --json headRefName --jq '.[].headRefName' | grep -c '^repin/t3code' || true)"
-          if [ "$open" != "0" ]; then
-            echo "a repin PR is already open — skipping (it will carry the newest digest)"
-            exit 0
-          fi
-          branch="repin/t3code-${GITHUB_RUN_ID}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$branch"
-          git commit -am "Re-pin t3code/work-t3code to ${DIGEST}"
-          git push origin "$branch"
-          gh pr create --fill-first --title "Re-pin t3code images to the latest floating build"
-          # GitHub suppresses workflow events caused by GITHUB_TOKEN, so this
-          # bot PR's required checks will not start on their own and true
-          # auto-merge cannot fire. Enable it anyway (free if a PAT-driven
-          # variant lands later); otherwise the PR waits for an admin merge.
-          if ! gh pr merge "$branch" --auto --squash --delete-branch; then
-            echo "auto-merge not enabled for this PR — it awaits an admin merge"
-          fi
-
-  # Auto-deploy loop (2026-10-06): merge to main → build publishes fresh
-  # images (the `build` job above) → THIS job pins them into the workload
-  # manifests → the auto-deploy watcher applies the merged manifests on its
-  # next 300s pass. No human step between merge and cluster rollout.
-  # Covers the watchlisted apps repin-t3code-image does not (that job owns
-  # the t3code/work-t3code pair).
-  #
-  # REPIN_TOKEN is a PAT (the same credential the factory bots push/merge
-  # with) because GITHUB_TOKEN pushes do not trigger CI — a PR pushed with
-  # the workflow token never satisfies required checks, so it can never
-  # auto-merge. Without the secret the job exits non-zero as a loud signal
-  # instead of silently reverting to a manual-merge PR.
-  repin-app-images:
-    needs: [build]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: read
-      pull-requests: write
-    env:
-      GH_TOKEN: ${{ secrets.REPIN_TOKEN }}
-    steps:
-      # depth 2: the changed-dirs gate diffs HEAD~1..HEAD; depth 1 would make
-      # HEAD~1 vanish and the gate would silently skip every run.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 2
-
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Guard — PAT present
-        run: |
-          if [ -z "${GH_TOKEN}" ]; then
-            echo "::error::REPIN_TOKEN secret is not set — the repin PR could not trigger CI without it. Set it to the factory PAT."
-            exit 1
-          fi
-
-      - name: Repin changed app images (no-op when current)
-        id: repin
-        run: |
-          set -eu
-          # app → every manifest that pins its image (single source of truth
-          # per component; factory apps fan out across cronjobs + profiles).
-          files_for() {
-            case "$1" in
-              panel)               echo "deploy/panel/base/deployment.yaml" ;;
-              hermes)              echo "deploy/hermes/base/statefulset.yaml" ;;
-              knowledge-ingest)    echo "deploy/knowledge/base/deployment-knowledge-ingest.yaml" ;;
-              knowledge-retrieval) echo "deploy/knowledge/base/deployment-knowledge-retrieval.yaml" ;;
-              factory/orchestrator) echo "deploy/factory/base/orchestrator-cronjob.yaml deploy/factory/base/orchestrator-launchpad-cronjob.yaml deploy/factory/base/reclaimer-cronjob.yaml" ;;
-              factory/reviewer)     echo "deploy/factory/base/reviewer-cronjob.yaml deploy/factory/base/reviewer-launchpad-cronjob.yaml deploy/factory/base/medic-cronjob.yaml deploy/factory/base/sweeper-cronjob.yaml deploy/factory/base/profile-reviewer.yaml" ;;
-              factory/security)    echo "deploy/factory/base/security-cronjob.yaml deploy/factory/base/profile-security.yaml" ;;
-              factory/worker)      echo "deploy/factory/base/profile-code-pr.yaml deploy/factory/base/profile-medic.yaml" ;;
-              factory/collector)   echo "deploy/factory/base/collector-cronjob.yaml" ;;
-              loop-agent)          echo "deploy/factory/base/reconciler-cronjob.yaml" ;;
-            esac
-          }
-          # source dir whose change means a deploy-relevant rebuild. For the
-          # factory/reviewer image this includes medic + sweeper sources (they
-          # ride the reviewer image; their scripts live in apps/factory/*).
-          srcdirs_for() {
-            case "$1" in
-              factory/reviewer) echo "apps/factory/reviewer apps/factory/medic" ;;
-              *)                 echo "apps/${1}" ;;
-            esac
-          }
-          REPINNED=""
-          for app in panel hermes knowledge-ingest knowledge-retrieval \
-                     factory/orchestrator factory/reviewer factory/security factory/worker factory/collector loop-agent; do
-            files="$(files_for "$app")"
-            if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
-              # Deploy-relevant change only: the app's source or one of its
-              # pin files. Unrelated merges also mint new digests (every
-              # build re-pushes :latest), so without this gate each merge
-              # would spawn a churn PR for every app. A repin commit itself
-              # trips the file gate, finds the digest already pinned, and
-              # no-ops.
-              srcdirs="$(srcdirs_for "$app")"
-              diffs="$(git diff --name-only HEAD~1 HEAD -- ${srcdirs} ${files} || true)"
-              if [ -z "${diffs}" ]; then
-                echo "${app}: unchanged — skip"
-                continue
-              fi
-            fi
-            digest="$(docker buildx imagetools inspect "ghcr.io/${GITHUB_REPOSITORY}/${app}:latest" --format '{{.Manifest.Digest}}')"
-            if grep -q "/${app}@${digest}" ${files}; then
-              echo "${app}: already pinned to ${digest}"
-              continue
-            fi
-            sed -i "s#/${app}@sha256:[a-f0-9]\\{64\\}#/${app}@${digest}#g" ${files}
-            REPINNED="${REPINNED} ${app}"
-            echo "${app}: repinned -> ${digest}"
-          done
-          if [ -n "${REPINNED}" ]; then
-            echo "changed=1" >> "$GITHUB_OUTPUT"
-            echo "repinned=${REPINNED# }" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Open repin PR and merge when green
-        if: steps.repin.outputs.changed == '1'
-        run: |
-          set -eu
-          open="$(gh pr list -R "$GITHUB_REPOSITORY" --state open --json headRefName --jq '.[].headRefName' | grep -c '^repin/apps' || true)"
-          if [ "$open" != "0" ]; then
-            echo "a repin/apps PR is already open — skipping (it carries the newest digests)"
-            exit 0
-          fi
-          branch="repin/apps-${GITHUB_RUN_ID}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$branch"
-          git commit -am "Re-pin app images: ${{ steps.repin.outputs.repinned }}"
-          # PAT push (template URL — the token never lands in a file):
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
-          gh pr create --head "$branch" --title "chore(deploy): auto re-pin ${{ steps.repin.outputs.repinned }}" \
-            --body "Auto-generated by the repin-app-images job: pins the images CI published for this merge into the workload manifests. The auto-deploy watcher applies them to the cluster within one 300s pass after merge."
-          # Merge when required checks go green (builds take ~15-20 min).
-          # mergeStateStatus is server-side truth; gh pr checks output can be
-          # stale immediately after push. Fresh PRs report UNKNOWN until
-          # checks attach, so keep polling: only CLEAN merges, DIRTY/DRAFT
-          # leave the PR for a human, everything else (BLOCKED/UNKNOWN/
-          # UNSTABLE/BEHIND) is a wait state.
-          for i in $(seq 1 60); do
-            st="$(gh pr view "$branch" -R "$GITHUB_REPOSITORY" --json mergeStateStatus --jq .mergeStateStatus)"
-            case "$st" in
-              CLEAN)
-                gh pr merge "$branch" -R "$GITHUB_REPOSITORY" --squash --delete-branch
-                echo "merged ${branch}"
-                exit 0
-                ;;
-              DIRTY)
-                echo "PR conflicts with main — leaving open for a human rebase"
-                exit 0
-                ;;
-              DRAFT)
-                echo "PR flipped to draft — leaving open for a human"
-                exit 0
-                ;;
-              *)
-                sleep 50
-                ;;
-            esac
-          done
-          echo "checks did not go green within the budget — PR left open"
+      - run: test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false

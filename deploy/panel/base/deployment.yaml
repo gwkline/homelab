@@ -22,7 +22,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: panel
-          image: ghcr.io/gwkline/homelab/panel@sha256:2e72adfa46c0ae0390261d9e1055c3e24d8e6a5e9b2a803f2e993584d17dab22
+          image: ghcr.io/gwkline/homelab/panel:latest
           env:
             - name: FACTORY_REPO
               value: gwkline/homelab

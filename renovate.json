@@ -17,19 +17,6 @@
       "matchStrings": [
         "datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*(?:ARG|ENV) [A-Za-z0-9_]+=(?<currentValue>\\S+)"
       ]
-    },
-    {
-      "customType": "regex",
-      "description": "Digest-pinned homelab image refs outside k8s manifests (panel jobs.ts, factory orchestrator, profile ConfigMaps)",
-      "fileMatch": [
-        "apps/panel/server/jobs\\.ts$",
-        "apps/factory/orchestrator/run\\.sh$",
-        "deploy/factory/base/profile-.*\\.yaml$"
-      ],
-      "matchStrings": [
-        "ghcr\\.io/gwkline/homelab/(?<depName>[a-z0-9/-]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
-      ],
-      "datasourceTemplate": "docker"
     }
   ],
   "packageRules": [
@@ -48,7 +35,7 @@
       "schedule": ["after 6am and before 9am on monday"]
     },
     {
-      "description": "Major bumps of agent CLIs: separate PR, no automerge — review breaking changes",
+      "description": "Major bumps of agent CLIs: separate PR, no automerge \u2014 review breaking changes",
       "groupName": "agent CLI majors",
       "matchFileNames": [
         "apps/t3code/Dockerfile",
@@ -59,7 +46,7 @@
       "automerge": false
     },
     {
-      "description": "t3 rides the nightly channel (issue #35): the pin is a recorded nightly version and Renovate bumps within the channel — never to a stable release",
+      "description": "t3 rides the nightly channel (issue #35): the pin is a recorded nightly version and Renovate bumps within the channel \u2014 never to a stable release",
       "matchDatasources": ["npm"],
       "matchDepNames": ["t3"],
       "allowedVersions": "/-nightly\\./"
@@ -88,17 +75,7 @@
       "platformAutomerge": true
     },
     {
-      "description": "Homelab images: manifests pin CI-produced digests (issue #35); one grouped PR per republish, automerged after CI so the auto-deploy watcher lands it",
-      "groupName": "homelab image digests",
-      "matchManagers": ["kubernetes", "regex"],
-      "matchPackagePatterns": ["ghcr\\.io/gwkline/homelab/"],
-      "matchUpdateTypes": ["digest", "pin", "patch", "minor", "major"],
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": true
-    },
-    {
-      "description": "Downloaded build-time tools (kubectl, gh, scanners, semgrep): grouped, no automerge — checksums are re-verified in CI",
+      "description": "Downloaded build-time tools (kubectl, gh, scanners, semgrep): grouped, no automerge \u2014 checksums are re-verified in CI",
       "groupName": "pinned build tools",
       "matchManagers": ["regex"],
       "matchDatasources": ["github-releases", "pypi"],

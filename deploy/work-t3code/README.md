@@ -39,7 +39,7 @@ This repository is public, so it deliberately carries **no work identifiers**: n
    kubectl apply -k deploy/policies/base
    kubectl apply -k deploy/github-tokens/base   # work SecretStore + ExternalSecret
    kubectl apply -k deploy/work-t3code/base
-   kubectl apply -k deploy/auto-deploy          # watchlist entry + work RBAC
+   kubectl apply -k deploy/deployer             # keeps the StatefulSet on the latest image
    kubectl apply -k deploy/homepage/base        # dashboard entry
    kubectl apply -k deploy/tailscale            # work-t3code-serve-fixer (HTTPS proxy)
    ```
@@ -68,7 +68,7 @@ Everything lives in the 1Password item `work-github-writer`: widen the PAT's _Re
 
 ## Image updates
 
-The t3code image floats its coding CLIs on npm dist-tags (`t3@nightly`, codex/claude-code `@latest`) — no CLI versions are recorded in this repo. Every image build resolves current versions (a CACHEBUST build-arg defeats the layer cache), CI rebuilds weekly on Monday 06:00 ET, and the `repin-t3code-image` job opens an automerging PR that pins the freshly published digest into both t3code StatefulSets; the auto-deploy watcher applies it (watchlist entry `statefulset,work-t3code,work,deploy/work-t3code/base/statefulset.yaml`). Manifests stay digest-pinned (issue #35) — the float lives in the build, not in what runs. Note: the repin PR is opened with the workflow's GITHUB_TOKEN, which does not trigger CI, so it needs an admin merge (weekly, Monday mornings) until a PAT-driven variant lands.
+The t3code image floats its coding CLIs on npm dist-tags (`t3@nightly`, codex/claude-code `@latest`). CI rebuilds it when `apps/t3code` changes and weekly; `deploy/deployer` rolls both t3code StatefulSets onto the new digest within five minutes.
 
 ## Token rotation
 

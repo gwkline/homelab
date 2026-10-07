@@ -9,5 +9,6 @@ labels:
 
 resources:
   - rbac-sandbox.yaml
+  - rbac-agents.yaml
   - configmap.yaml
   - cronjob.yaml

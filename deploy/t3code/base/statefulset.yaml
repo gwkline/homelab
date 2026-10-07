@@ -32,7 +32,7 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: t3code
-          image: ghcr.io/gwkline/homelab/t3code@sha256:4ab9316434a402996a4de313e6f3f376e991dc34aea25266833a866c6d36f73e
+          image: ghcr.io/gwkline/homelab/t3code:latest
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -126,11 +126,7 @@ spec:
         # /data/skills-sync/status.json and always exits 0 — the server
         # starts on stale skills; init-workspace.sh prints the warning.
         - name: skills-sync
-          # Same digest as the main container above (issue #91): admission
-          # verification binds to digests, and skills-lib.sh must match the
-          # server that links the skills it syncs.
-          image: ghcr.io/gwkline/homelab/t3code@sha256:4ab9316434a402996a4de313e6f3f376e991dc34aea25266833a866c6d36f73e
-          imagePullPolicy: Always
+          image: ghcr.io/gwkline/homelab/t3code:latest
           command:
             - sh
             - -c

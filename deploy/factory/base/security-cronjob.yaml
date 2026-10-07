@@ -35,8 +35,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: security
-              image: ghcr.io/gwkline/homelab/factory/security@sha256:36fbb4f4fd91ad620a6f04defd713d12264da58158da0ef5cb4177977255b1cb
-              imagePullPolicy: Always
+              image: ghcr.io/gwkline/homelab/factory/security:latest
               env:
                 - name: FACTORY_REPO
                   value: gwkline/homelab

@@ -51,8 +51,7 @@ spec:
         # stale skills rather than refusing to boot during a GitHub outage;
         # run-hermes.sh prints the fresh/stale line loudly at boot.
         - name: skills-sync
-          image: ghcr.io/gwkline/homelab/hermes@sha256:af23d67fc4baf8821cb2e777dcf1892cdb98a5836ca7e5187b938562e7deda17
-          imagePullPolicy: Always
+          image: ghcr.io/gwkline/homelab/hermes:latest
           command:
             - sh
             - -c
@@ -100,7 +99,7 @@ spec:
               readOnly: true
       containers:
         - name: hermes
-          image: ghcr.io/gwkline/homelab/hermes@sha256:af23d67fc4baf8821cb2e777dcf1892cdb98a5836ca7e5187b938562e7deda17
+          image: ghcr.io/gwkline/homelab/hermes:latest
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

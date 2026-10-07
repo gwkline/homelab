@@ -1,5 +1,7 @@
 # ADR-006: GitOps delivery — defer Flux, keep root Kustomize + rebuild script
 
+> **Update (2026-10-06):** `deploy/deployer` replaced both partial automations below (auto-deploy watcher and factory reconciler). Manifests reference homelab images by `:latest`; the deployer resolves tags to digests and applies the homelab workloads from `main` every five minutes.
+
 **Status:** Accepted (2026-09-02) **Deciders:** Gavin Kline, ox-alpha **Implements:** #37 · **Depends on:** #34 · **Supersedes:** nothing (first CD decision; codifies the "intentionally a CronJob instead of adding Flux" note in `deploy/factory/base/reconciler-cronjob.yaml`)
 
 ## Context

@@ -1,0 +1,93 @@
+# Continuous delivery for the homelab-image workloads. Manifests name images
+# by tag (ghcr.io/gwkline/homelab/<app>:latest); each pass clones main,
+# resolves every such tag to the digest it points at now, and applies. A new
+# CI build therefore rolls out as an ordinary spec change, and the applied
+# objects record exactly which digest runs.
+#
+# The deployer does not apply itself: changes to this directory need a manual
+# `kubectl apply -k deploy/deployer`.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: deployer
+  namespace: agents
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 240
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            app: deployer
+        spec:
+          restartPolicy: Never
+          serviceAccountName: deployer
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: deployer
+              image: ghcr.io/gwkline/homelab/loop-agent:latest
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  targets="
+                    deploy/factory/base
+                    deploy/chaos/base/cronjob.yaml
+                    deploy/hermes/base/statefulset.yaml
+                    deploy/knowledge/base/deployment-knowledge-ingest.yaml
+                    deploy/knowledge/base/deployment-knowledge-retrieval.yaml
+                    deploy/node-cleanup/base/cronjob.yaml
+                    deploy/panel/base/deployment.yaml
+                    deploy/panel/base/stats-cronjob.yaml
+                    deploy/t3code/base/statefulset.yaml
+                    deploy/work-t3code/base/statefulset.yaml
+                  "
+
+                  digest() {
+                    token=$(curl -fsS "https://ghcr.io/token?scope=repository:$1:pull" \
+                      | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+                    curl -fsSI -H "Authorization: Bearer ${token}" \
+                      -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json" \
+                      "https://ghcr.io/v2/$1/manifests/latest" \
+                      | tr -d '\r' | sed -n 's/^docker-content-digest: //Ip'
+                  }
+
+                  git clone -q --depth 1 https://github.com/gwkline/homelab.git /tmp/repo
+                  cd /tmp/repo
+                  echo "main @ $(git rev-parse --short HEAD)"
+
+                  for ref in $(grep -rhoE 'ghcr\.io/gwkline/homelab/[a-z0-9/-]+:latest' $targets | sort -u); do
+                    repo=${ref#ghcr.io/}
+                    repo=${repo%:latest}
+                    d=$(digest "$repo")
+                    [ -n "$d" ] || { echo "cannot resolve $ref" >&2; exit 1; }
+                    echo "$ref -> $d"
+                    grep -rlF "$ref" $targets | xargs sed -i "s|$ref|ghcr.io/$repo@$d|g"
+                  done
+
+                  rc=0
+                  for t in $targets; do
+                    if [ -d "$t" ]; then flag=-k; else flag=-f; fi
+                    kubectl apply "$flag" "$t" || rc=1
+                  done
+                  exit "$rc"
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { memory: 256Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: [ALL] }
+                readOnlyRootFilesystem: true
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - { name: tmp, emptyDir: {} }
