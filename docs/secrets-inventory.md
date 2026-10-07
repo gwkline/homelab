@@ -14,7 +14,7 @@ Every runtime credential, where it comes from, and who consumes it. No secret va
 
 | Secret (keys) | Namespace | 1Password item → fields | Consumers | Notes |
 | --- | --- | --- | --- | --- |
-| `github-token` (`token`) | agents, sandbox | `github-readonly` → `token` | hermes, t3code, panel and panel Jobs, factory CronJobs and worker Jobs, chaos, `scripts/new-job.sh`, `scripts/egress-smoke.sh` | Fine-grained PAT, Contents read-only on the repos in workload config. Transitional until the GitHub App covers the factory |
+| `github-token` (`token`) | agents, sandbox | `github-readonly` → `token` | hermes, t3code, panel and panel Jobs, factory CronJobs and worker Jobs, `scripts/new-job.sh`, `scripts/egress-smoke.sh` | Fine-grained PAT, Contents read-only on the repos in workload config. Transitional until the GitHub App covers the factory |
 | `github-token-writer` (`token`) | sandbox | `github-writer` → `token` | panel-spawned Jobs | Optional (consumers mount `optional: true`). Contents + Pull requests write on target repos only |
 | `work-github-token` (`token`, `repos`) | work | `work-github-writer` → `token`, `repos` | work-t3code | PAT limited to the selected work repos (read+write); `repos` = clone URLs, kept out of this public repo. Never synced elsewhere |
 | `work-claude-oauth` (`token`) | work | `work-claude-oauth` → `token` | work-t3code (`CLAUDE_CODE_OAUTH_TOKEN`) | From `claude setup-token`; restart work-t3code after rotating |

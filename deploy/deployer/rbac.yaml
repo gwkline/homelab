@@ -53,7 +53,7 @@ subjects:
   - { kind: ServiceAccount, name: deployer, namespace: agents }
 ---
 # sandbox: the whole factory base (CronJobs, profiles, their RBAC and
-# NetworkPolicies, the knowledge-context ExternalSecret) plus chaos.
+# NetworkPolicies, the knowledge-context ExternalSecret).
 # escalate/bind let it write the factory Roles, which grant verbs the
 # deployer itself doesn't hold; this makes it admin of sandbox, which merging
 # to main already is.
