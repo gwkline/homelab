@@ -53,6 +53,8 @@ WORKDIR /work
 
 COPY --chmod=755 --chown=node:node apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
 COPY --chmod=755 --chown=node:node apps/factory/worker/entrypoint.sh /usr/local/bin/entrypoint
+# The Job's initContainer: clone + skills sync, the only step with a GitHub token.
+COPY --chmod=755 --chown=node:node apps/factory/worker/prepare.sh /usr/local/bin/prepare
 # Private skills the entrypoint syncs before the agent runs. A Job may
 # override SKILLS_REF (full SHA, verified by the sync) or SKILLS_ALLOWLIST.
 ENV SKILLS_REF=445e4255288732efb00c8878151610c2669f5e93 \

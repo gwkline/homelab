@@ -47,11 +47,14 @@ fi
 
 echo "[security] run=${RUN_ID} repo=${REPO} issue=#${ISSUE_NUM} mode=${MODE}"
 
-# Build the authenticated URL at runtime; never put a token in a Job manifest.
-CLONE_URL="${CLONE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git}"
-git clone --depth 20 "${CLONE_URL}" repo
-git -C repo remote set-url origin "https://github.com/${REPO}.git"
-cd repo
+# The Job's initContainer normally cloned already (apps/factory/worker/prepare.sh);
+# a Job spec without it hands this container the token, so clone here.
+WORK_DIR="${WORK_DIR:-/work}"
+if [ ! -d "${WORK_DIR}/repo/.git" ]; then
+  FACTORY_REPO="${REPO}" sh /usr/local/bin/prepare
+fi
+unset GH_TOKEN GITHUB_TOKEN
+cd "${WORK_DIR}/repo"
 BASE_SHA=$(git rev-parse HEAD)
 mkdir -p "${OUT}"
 

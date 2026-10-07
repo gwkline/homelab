@@ -2,11 +2,13 @@
 # Offline run-contract test for the worker entrypoint: a stub agent edits a
 # local file:// origin, verify runs, and a patch + report are emitted without
 # pushing. Also checks schema rejection, that SIGTERM keeps artifacts but
-# scrubs credentials, and that agent state never rides in a patch.
+# scrubs credentials, that agent state never rides in a patch, and that after
+# the `prepare` clone step the agent's process tree holds no GitHub token.
 set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 ENTRYPOINT="${REPO_ROOT}/apps/factory/worker/entrypoint.sh"
+PREPARE="${REPO_ROOT}/apps/factory/worker/prepare.sh"
 
 FIX="$(mktemp -d)"
 trap 'rm -rf "$FIX"' EXIT
@@ -229,5 +231,61 @@ echo "PASS: a patch over WORKER_PATCH_MAX_BYTES is rejected"
 run_case homeinrepo fake-cli HOME="${FIX}/homeinrepo/work/repo/h"
 [ "$RC" -eq 78 ] || { echo "FAIL: HOME inside the clone should exit 78, got ${RC}"; cat "${FIX}/homeinrepo/log"; exit 1; }
 echo "PASS: HOME inside the clone is refused"
+
+# --- 8. initContainer split: the agent's process tree holds no GitHub token ----
+mkdir -p "${FIX}/prepared/work" "${FIX}/prepared/out"
+RC=0
+GH_TOKEN=fixture-secret-token FACTORY_REPO=example/fixture \
+CLONE_URL="file://${FIX}/origin" WORK_DIR="${FIX}/prepared/work" HOME="${FIX}/prepared/init-home" \
+  sh "${PREPARE}" > "${FIX}/prepared/prepare.log" 2>&1 || RC=$?
+[ "$RC" -eq 0 ] || { echo "FAIL: prepare exited ${RC}"; cat "${FIX}/prepared/prepare.log"; exit 1; }
+[ "$(git -C "${FIX}/prepared/work/repo" remote get-url origin)" = "https://github.com/example/fixture.git" ] \
+  || { echo "FAIL: prepare left a non-canonical origin"; exit 1; }
+if grep -rq "fixture-secret-token" "${FIX}/prepared/work"; then
+  echo "FAIL: prepare left the token on the shared volume"; exit 1
+fi
+
+cat > "${FIX}/bin/environ-cli" << 'EOF'
+#!/bin/sh
+# Agent that records whether it, or the entrypoint (PID 1 in the pod; the
+# parent of `timeout`), carries a GitHub token, then does the task.
+entry=$(awk '/^PPid:/ { print $2 }' "/proc/${PPID}/status")
+{
+  if tr '\0' '\n' < "/proc/${entry}/environ" | grep -qE '^(GH_TOKEN|GITHUB_TOKEN)='; then echo "entrypoint: token"; else echo "entrypoint: clean"; fi
+  if env | grep -qE '^(GH_TOKEN|GITHUB_TOKEN)='; then echo "agent: token"; else echo "agent: clean"; fi
+} > "${ENVIRON_DUMP}"
+echo "patched by fixture" >> README.md
+EOF
+chmod +x "${FIX}/bin/environ-cli"
+RC=0
+env WORKER_CMD=environ-cli WORKER_TIMEOUT=30 ENVIRON_DUMP="${FIX}/prepared/environ.txt" \
+  TASK_DIR="${FIX}/task" OUT_DIR="${FIX}/prepared/out" WORK_DIR="${FIX}/prepared/work" \
+  HOME="${FIX}/prepared/home" PATH="${FIX}/bin:${PATH}" \
+  sh "${ENTRYPOINT}" > "${FIX}/prepared/log" 2>&1 || RC=$?
+[ "$RC" -eq 0 ] || { echo "FAIL: prepared run exited ${RC}"; cat "${FIX}/prepared/log"; exit 1; }
+grep -q "patched by fixture" "${FIX}/prepared/out/patch.diff" \
+  || { echo "FAIL: prepared run emitted no task patch"; exit 1; }
+[ "$(cat "${FIX}/prepared/environ.txt")" = "entrypoint: clean
+agent: clean" ] || { echo "FAIL: GitHub token reachable from the agent"; cat "${FIX}/prepared/environ.txt"; exit 1; }
+echo "PASS: after prepare, the entrypoint's /proc environ and the agent's env hold no GitHub token"
+
+# Control: without the split the token is still in the entrypoint's environ
+# after `unset`, which is why the clone moved to an initContainer.
+run_case legacy-environ environ-cli ENVIRON_DUMP="${FIX}/legacy-environ.txt"
+[ "$RC" -eq 0 ] || { echo "FAIL: legacy run exited ${RC}"; cat "${FIX}/legacy-environ/log"; exit 1; }
+grep -qx "entrypoint: token" "${FIX}/legacy-environ.txt" \
+  || { echo "FAIL: environ probe cannot see a token it should"; cat "${FIX}/legacy-environ.txt"; exit 1; }
+grep -qx "agent: clean" "${FIX}/legacy-environ.txt" \
+  || { echo "FAIL: legacy path leaked the token into the agent env"; exit 1; }
+
+# A prepared clone plus a token in the agent container is a Job-spec regression.
+mkdir -p "${FIX}/prepared/out-tok"
+RC=0
+env GH_TOKEN=fixture-secret-token WORKER_CMD=fake-cli WORKER_TIMEOUT=30 \
+  TASK_DIR="${FIX}/task" OUT_DIR="${FIX}/prepared/out-tok" WORK_DIR="${FIX}/prepared/work" \
+  HOME="${FIX}/prepared/home" PATH="${FIX}/bin:${PATH}" \
+  sh "${ENTRYPOINT}" > "${FIX}/prepared/log-tok" 2>&1 || RC=$?
+[ "$RC" -eq 78 ] || { echo "FAIL: token beside a prepared clone should exit 78, got ${RC}"; cat "${FIX}/prepared/log-tok"; exit 1; }
+echo "PASS: a GitHub token beside a prepared clone is refused"
 
 echo "ALL FIXTURE TESTS PASSED"
