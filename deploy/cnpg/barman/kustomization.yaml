@@ -1,0 +1,66 @@
+# Vendored upstream bundle (manifest.yaml from the plugin-barman-cloud v0.15.1
+# GitHub release); never hand-edit upstream.yaml. The only removal: the three
+# cert-manager objects (this cluster has no cert-manager) — Secrets
+# barman-cloud-{server,client}-tls come from scripts/create-barman-tls.sh with
+# the same shape cert-manager's selfSigned issuer would produce. Local
+# changes: image digests (plugin via images, sidecar via Secret patch),
+# resource bounds, log level.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: homelab
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false
+
+resources:
+  - upstream.yaml
+
+images:
+  - name: ghcr.io/cloudnative-pg/plugin-barman-cloud
+    newTag: v0.15.1
+    digest: sha256:c75acad19a36e8176cfe2885761ff1b836c6ef977d7257e298c99a28b5c302ef
+
+patches:
+  - target:
+      version: v1
+      kind: Secret
+      name: plugin-barman-cloud-5fm982t42b
+    patch: |
+      - op: replace
+        path: /data/SIDECAR_IMAGE
+        value: Z2hjci5pby9jbG91ZG5hdGl2ZS1wZy9wbHVnaW4tYmFybWFuLWNsb3VkLXNpZGVjYXJAc2hhMjU2OjIyODdhNzkzYTgwNGRiNzUxZWRkMGQwN2Q0NGNkNTQ5ZTM1NzY3N2U5OGE4MDBlYjEyZTJjZjdjMGQ1M2Y5YjA=
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: barman-cloud
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: barman-cloud
+        namespace: cnpg-system
+      spec:
+        template:
+          spec:
+            containers:
+              - name: barman-cloud
+                args:
+                  - operator
+                  - --server-cert=/server/tls.crt
+                  - --server-key=/server/tls.key
+                  - --client-cert=/client/tls.crt
+                  - --server-address=:9090
+                  - --leader-elect
+                  - --log-level=info
+                # Upstream leaves these empty; pinned so a bundle refresh
+                # can't drift.
+                resources:
+                  requests:
+                    cpu: 50m
+                    memory: 64Mi
+                  limits:
+                    cpu: 500m
+                    memory: 256Mi

@@ -1,0 +1,17 @@
+# Daily base backup at 02:17 (after the nightly quiet hours, never on the
+# hour). WAL archiving runs continuously; this only bounds the recovery
+# window. The first base backup is triggered on demand — see
+# deploy/postgres/README.md, which gates it on green WAL archiving.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: pg-primary-daily
+  namespace: database
+spec:
+  schedule: "0 17 2 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: pg-primary
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

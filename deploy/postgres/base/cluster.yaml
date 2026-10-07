@@ -16,10 +16,25 @@ spec:
 
   enableSuperuserAccess: false
 
+  # Continuous WAL archiving and plugin-based backups to Backblaze B2
+  # (ObjectStore b2-store; plugin in deploy/cnpg/barman). serverName is the
+  # dedicated prefix on the store and is referenced by every recovery
+  # Cluster's externalClusters entry.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: b2-store
+        serverName: pg-primary
+
   postgresql:
     # pg_textsearch requires preload; not a CNPG-managed library.
     shared_preload_libraries:
       - pg_textsearch
+    parameters:
+      # Deterministic RPO: CNPG defaults to 5min; one minute bounds PITR loss
+      # to the last minute of committed transactions.
+      archive_timeout: 60s
     extensions:
       - name: pgvector
       # Mounted as an ImageVolume; ABI must match the operand (PG 18, trixie).

@@ -18,7 +18,7 @@ Ingress is default-deny in `agents`, `sandbox`, and `work`; each workload declar
 | Workload | Allowed egress | Where |
 | --- | --- | --- |
 | Headlamp | DNS + Kubernetes API | `deploy/headlamp/base/netpol.yaml` |
-| CNPG instances | DNS, Kubernetes API, peers on 5432 | `allow-instance-egress` in `deploy/postgres/base/netpol.yaml` |
+| CNPG instances (pg-primary, recovery Clusters) | DNS, Kubernetes API, peers on 5432, HTTPS to the public internet (Backblaze publishes no IP ranges for B2) | `allow-instance-egress` in `deploy/postgres/base/netpol.yaml` |
 | Factory profiles | GitHub, container registries, Kubernetes API by explicit CIDR | `deploy/factory/base/profile-code-pr.yaml`, `profile-security.yaml` |
 
 ## Required destinations

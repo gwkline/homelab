@@ -7,6 +7,6 @@ kubectl kustomize clusters/home   # render
 kubectl apply -k clusters/home    # apply
 ```
 
-Before the first apply on a fresh cluster: the 1Password service-account Secrets (`scripts/create-onepassword-service-account.sh`), then the server-side/helm operators whose CRDs the core set uses — ESO ([deploy/eso](../../deploy/eso/README.md)), CNPG ([deploy/cnpg](../../deploy/cnpg/README.md)), and policy-controller. Install tailscale-operator ([deploy/tailscale](../../deploy/tailscale/README.md)) after. [docs/rebuild-runbook.md](../../docs/rebuild-runbook.md) has the full sequence.
+Before the first apply on a fresh cluster: the 1Password service-account Secrets (`scripts/create-onepassword-service-account.sh`), then the server-side/helm operators whose CRDs the core set uses — ESO ([deploy/eso](../../deploy/eso/README.md)), CNPG ([deploy/cnpg](../../deploy/cnpg/README.md)) with its Barman Cloud plugin and mTLS Secrets ([deploy/cnpg/barman](../../deploy/cnpg/barman/README.md)), and policy-controller. Install tailscale-operator ([deploy/tailscale](../../deploy/tailscale/README.md)) after. [docs/rebuild-runbook.md](../../docs/rebuild-runbook.md) has the full sequence.
 
 executor, knowledge, and cloudbeaver are not in the core set; apply them individually from `deploy/`.

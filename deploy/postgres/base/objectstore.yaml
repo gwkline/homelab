@@ -1,0 +1,50 @@
+# Backblaze B2 object store for pg-primary WAL archives and base backups.
+# The plugin parameter serverName (deploy/postgres/base/cluster.yaml) is the
+# dedicated prefix on the store: pg-primary/{wals,base}. The B2 application
+# key is scoped to this bucket and file-name prefix, so nothing else in the
+# bucket is reachable.
+#
+# Two values are account-specific and must match the real B2 bucket before
+# first apply (see deploy/postgres/README.md "Backblaze B2 bucket"):
+#   - endpointURL region (the endpoint shown in the B2 bucket's details)
+#   - destinationPath bucket name
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: b2-store
+  namespace: database
+spec:
+  configuration:
+    destinationPath: s3://gwkline-homelab-pg/
+    endpointURL: https://s3.us-west-004.backblazeb2.com
+    s3Credentials:
+      accessKeyId:
+        name: pg-primary-b2
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: pg-primary-b2
+        key: ACCESS_SECRET_KEY
+    wal:
+      compression: gzip
+      # B2 maps x-amz-server-side-encryption: AES256 to SSE-B2 (its S3
+      # PutObject contract); the bucket also carries default SSE-B2
+      # encryption, so this is belt and suspenders.
+      encryption: AES256
+    data:
+      compression: gzip
+      encryption: AES256
+  # The sidecar is the process that runs barman-cloud against B2. Retention
+  # enforcement defaults to every 1800s.
+  instanceSidecarConfiguration:
+    env:
+      # Backblaze does not implement the newer AWS checksum headers the
+      # current boto3 defaults send (plugin-barman-cloud#393); only compute
+      # and validate checksums when the request requires them.
+      - name: AWS_REQUEST_CHECKSUM_CALCULATION
+        value: when_required
+      - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+        value: when_required
+  # Recovery window: keep every backup needed to restore to any point of the
+  # last 30 days. barman-cloud-backup-delete marks older backups obsolete
+  # after the next completed backup and removes them (B2 DeleteObjects).
+  retentionPolicy: 30d

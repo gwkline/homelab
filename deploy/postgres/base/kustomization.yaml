@@ -11,5 +11,9 @@ resources:
   - cluster-image-catalog.yaml
   - cluster.yaml
   - databases.yaml
+  - externalsecret.yaml
   - netpol.yaml
+  - objectstore.yaml
   - pdb.yaml
+  - scheduledbackup.yaml
+  - secretstore.yaml
