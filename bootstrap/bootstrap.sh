@@ -6,6 +6,11 @@
 set -euo pipefail
 
 ROLE="${1:?usage: bootstrap.sh server|agent [server-ip]}"
+case "$ROLE" in
+  server|agent) ;;
+  *) echo "unknown role: $ROLE (want server or agent)" >&2; exit 1 ;;
+esac
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Pinned so a rebuild installs exactly what was tested. Override only for a
 # deliberate upgrade; version and installer sha256 change together.
@@ -44,7 +49,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 echo "==> installing prerequisites"
 sudo apt-get update -y
-sudo apt-get install -y curl ca-certificates git
+sudo apt-get install -y curl ca-certificates git jq
 
 # The Ubuntu installer provisions the root LV at roughly half the disk; grow it
 # to the full VG before anything lands on it. Skipped when nothing is free.
@@ -68,15 +73,45 @@ sudo tailscale up --ssh
 echo "==> disabling sleep (agent host must stay awake)"
 sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 
-# kubelet image GC: default thresholds (85/80) sit exactly at the eviction
-# line, so image pulls raced node eviction on a full disk. Start GC at 70%
-# used, stop at 50%.
-KUBELET_ARGS=(
-  --kubelet-arg=image-gc-high-threshold=70
-  --kubelet-arg=image-gc-low-threshold=50
-)
+# Alloy follows every container's log through the kubelet, and each follow
+# holds an inotify instance; at Ubuntu's default of 128 the follows fail and
+# Loki loses those logs.
+echo "==> raising inotify limits"
+printf '%s\n' 'fs.inotify.max_user_instances = 8192' 'fs.inotify.max_user_watches = 524288' |
+  sudo tee /etc/sysctl.d/90-inotify.conf >/dev/null
+sudo sysctl -q -p /etc/sysctl.d/90-inotify.conf
+
+# All k3s settings live in the repo file; the installer gets no flags, so a
+# re-run (also an upgrade) converges the node to it. k3s reads the file on
+# start, and the installer restarts the service.
+echo "==> installing /etc/rancher/k3s/config.yaml"
+sudo install -D -m 0600 -o root -g root "$REPO_DIR/bootstrap/k3s-config.yaml" /etc/rancher/k3s/config.yaml
 
 if [[ "$ROLE" == "server" ]]; then
+  # k3s-config.yaml turns on secrets-encryption. Restarting an existing
+  # server with it before `k3s secrets-encrypt enable` skips the supported
+  # migration, so stop here until that step is done.
+  if sudo test -d /var/lib/rancher/k3s/server/db &&
+    ! sudo test -f /var/lib/rancher/k3s/server/cred/encryption-config.json; then
+    echo "existing server without secrets encryption: run 'sudo k3s secrets-encrypt enable' first (docs/runbook-server-cluster.md)" >&2
+    exit 1
+  fi
+
+  sudo install -D -m 0600 -o root -g root "$REPO_DIR/bootstrap/audit-policy.yaml" /etc/rancher/k3s/audit-policy.yaml
+  sudo install -d -m 0700 -o root -g root /var/lib/rancher/k3s/server/logs
+
+  # The API certificate must name the tailnet address kubectl uses, or the
+  # kubeconfig needs insecure-skip-tls-verify. Host-specific, so not in git.
+  TS_IP="$(tailscale ip -4)"
+  TS_NAME="$(tailscale status --json --peers=false | jq -r '.Self.DNSName // "" | rtrimstr(".")')"
+  if [ -z "$TS_IP" ] || [ -z "$TS_NAME" ]; then
+    echo "cannot read the tailnet name and IP from tailscale" >&2
+    exit 1
+  fi
+  echo "==> API certificate SANs: ${TS_NAME} ${TS_IP}"
+  printf 'tls-san:\n  - %s\n  - %s\n' "$TS_NAME" "$TS_IP" |
+    sudo install -D -m 0600 -o root -g root /dev/stdin /etc/rancher/k3s/config.yaml.d/10-tailnet.yaml
+
   echo "==> installing k3s ${K3S_VERSION} (control-plane)"
   fetch_verified \
     "https://raw.githubusercontent.com/k3s-io/k3s/${K3S_VERSION}/install.sh" \
@@ -84,11 +119,10 @@ if [[ "$ROLE" == "server" ]]; then
     "$TMP_DIR/k3s-install.sh"
   # kubeconfig stays root-only (600); fetch it from your laptop with:
   #   ssh <user>@<node-ip> sudo cat /etc/rancher/k3s/k3s.yaml
-  INSTALL_K3S_VERSION="$K3S_VERSION" sh "$TMP_DIR/k3s-install.sh" server \
-    --disable traefik "${KUBELET_ARGS[@]}"
+  INSTALL_K3S_VERSION="$K3S_VERSION" sh "$TMP_DIR/k3s-install.sh" server
   echo "==> kubeconfig: /etc/rancher/k3s/k3s.yaml"
   echo "==> node token: /var/lib/rancher/k3s/server/node-token"
-elif [[ "$ROLE" == "agent" ]]; then
+else
   SERVER_IP="${2:?usage: bootstrap.sh agent <server-ip>}"
   read -rsp "node token (from server: /var/lib/rancher/k3s/server/node-token): " TOKEN
   echo
@@ -98,10 +132,7 @@ elif [[ "$ROLE" == "agent" ]]; then
     "$TMP_DIR/k3s-install.sh"
   echo "==> joining cluster at ${SERVER_IP}"
   K3S_URL="https://${SERVER_IP}:6443" K3S_TOKEN="$TOKEN" \
-    INSTALL_K3S_VERSION="$K3S_VERSION" sh "$TMP_DIR/k3s-install.sh" agent "${KUBELET_ARGS[@]}"
-else
-  echo "unknown role: $ROLE" >&2
-  exit 1
+    INSTALL_K3S_VERSION="$K3S_VERSION" sh "$TMP_DIR/k3s-install.sh" agent
 fi
 
 echo "==> done. verify with: kubectl get nodes"

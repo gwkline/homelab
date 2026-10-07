@@ -4,8 +4,8 @@
  * are never mixed into results; `countChunksNeedingBackfill` reports them.
  */
 
-import type { PgClient } from "./pg-client.ts";
-import { KNOWLEDGE_SCHEMA_MIGRATION_SQL } from "./schema.ts";
+import type { PgClient, PgPool } from "./pg-client.ts";
+import { withTransaction } from "./pg-client.ts";
 
 export const PGVECTOR_TABLE = "chunks";
 export const EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5";
@@ -17,17 +17,6 @@ export const DEFAULT_NAMESPACE = "default";
 /** pgvector's built-in `hnsw.ef_search` default, pinned explicitly per query. */
 export const DEFAULT_EF_SEARCH = 40;
 export const DEFAULT_VECTOR_LIMIT = 10;
-
-export const PGVECTOR_SCHEMA_VERSION = "1-pgvector-chunks";
-
-/**
- * The knowledge schema plus this channel's HNSW index. The `vector(384)`
- * typmod pins the dimension; a different-sized model needs a new column.
- */
-export const PGVECTOR_MIGRATION_SQL = `${KNOWLEDGE_SCHEMA_MIGRATION_SQL}
-CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw
-  ON chunks USING hnsw (embedding vector_cosine_ops)
-  WHERE valid_to IS NULL AND embedding IS NOT NULL;`;
 
 export interface CitationAnchor {
   type: "offset" | "heading";
@@ -276,35 +265,20 @@ export const parsePgvectorRows = (
     };
   });
 
-const runVectorQuery = async (
-  client: PgClient,
-  prelude: string | null,
+const runVectorQuery = (
+  pool: PgPool,
+  prelude: string,
   built: PgvectorSearchQuery
-): Promise<PgvectorHit[]> => {
-  await client.query("BEGIN", []);
-  try {
-    if (prelude !== null) {
-      await client.query(prelude, []);
-    }
+): Promise<PgvectorHit[]> =>
+  withTransaction(pool, async (client) => {
+    await client.query(prelude, []);
     const result = await client.query(built.text, built.params);
-    await client.query("COMMIT", []);
     return parsePgvectorRows(result.rows);
-  } catch (error) {
-    try {
-      await client.query("ROLLBACK", []);
-    } catch {
-      // The original failure is the one worth surfacing.
-    }
-    throw error;
-  }
-};
+  });
 
-/**
- * HNSW search. `efSearch` is scoped to this transaction, so the client must
- * be a dedicated connection, not one shared across concurrent searches.
- */
+/** HNSW search; `efSearch` is `SET LOCAL`, scoped to its own transaction. */
 export const searchPgvector = async (
-  client: PgClient,
+  pool: PgPool,
   queryEmbedding: number[],
   options: PgvectorSearchOptions = {}
 ): Promise<PgvectorHit[]> => {
@@ -312,17 +286,17 @@ export const searchPgvector = async (
   const efSearchStatement = buildEfSearchStatement(
     options.efSearch ?? DEFAULT_EF_SEARCH
   );
-  return await runVectorQuery(client, efSearchStatement, built);
+  return await runVectorQuery(pool, efSearchStatement, built);
 };
 
 /** Same query forced to a sequential scan: the ground truth for `hnswRecall`. */
 export const searchPgvectorExact = async (
-  client: PgClient,
+  pool: PgPool,
   queryEmbedding: number[],
   options: PgvectorSearchOptions = {}
 ): Promise<PgvectorHit[]> => {
   const built = buildPgvectorSearchQuery(queryEmbedding, options);
-  return await runVectorQuery(client, PGVECTOR_EXACT_SCAN_GUARD, built);
+  return await runVectorQuery(pool, PGVECTOR_EXACT_SCAN_GUARD, built);
 };
 
 /** |approximate ∩ exact| / |exact|; an empty exact list is vacuously 1. */
@@ -401,13 +375,9 @@ export const countChunksNeedingBackfill = async (
   return parseBackfillCounts(namespace, embeddingModel, row);
 };
 
-export const ensurePgvectorSchema = async (client: PgClient): Promise<void> => {
-  await client.query(PGVECTOR_MIGRATION_SQL, []);
-};
-
 /** `pg` is imported lazily so offline consumers never need the driver. */
 export const withPgvectorClientFromEnv = async <T>(
-  fn: (client: PgClient) => Promise<T>
+  fn: (pool: PgPool) => Promise<T>
 ): Promise<T> => {
   const connectionString = process.env["DATABASE_URL"];
   if (!connectionString) {
@@ -417,11 +387,9 @@ export const withPgvectorClientFromEnv = async <T>(
   }
   const { default: pg } = await import("pg");
   const pool = new pg.Pool({ connectionString });
-  const client = await pool.connect();
   try {
-    return await fn(client);
+    return await fn(pool);
   } finally {
-    client.release();
     await pool.end();
   }
 };

@@ -30,6 +30,11 @@ spec:
               value: http://knowledge-retrieval-http.agents.svc.cluster.local:3000
             - name: KNOWLEDGE_API_TOKEN_FILE
               value: /secrets-knowledge/token
+            # Tailscale-User-Login is trusted only on this port; see service.yaml.
+            - name: PANEL_TAILNET_PORT
+              value: "3001"
+            - name: PANEL_AUTH_DIR
+              value: /secrets-panel-auth
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -39,6 +44,8 @@ spec:
           ports:
             - containerPort: 3000
               name: http
+            - containerPort: 3001
+              name: tailnet
           resources:
             requests:
               cpu: 50m
@@ -51,6 +58,9 @@ spec:
               readOnly: true
             - name: knowledge-token
               mountPath: /secrets-knowledge
+              readOnly: true
+            - name: panel-auth
+              mountPath: /secrets-panel-auth
               readOnly: true
             - name: stats
               mountPath: /data
@@ -80,6 +90,11 @@ spec:
             items:
               - key: token
                 path: token
+        - name: panel-auth
+          secret:
+            # Optional: without it the panel is read-only.
+            secretName: panel-auth
+            optional: true
         - name: stats
           persistentVolumeClaim:
             claimName: panel-stats

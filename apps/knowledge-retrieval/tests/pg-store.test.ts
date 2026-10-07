@@ -2,26 +2,39 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { createFakeEmbeddingProvider } from "../../knowledge/src/embedder.ts";
+import { KNOWLEDGE_SCHEMA_VERSION } from "../../knowledge/src/schema.ts";
 import { PgRetrievalStore } from "../server/pg-store.ts";
+import { StoreUnavailableError } from "../server/store.ts";
 import type { SearchOptions } from "../server/store.ts";
 
 /**
- * Fake pg pool: records every query and answers canned rows per statement
- * shape (BM25 scan, vector scan, citation join). Keeps the pg store's SQL
- * construction and mapping under test without a database.
+ * Fake pg pool: answers canned rows per statement shape (BM25 scan, vector
+ * scan, citation join), recording those in `queries`. Schema-ledger reads
+ * report `schemaVersion` (default: current) and land in `schemaQueries`.
  */
 const fakePool = (rows: {
   bm25?: Record<string, unknown>[];
   metadata?: Record<string, unknown>[];
+  schemaVersion?: number;
   vector?: Record<string, unknown>[];
 }) => {
   const queries: { params: unknown[]; text: string }[] = [];
+  const schemaQueries: string[] = [];
   return {
     queries,
     query: (
       text: string,
       params: unknown[]
     ): Promise<{ rows: Record<string, unknown>[] }> => {
+      if (text.includes("knowledge_schema_migration")) {
+        schemaQueries.push(text);
+        const version = rows.schemaVersion ?? KNOWLEDGE_SCHEMA_VERSION;
+        return Promise.resolve({
+          rows: text.includes("to_regclass")
+            ? [{ present: version > 0 }]
+            : [{ version }],
+        });
+      }
       queries.push({ params, text });
       if (text.includes("to_bm25query")) {
         return Promise.resolve({ rows: rows.bm25 ?? [] });
@@ -34,6 +47,7 @@ const fakePool = (rows: {
       }
       return Promise.resolve({ rows: [] });
     },
+    schemaQueries,
   };
 };
 
@@ -45,6 +59,7 @@ const rig = (rows: Parameters<typeof fakePool>[0]) => {
   const pool = fake as unknown as PoolLike;
   return {
     queries: fake.queries,
+    schemaQueries: fake.schemaQueries,
     store: new PgRetrievalStore(pool, {
       provider: createFakeEmbeddingProvider("fake/deterministic-v1", 384),
     }),
@@ -266,4 +281,40 @@ test("embedQuery returns a validated vector or null on failure", async () => {
     },
   });
   assert.equal(await broken.embedQuery("restart"), null);
+});
+
+test("search is unavailable until ingest has migrated, and retrieval issues no DDL", async () => {
+  const rows: Parameters<typeof fakePool>[0] = { schemaVersion: 0 };
+  const pool = rig(rows);
+  await assert.rejects(
+    pool.store.search(searchOptions()),
+    (error: unknown) =>
+      error instanceof StoreUnavailableError &&
+      /schema is at version 0/u.test(error.message)
+  );
+  await assert.rejects(pool.store.ping(), /schema is at version 0/u);
+  assert.deepEqual(
+    pool.queries.map((q) => q.text),
+    ["SELECT 1"]
+  );
+
+  rows.schemaVersion = KNOWLEDGE_SCHEMA_VERSION;
+  await pool.store.search(searchOptions());
+  await pool.store.search(searchOptions());
+  await pool.store.ping();
+  const statements = [
+    ...pool.schemaQueries,
+    ...pool.queries.map((q) => q.text),
+  ];
+  assert.ok(
+    statements.every((text) => !/\b(?:CREATE|ALTER|DROP)\b/iu.test(text)),
+    "retrieval never issues DDL"
+  );
+  const checksAfterReady = pool.schemaQueries.length;
+  await pool.store.search(searchOptions());
+  assert.equal(
+    pool.schemaQueries.length,
+    checksAfterReady,
+    "a current schema is not re-read"
+  );
 });

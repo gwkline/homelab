@@ -6,7 +6,7 @@ export interface IngestConfig {
   token: string;
   /** Postgres connection string; null runs the in-memory store (dev/tests). */
   databaseUrl: string | null;
-  /** Apply the queue and knowledge schemas at startup. */
+  /** Apply pending schema migrations at startup; the only place DDL runs. */
   applySchemaOnBoot: boolean;
   workerEnabled: boolean;
   worker: WorkerConfig;

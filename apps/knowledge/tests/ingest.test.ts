@@ -16,34 +16,24 @@ import {
 import type { EmbeddingProvider } from "../src/embedder.ts";
 import {
   buildChunkUpsertQuery,
-  buildClaimJobQuery,
-  buildCompleteJobQuery,
   buildDocumentCurrentVersionQuery,
   buildDocumentVersionIdQuery,
-  buildEnqueueJobQuery,
-  buildFailJobQuery,
   buildSupersedeChunksQuery,
-  drainIngestJobs,
-  MAX_JOB_ERROR_CHARS,
-  parseDocumentPayload,
-  parseIngestJobRow,
   processDocumentVersion,
-  runIngestJob,
 } from "../src/ingest.ts";
-import type {
-  ChunkUpsertRow,
-  IngestDocumentVersion,
-  IngestJobRecord,
-} from "../src/ingest.ts";
-import type { PgClient } from "../src/pg-client.ts";
+import type { ChunkUpsertRow, IngestDocumentVersion } from "../src/ingest.ts";
+import type { PgClient, PgPool } from "../src/pg-client.ts";
 import { EMBEDDING_DIMENSIONS } from "../src/pgvector.ts";
-import { KNOWLEDGE_SCHEMA_MIGRATION_SQL } from "../src/schema.ts";
+import { fakePool } from "./fake-pool.ts";
+import type { FakePool } from "./fake-pool.ts";
 
 // --- fakes ---
 
 interface RecordedClient {
-  client: PgClient;
+  calls: FakePool["calls"];
   params: unknown[][];
+  pool: PgPool;
+  releases: FakePool["releases"];
   statements: string[];
 }
 
@@ -56,11 +46,7 @@ interface ScriptedRows {
  * Records every statement. Defaults mimic a fresh database; each scripted
  * entry (matched by substring) overrides one response, once.
  */
-const stubClient = (
-  claimRowSets: Record<string, unknown>[][] = [],
-  script: ScriptedRows[] = []
-): RecordedClient => {
-  const claims = [...claimRowSets];
+const stubClient = (script: ScriptedRows[] = []): RecordedClient => {
   const scripted = [...script];
   const params: unknown[][] = [];
   const statements: string[] = [];
@@ -73,9 +59,6 @@ const stubClient = (
         const [entry] = scripted.splice(override, 1);
         return Promise.resolve({ rows: entry?.rows ?? [] });
       }
-      if (text.includes("FOR UPDATE SKIP LOCKED")) {
-        return Promise.resolve({ rows: claims.shift() ?? [] });
-      }
       if (text.includes("ON CONFLICT (namespace, source, external_id)")) {
         return Promise.resolve({ rows: [{ id: query[0], version: 1 }] });
       }
@@ -85,7 +68,8 @@ const stubClient = (
       return Promise.resolve({ rows: [] });
     },
   };
-  return { client, params, statements };
+  const { calls, pool, releases } = fakePool(client);
+  return { calls, params, pool, releases, statements };
 };
 
 const fakeProvider = (
@@ -135,7 +119,7 @@ const chunkUpsertIndices = (recorded: RecordedClient): number[] =>
 const runHappyPath = async () => {
   const logs: Record<string, unknown>[] = [];
   const recorded = stubClient();
-  const outcome = await processDocumentVersion(recorded.client, baseDoc(), {
+  const outcome = await processDocumentVersion(recorded.pool, baseDoc(), {
     config: resolveEmbeddingWorkerConfig({
       maxChars: 60,
       provider: createFakeEmbeddingProvider("fake/test-model"),
@@ -159,9 +143,12 @@ test("happy path writes the #56 document model before chunks", async () => {
   assert.equal(outcome.documentId, "doc-1");
   assert.equal(outcome.versionId, "v7");
 
-  const { params, statements } = recorded;
+  const { calls, params, releases, statements } = recorded;
   assert.equal(statements[0], "BEGIN");
   assert.equal(statements.at(-1), "COMMIT");
+  // One checkout carries the whole version swap and goes back clean.
+  assert.ok(calls.every((call) => call.checkout === 1));
+  assert.deepEqual(releases, [{ checkout: 1, error: undefined }]);
   // FK order: namespace → document → version → chunks → supersede.
   assert.match(statements[1] ?? "", /^INSERT INTO knowledge_namespace/u);
   assert.match(
@@ -295,25 +282,22 @@ test("reprocessing the same version derives identical chunk rows", async () => {
 });
 
 test("unchanged content resolves the existing document and version rows", async () => {
-  const recorded = stubClient(
-    [],
-    [
-      // The document upsert's DO UPDATE guard filters: content unchanged.
-      { rows: [], text: "ON CONFLICT (namespace, source, external_id)" },
-      {
-        rows: [{ id: "doc-existing", version: 3 }],
-        text: "SELECT id, version FROM document",
-      },
-      // History is never mutated: chunks must cite the existing version row.
-      { rows: [], text: "INSERT INTO document_version" },
-      {
-        rows: [{ id: "v-existing" }],
-        text: "SELECT id FROM document_version",
-      },
-    ]
-  );
+  const recorded = stubClient([
+    // The document upsert's DO UPDATE guard filters: content unchanged.
+    { rows: [], text: "ON CONFLICT (namespace, source, external_id)" },
+    {
+      rows: [{ id: "doc-existing", version: 3 }],
+      text: "SELECT id, version FROM document",
+    },
+    // History is never mutated: chunks must cite the existing version row.
+    { rows: [], text: "INSERT INTO document_version" },
+    {
+      rows: [{ id: "v-existing" }],
+      text: "SELECT id FROM document_version",
+    },
+  ]);
   const outcome = await processDocumentVersion(
-    recorded.client,
+    recorded.pool,
     baseDoc({ documentId: "doc-fresh", versionId: "v-fresh" }),
     {
       config: resolveEmbeddingWorkerConfig({
@@ -344,7 +328,7 @@ test("one invalid vector fails only its chunk; valid batchmates still embed", as
     input.includes("S3cr3tBody") ? [0.1, 0.2, 0.3] : null
   );
   const recorded = stubClient();
-  const outcome = await processDocumentVersion(recorded.client, baseDoc(), {
+  const outcome = await processDocumentVersion(recorded.pool, baseDoc(), {
     config: resolveEmbeddingWorkerConfig({
       maxChars: 60,
       provider,
@@ -414,7 +398,7 @@ test("provider requests are batched and concurrency is capped", async () => {
   };
   const recorded = stubClient();
   const outcome = await processDocumentVersion(
-    recorded.client,
+    recorded.pool,
     baseDoc({
       content: ["aaaa", "bbbb", "cccc", "dddd", "eeee"].join("\n\n"),
       documentId: "doc-batches",
@@ -460,7 +444,7 @@ test("retryable provider failures back off and recover", async () => {
   };
   const recorded = stubClient();
   const outcome = await processDocumentVersion(
-    recorded.client,
+    recorded.pool,
     baseDoc({ content: "retry me please", documentId: "doc-retry" }),
     {
       config: resolveEmbeddingWorkerConfig({
@@ -499,7 +483,7 @@ test("non-retryable 4xx fails fast; text rows still persist for BM25", async () 
   };
   const recorded = stubClient();
   const outcome = await processDocumentVersion(
-    recorded.client,
+    recorded.pool,
     baseDoc({ content: "doomed content", documentId: "doc-400" }),
     {
       config: resolveEmbeddingWorkerConfig({
@@ -541,8 +525,9 @@ test("database failure rolls the whole version swap back", async () => {
       return Promise.resolve({ rows: [] });
     },
   };
+  const { calls, pool, releases } = fakePool(failing);
   await assert.rejects(
-    processDocumentVersion(failing, baseDoc({ content: "alpha beta" }), {
+    processDocumentVersion(pool, baseDoc({ content: "alpha beta" }), {
       config: resolveEmbeddingWorkerConfig({
         provider: createFakeEmbeddingProvider("fake/test-model"),
       }),
@@ -550,6 +535,9 @@ test("database failure rolls the whole version swap back", async () => {
     /does not exist/u
   );
   assert.ok(queries >= 2);
+  assert.equal(calls.at(-1)?.text, "ROLLBACK");
+  assert.ok(calls.every((call) => call.checkout === 1));
+  assert.deepEqual(releases, [{ checkout: 1, error: undefined }]);
 });
 
 // --- dimension honesty ---
@@ -894,7 +882,7 @@ test("re-ingesting a changed version supersedes the dropped content hashes", asy
   const v1Keep = v1.recorded.params.at(-2)?.[1] as string[];
   const recorded = stubClient();
   const outcome = await processDocumentVersion(
-    recorded.client,
+    recorded.pool,
     baseDoc({
       content: "totally different content now",
       versionId: "v8",
@@ -919,363 +907,6 @@ test("re-ingesting a changed version supersedes the dropped content hashes", asy
     "changed content re-hashes every chunk"
   );
 });
-
-// --- queue ---
-
-test("job SQL builders target the #56 ingest_job table", () => {
-  const enqueue = buildEnqueueJobQuery({
-    jobId: "job-1",
-    kind: "document-version",
-    payload: { content: "private body that must not leak", versionId: "v1" },
-  });
-  assert.match(enqueue.text, /INSERT INTO ingest_job/u);
-  assert.match(enqueue.text, /ON CONFLICT \(id\) DO NOTHING/u);
-  assert.equal(enqueue.params[0], "job-1");
-  assert.equal(enqueue.params[1], "document-version");
-  assert.equal(enqueue.params[3], 0);
-  assert.ok(
-    !String(enqueue.params[2]).includes("job-1"),
-    "payload stays a JSON blob, not an identifier"
-  );
-  assert.equal(
-    buildEnqueueJobQuery({
-      jobId: "job-p",
-      kind: "document-version",
-      payload: {},
-      priority: 5,
-    }).params[3],
-    5
-  );
-
-  const claim = buildClaimJobQuery();
-  assert.match(claim.text, /UPDATE ingest_job/u);
-  assert.match(claim.text, /FOR UPDATE SKIP LOCKED/u);
-  assert.match(claim.text, /ORDER BY priority DESC, enqueued_at ASC, id ASC/u);
-  assert.match(claim.text, /attempts = attempts \+ 1/u);
-  assert.ok(
-    KNOWLEDGE_SCHEMA_MIGRATION_SQL.includes(
-      "CREATE TABLE IF NOT EXISTS ingest_job"
-    ),
-    "the queue table ships in the #56 base migration"
-  );
-
-  assert.deepEqual(buildCompleteJobQuery("job-1").params, ["job-1"]);
-  assert.match(
-    buildCompleteJobQuery("job-1").text,
-    /SET status = 'done', heartbeat_at = now\(\), error = NULL\nWHERE id = \$1/u
-  );
-
-  const long = `x`.repeat(MAX_JOB_ERROR_CHARS + 500);
-  const fail = buildFailJobQuery("job-1", long);
-  assert.equal(fail.params[1], `x`.repeat(MAX_JOB_ERROR_CHARS));
-  assert.match(
-    fail.text,
-    /SET status = 'failed', heartbeat_at = now\(\), error = \$2\nWHERE id = \$1/u
-  );
-
-  assert.throws(
-    () =>
-      buildEnqueueJobQuery({
-        jobId: "bad id with spaces",
-        kind: "document-version",
-        payload: {},
-      }),
-    /job id/u
-  );
-  assert.throws(
-    () =>
-      buildEnqueueJobQuery({
-        jobId: "j",
-        kind: "bad kind!",
-        payload: {},
-      }),
-    /kind/u
-  );
-  assert.throws(
-    () =>
-      buildEnqueueJobQuery({
-        jobId: "j",
-        kind: "k",
-        payload: "not an object",
-      } as unknown as { jobId: string; kind: string; payload: never }),
-    /payload/u
-  );
-  assert.throws(
-    () =>
-      buildEnqueueJobQuery({
-        jobId: "j",
-        kind: "k",
-        payload: {},
-        priority: -1,
-      }),
-    /priority/u
-  );
-});
-
-test("parseIngestJobRow validates claimed rows", () => {
-  const record = parseIngestJobRow({
-    attempts: 3,
-    id: "job-1",
-    kind: "document-version",
-    payload: { content: "c", versionId: "v1" },
-  });
-  assert.equal(record.jobId, "job-1");
-  assert.equal(record.attempts, 3);
-  assert.equal(record.kind, "document-version");
-  assert.equal(
-    parseIngestJobRow({
-      attempts: "2",
-      id: "j",
-      kind: "k",
-      payload: {},
-    }).attempts,
-    2
-  );
-  assert.throws(() => parseIngestJobRow({ attempts: 1 }), /no string id/u);
-  assert.throws(
-    () =>
-      parseIngestJobRow({
-        attempts: -1,
-        id: "j",
-        kind: "k",
-        payload: {},
-      }),
-    /attempts/u
-  );
-  assert.throws(
-    () =>
-      parseIngestJobRow({
-        attempts: 1,
-        id: "j",
-        kind: "",
-        payload: {},
-      }),
-    /kind/u
-  );
-});
-
-test("parseDocumentPayload validates the normalized version shape", () => {
-  const fullPayload: Record<string, unknown> = {
-    content: "text",
-    documentId: "doc-1",
-    externalId: "docs/a.md",
-    format: "markdown",
-    namespace: "ns",
-    source: "file",
-    title: "A",
-    url: "https://example.com",
-    versionId: "v2",
-  };
-  const job: IngestJobRecord = {
-    attempts: 1,
-    jobId: "job-1",
-    kind: "document-version",
-    payload: fullPayload,
-  };
-  const parsed = parseDocumentPayload(job);
-  assert.equal(parsed.content, "text");
-  assert.equal(parsed.documentId, "doc-1");
-  assert.equal(parsed.externalId, "docs/a.md");
-  assert.equal(parsed.source, "file");
-  assert.equal(parsed.format, "markdown");
-  assert.equal(parsed.title, "A");
-  assert.equal(parsed.url, "https://example.com");
-  assert.equal(parsed.versionId, "v2");
-  assert.equal(
-    parseDocumentPayload({
-      ...job,
-      payload: {
-        content: "c",
-        documentId: "d",
-        externalId: "e",
-        namespace: "n",
-        source: "s",
-        versionId: "v",
-      },
-    }).format,
-    undefined
-  );
-  const payloadWith = (overrides: Record<string, unknown>): unknown => ({
-    ...fullPayload,
-    ...overrides,
-  });
-  assert.throws(
-    () =>
-      parseDocumentPayload({
-        ...job,
-        payload: payloadWith({ documentId: "" }),
-      }),
-    /documentId/u
-  );
-  assert.throws(
-    () =>
-      parseDocumentPayload({
-        ...job,
-        payload: payloadWith({ externalId: "" }),
-      }),
-    /externalId/u
-  );
-  assert.throws(
-    () =>
-      parseDocumentPayload({
-        ...job,
-        payload: payloadWith({ namespace: "bad namespace!" }),
-      }),
-    /namespace/u
-  );
-  assert.throws(
-    () =>
-      parseDocumentPayload({
-        ...job,
-        payload: payloadWith({ source: "" }),
-      }),
-    /source/u
-  );
-  assert.throws(
-    () => parseDocumentPayload({ ...job, payload: { versionId: "v" } }),
-    /content/u
-  );
-  assert.throws(
-    () =>
-      parseDocumentPayload({
-        ...job,
-        payload: payloadWith({ versionId: "" }),
-      }),
-    /versionId/u
-  );
-  assert.throws(
-    () =>
-      parseDocumentPayload({
-        ...job,
-        payload: payloadWith({ format: "yaml" }),
-      }),
-    /format/u
-  );
-  assert.throws(
-    () =>
-      parseDocumentPayload({
-        ...job,
-        payload: payloadWith({ title: 42 }),
-      }),
-    /title/u
-  );
-});
-
-test("runIngestJob marks done on success and records truncated failures", async () => {
-  const success = stubClient();
-  const result = await runIngestJob(
-    success.client,
-    {
-      attempts: 1,
-      jobId: "job-ok",
-      kind: "document-version",
-      payload: {
-        content: PARAGRAPHS,
-        documentId: "doc-1",
-        externalId: "docs/readme.md",
-        namespace: "ns",
-        source: "file",
-        versionId: "v1",
-      },
-    },
-    {
-      config: resolveEmbeddingWorkerConfig({
-        maxChars: 60,
-        provider: createFakeEmbeddingProvider("fake/test-model"),
-      }),
-    }
-  );
-  assert.equal(result.status, "done");
-  assert.equal(result.outcome?.status, "ok");
-  assert.equal(
-    success.statements.at(-1),
-    `UPDATE ingest_job
-SET status = 'done', heartbeat_at = now(), error = NULL
-WHERE id = $1`
-  );
-
-  const failing = stubClient();
-  const failed = await runIngestJob(
-    failing.client,
-    {
-      attempts: 2,
-      jobId: "job-bad",
-      kind: "document-version",
-      payload: { versionId: "v1" },
-    },
-    {
-      config: resolveEmbeddingWorkerConfig({
-        provider: createFakeEmbeddingProvider("fake/test-model"),
-      }),
-    }
-  );
-  assert.equal(failed.status, "failed");
-  assert.match(failed.error ?? "", /content/u);
-  const lastParams = failing.params.at(-1);
-  assert.equal(lastParams?.[0], "job-bad");
-  const jobError = lastParams?.[1];
-  assert.ok(
-    typeof jobError === "string" &&
-      jobError.includes("payload has no string content"),
-    "job failure records the parse error"
-  );
-  assert.ok(
-    !jobError.includes("S3cr3tBody"),
-    "job errors never carry document bodies"
-  );
-});
-
-test("drainIngestJobs claims until the queue is empty or the cap hits", async () => {
-  const job = (jobId: string): Record<string, unknown> => ({
-    attempts: 1,
-    id: jobId,
-    kind: "document-version",
-    payload: {
-      content: PARAGRAPHS,
-      documentId: "doc-1",
-      externalId: "docs/readme.md",
-      namespace: "ns",
-      source: "file",
-      versionId: "v1",
-    },
-  });
-  const recorded = stubClient([[job("j1")], [job("j2")]]);
-  const results = await drainIngestJobs(recorded.client, {
-    config: resolveEmbeddingWorkerConfig({
-      maxChars: 60,
-      provider: createFakeEmbeddingProvider("fake/test-model"),
-    }),
-  });
-  assert.deepEqual(
-    results.map((result) => result.status),
-    ["done", "done"]
-  );
-  const capped = stubClient([[job("j1")], [job("j2")], [job("j3")]]);
-  const limited = await drainIngestJobs(
-    capped.client,
-    {
-      config: resolveEmbeddingWorkerConfig({
-        provider: createFakeEmbeddingProvider("fake/test-model"),
-      }),
-    },
-    { maxJobs: 2 }
-  );
-  assert.equal(limited.length, 2);
-  await assert.rejects(
-    drainIngestJobs(
-      stubClient().client,
-      {
-        config: resolveEmbeddingWorkerConfig({
-          provider: createFakeEmbeddingProvider(),
-        }),
-      },
-      { maxJobs: 0 }
-    ),
-    /maxJobs/u
-  );
-});
-
-// --- chunk upsert + supersede builders ---
 
 test("chunk upsert and supersede builders validate their inputs", () => {
   const valid: ChunkUpsertRow = {

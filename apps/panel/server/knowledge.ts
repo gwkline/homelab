@@ -8,6 +8,8 @@
 //   POST /v1/search                  → retrieval contract (apps/knowledge-retrieval/server/contract.ts)
 import { readFileSync } from "node:fs";
 
+import { log } from "./log.js";
+
 const DEFAULT_TIMEOUT_MS = 5000;
 const SOURCE_ID_MAX = 128;
 
@@ -315,7 +317,7 @@ export const createKnowledgeClient = (
   const redact = (text: string): string =>
     token === "" ? text : text.replaceAll(token, "[redacted]");
 
-  const request = async (
+  const send = async (
     method: "GET" | "POST",
     route: string,
     body?: Record<string, unknown>
@@ -369,6 +371,27 @@ export const createKnowledgeClient = (
         `knowledge API returned invalid JSON: ${String(error)}`,
         502
       );
+    }
+  };
+
+  const request = async (
+    method: "GET" | "POST",
+    route: string,
+    body?: Record<string, unknown>
+  ): Promise<unknown> => {
+    try {
+      return await send(method, route, body);
+    } catch (error) {
+      if (error instanceof KnowledgeApiError && error.status !== 503) {
+        log("warn", "upstream error", {
+          error: error.message,
+          method,
+          path: route,
+          status: error.status,
+          upstream: "knowledge",
+        });
+      }
+      throw error;
     }
   };
 

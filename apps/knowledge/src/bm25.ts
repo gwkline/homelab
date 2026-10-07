@@ -11,10 +11,9 @@
  * `limit` rows; over-fetch if a guaranteed count matters.
  */
 
-import type { PgClient } from "./pg-client.ts";
+import type { PgClient, PgPool } from "./pg-client.ts";
 import { parseAnchors } from "./pgvector.ts";
 import type { CitationAnchor } from "./pgvector.ts";
-import { KNOWLEDGE_SCHEMA_MIGRATION_SQL } from "./schema.ts";
 
 export const BM25_TABLE = "chunks";
 export const BM25_COLUMN = "text";
@@ -24,18 +23,6 @@ export const BM25_TEXT_CONFIG = "english";
 export const DEFAULT_NAMESPACE = "default";
 
 export const DEFAULT_BM25_LIMIT = 10;
-
-export const BM25_SCHEMA_VERSION = "1-bm25-chunks";
-
-/** Composes the base schema, so it is self-sufficient and idempotent. */
-export const BM25_MIGRATION_SQL = `${KNOWLEDGE_SCHEMA_MIGRATION_SQL}
-CREATE EXTENSION IF NOT EXISTS pg_textsearch;
-CREATE INDEX IF NOT EXISTS chunks_namespace_active
-  ON chunks (namespace) WHERE valid_to IS NULL;
-CREATE INDEX IF NOT EXISTS chunks_text_bm25
-  ON chunks USING bm25 (text)
-  WITH (text_config = 'english')
-  WHERE valid_to IS NULL;`;
 
 /** `score` is the raw negative BM25 value (lower is better); `rank` is 1-based. */
 export interface Bm25Hit {
@@ -167,13 +154,9 @@ export const searchBm25 = async (
   return parseBm25Rows(result.rows);
 };
 
-export const ensureBm25Schema = async (client: PgClient): Promise<void> => {
-  await client.query(BM25_MIGRATION_SQL, []);
-};
-
 /** `pg` is imported lazily so offline consumers never need the driver. */
 export const withBm25ClientFromEnv = async <T>(
-  fn: (client: PgClient) => Promise<T>
+  fn: (pool: PgPool) => Promise<T>
 ): Promise<T> => {
   const connectionString = process.env["DATABASE_URL"];
   if (!connectionString) {

@@ -1,8 +1,8 @@
 #!/bin/sh
-# Panel list-and-launch e2e against a real Kubernetes API (docs/panel-e2e.md).
-# Runs the panel as its production ServiceAccount and RBAC in a disposable
-# kind cluster (or the current context), then drives /api/state and
-# /api/jobs through a port-forward.
+# Panel e2e against a real Kubernetes API (docs/panel-e2e.md). Runs the panel
+# as its production ServiceAccount and RBAC in a disposable kind cluster (or
+# the current context), then drives /api/state, /api/cronjobs and /api/jobs
+# through a port-forward.
 #
 # Usage:
 #   ./scripts/panel-e2e-smoke.sh
@@ -13,6 +13,8 @@ set -eu
 NS_SANDBOX=sandbox
 NS_AGENTS=agents
 PANEL_POD=panel-e2e
+# Not panel-auth: a reused cluster may hold the real one.
+AUTH_SECRET=panel-e2e-auth
 SEED_JOB=panel-e2e-seed
 # E2e-only fixture names: they must never collide with production objects in
 # a reused cluster (the cleanup below deletes the seed fixtures).
@@ -23,7 +25,6 @@ RUNNER_IMG="${PANEL_E2E_RUNNER_IMAGE:-panel-e2e-runner:local}"
 RUNNER_DOCKERFILE=apps/panel/tests/integration/runner.Dockerfile
 RUNNER_DIR=apps/panel/tests/integration
 WAIT="${PANEL_E2E_TIMEOUT:-600}"
-JOB_WAIT="${PANEL_E2E_JOB_WAIT:-300}"
 AS_PANEL="system:serviceaccount:${NS_AGENTS}:panel"
 
 cd "$(dirname "$0")/.."
@@ -31,7 +32,6 @@ cd "$(dirname "$0")/.."
 KIND_CLUSTER=panel-e2e
 KIND_CREATED=""
 PF_PID=""
-CREATED_FILE="$(mktemp "${TMPDIR:-/tmp}/panel-e2e-created.XXXXXX")"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -68,8 +68,8 @@ rbac_checks() {
   [ "$CAN_FAIL" -eq 0 ]
 }
 
-# On failure: panel pod state/logs, RBAC probes, and the created Job's
-# events — everything needed without re-running the flow.
+# On failure: panel pod state/logs, RBAC probes, and sandbox events —
+# everything needed without re-running the flow.
 dump_diagnostics() {
   echo "----- panel pod (agents/panel-e2e) -----" >&2
   kubectl describe pod "$PANEL_POD" -n "$NS_AGENTS" >&2 || true
@@ -92,19 +92,15 @@ cleanup() {
   if [ "${PANEL_E2E_KEEP:-0}" = "1" ]; then
     echo "==> PANEL_E2E_KEEP=1 — kept fixtures in ${NS_SANDBOX} and the cluster"
   else
-    # Delete only what this run created: the panel pod (the kind cluster
-    # teardown below removes it wholesale, but PANEL_E2E_REUSE=1 against a
-    # real cluster must not leave the stand-in pod behind), the seeded
-    # fixtures, and the created Job — nothing cluster-wide.
+    # Delete only what this run created: the panel pod and its credentials
+    # (the kind cluster teardown below removes them wholesale, but
+    # PANEL_E2E_REUSE=1 against a real cluster must not leave them behind)
+    # and the seeded fixtures — nothing cluster-wide.
     kubectl delete pod "$PANEL_POD" -n "$NS_AGENTS" --ignore-not-found >/dev/null 2>&1 || true
+    kubectl delete secret "$AUTH_SECRET" -n "$NS_AGENTS" --ignore-not-found >/dev/null 2>&1 || true
     kubectl delete job "$SEED_JOB" -n "$NS_SANDBOX" --ignore-not-found >/dev/null 2>&1 || true
     kubectl delete cronjob "$SEED_CRONJOB" -n "$NS_SANDBOX" --ignore-not-found >/dev/null 2>&1 || true
-    if [ -s "$CREATED_FILE" ]; then
-      created_name="$(cat "$CREATED_FILE")"
-      kubectl delete job "$created_name" -n "$NS_SANDBOX" --ignore-not-found >/dev/null 2>&1 || true
-    fi
   fi
-  rm -f "$CREATED_FILE"
   if [ -n "$KIND_CREATED" ]; then
     echo "==> deleting disposable kind cluster ${KIND_CLUSTER}"
     kind delete cluster --name "$KIND_CLUSTER" >/dev/null 2>&1 || true
@@ -130,7 +126,7 @@ else
   command -v kind >/dev/null 2>&1 || fail "kind not found (or set PANEL_E2E_REUSE=1)"
 fi
 
-echo "==> [2/7] building images (panel backend + job runner stand-in)"
+echo "==> [2/7] building images (panel backend + fixture runner)"
 if [ "${PANEL_E2E_REUSE:-0}" != "1" ]; then
   docker build -f apps/panel/Dockerfile -t "$PANEL_IMG" . ||
     fail "panel image build failed"
@@ -164,7 +160,7 @@ kubectl create namespace "$NS_SANDBOX" --dry-run=client -o yaml | kubectl apply 
 # Exact mirror of deploy/panel/base/rbac.yaml: the panel
 # ServiceAccount, the sandbox panel-sandbox-runs Role (create/list/delete
 # Jobs, get/list/patch CronJobs), and the agents panel-agents-viewer Role
-# (get Services only — dev-tools health).
+# (get Services, get the panel Ingress).
 kubectl apply -f - >/dev/null <<EOF
 apiVersion: v1
 kind: ServiceAccount
@@ -282,6 +278,11 @@ echo "  ok: seeded CronJob ${SEED_CRONJOB} + completed Job ${SEED_JOB}"
 
 echo "==> [5/7] deploying panel with its real ServiceAccount + cluster CA"
 kubectl delete pod "$PANEL_POD" -n "$NS_AGENTS" --ignore-not-found >/dev/null
+# A one-run machine caller, shaped like Secret panel-auth.
+PANEL_E2E_TOKEN="$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')"
+kubectl create secret generic "$AUTH_SECRET" -n "$NS_AGENTS" \
+  --from-literal=tokens="e2e=${PANEL_E2E_TOKEN}" --from-literal=users= \
+  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl apply -f - >/dev/null <<EOF
 apiVersion: v1
 kind: Pod
@@ -299,10 +300,10 @@ spec:
       type: RuntimeDefault
   containers:
     - env:
-        - name: PANEL_LOOP_IMAGE
-          value: ${RUNNER_IMG}
         - name: PORT
           value: "3000"
+        - name: PANEL_AUTH_DIR
+          value: /secrets-panel-auth
       image: ${PANEL_IMG}
       name: panel
       ports:
@@ -326,6 +327,14 @@ spec:
         allowPrivilegeEscalation: false
         capabilities:
           drop: ["ALL"]
+      volumeMounts:
+        - name: panel-auth
+          mountPath: /secrets-panel-auth
+          readOnly: true
+  volumes:
+    - name: panel-auth
+      secret:
+        secretName: ${AUTH_SECRET}
 EOF
 pod_sa="$(kubectl get pod "$PANEL_POD" -n "$NS_AGENTS" -o jsonpath='{.spec.serviceAccountName}')"
 [ "$pod_sa" = "panel" ] ||
@@ -351,27 +360,18 @@ export PANEL_E2E_URL="http://127.0.0.1:${PF_PORT}"
 export PANEL_E2E_NS="$NS_SANDBOX"
 export PANEL_E2E_SEED_JOB="$SEED_JOB"
 export PANEL_E2E_CRONJOB="$SEED_CRONJOB"
-export PANEL_E2E_JOB_WAIT="$JOB_WAIT"
-export PANEL_E2E_CREATED_FILE="$CREATED_FILE"
+export PANEL_E2E_TOKEN
 if command -v timeout >/dev/null 2>&1; then
   timeout "$WAIT" node --test apps/panel/tests/integration/panel-e2e.test.mjs
 else
   node --test apps/panel/tests/integration/panel-e2e.test.mjs
 fi
 
-echo "==> [7/7] preserved cluster state: API-visible sandbox + the created Job"
+echo "==> [7/7] sandbox state after the run"
 kubectl get jobs,cronjobs -n "$NS_SANDBOX" -o wide
-created_name="$(cat "$CREATED_FILE")"
-kubectl describe job "$created_name" -n "$NS_SANDBOX" | sed -n '1,/[[:space:]]*Events:/p'
-echo "  pod logs (the launched command ran):"
-kubectl logs -n "$NS_SANDBOX" "job/${created_name}" --tail=-1 || true
 
-if [ "${PANEL_E2E_KEEP:-0}" = "1" ]; then
-  echo "  PANEL_E2E_KEEP=1 — kept fixtures and the created Job for inspection"
-fi
-
-echo "PASS: panel list-and-launch proven end to end through the real Kubernetes API"
+echo "PASS: panel proven end to end through the real Kubernetes API"
 echo "  - panel pod ran as ServiceAccount panel with the mounted cluster CA (in-cluster loadConfig path)"
 echo "  - GET /api/state returned seeded Job ${SEED_JOB} + CronJob ${SEED_CRONJOB}; RBAC probes matched deploy/panel/base"
-echo "  - POST /api/jobs created Job ${created_name} (locked-down container), which ran to Complete"
-echo "  - invalid command/issue inputs stayed rejected with 400"
+echo "  - PATCH /api/cronjobs and DELETE /api/jobs changed the live objects with a bearer token, and refused without one"
+echo "  - POST /api/jobs is gone: 404, nothing created"
