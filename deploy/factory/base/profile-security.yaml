@@ -33,7 +33,6 @@ spec:
     matchLabels:
       factory.gwkline.io/profile: security
   policyTypes: [Ingress, Egress]
-  ingress: []
   egress:
     - to:
         - namespaceSelector:

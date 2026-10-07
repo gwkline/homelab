@@ -12,11 +12,11 @@ fail() { echo "FAIL: $1" >&2; exit 1; }
 
 echo '==> shellcheck'
 # Fail on errors; print warnings without failing.
-if ! shellcheck -S error bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/factory/**/run-reviewer.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh >/dev/null 2>&1; then
-  shellcheck -S error bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/factory/**/run-reviewer.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh 2>&1 | head -n 80
+if ! shellcheck -S error bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/factory/**/run-reviewer.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh deploy/deployer/*.sh >/dev/null 2>&1; then
+  shellcheck -S error bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/factory/**/run-reviewer.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh deploy/deployer/*.sh 2>&1 | head -n 80
   fail 'shell script lint (error)'
 fi
-shellcheck bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/factory/**/run-reviewer.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh 2>&1 | head -n 100 || true
+shellcheck bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/factory/**/run-reviewer.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh deploy/deployer/*.sh 2>&1 | head -n 100 || true
 
 echo '==> kustomize builds'
 # Every base, the non-base kustomizations, and the root (proves the core set

@@ -13,7 +13,6 @@ spec:
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
-  suspend: false
   jobTemplate:
     spec:
       ttlSecondsAfterFinished: 86400
