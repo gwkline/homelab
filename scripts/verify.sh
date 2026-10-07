@@ -108,8 +108,7 @@ digest_problems="$(rendered_check '
   | "\($ref): \(.) is not pinned by digest"')"
 if [[ -n "$digest_problems" ]]; then
   echo "$digest_problems"
-  # TODO(#342): fail once every third-party image is digest-pinned.
-  echo '  WARN: third-party image without a digest'
+  fail 'third-party image without a digest'
 fi
 
 echo '==> factory CronJob schedule collision lint'

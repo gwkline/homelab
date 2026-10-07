@@ -26,6 +26,7 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
 - OAuth values are never passed to helm. With `oauth.clientId`/`clientSecret` empty, the chart mounts the pre-created Secret `operator-oauth` at `/oauth`.
 - `proxyConfig.defaultTags` sets the operator's `PROXY_TAGS` to `tag:k8s-operator`. Do not set `PROXY_TAGS` via `operatorConfig.extraEnv` — it duplicates the env entry and the release fails.
 - The chart creates the `tailscale` IngressClass by default.
+- `values.yaml` pins the operator and proxy images by digest to the chart's appVersion. Bump the tags and digests with `--version`, then re-run the `helm upgrade`.
 
 1Password item: vault `homelab`, item `tailscale-operator-oauth`, fields `client_id` and `client_secret`. Scopes: Devices/Core + Auth Keys read-or-modify, Routes read. The OAuth client must be created **with** `tag:k8s-operator` (it cannot be added later).
 
