@@ -41,9 +41,6 @@ spec:
                   value: 192.168.1.2
                 - name: KUBERNETES_SERVICE_PORT
                   value: "6443"
-                - name: OPENCODE_AUTH_B64
-                  valueFrom:
-                    secretKeyRef: { name: factory-opencode-auth, key: auth-b64 }
                 - name: KNOWLEDGE_SEARCH_URL
                   # Fail-open: a retrieval outage never fails a run.
                   value: http://knowledge-retrieval-http.agents.svc.cluster.local:3000/v1/search

@@ -357,7 +357,8 @@ spec:
                 secretKeyRef: { name: github-token, key: token }
             - { name: WORKER_CMD,    value: "${WORKER_CMD:-claude --dangerously-skip-permissions}" }
             - name: OPENCODE_AUTH_B64
-              value: '${OPENCODE_AUTH_B64:-}'   # shell substitutes; single-quote keeps yaml safe
+              valueFrom:
+                secretKeyRef: { name: factory-opencode-auth, key: auth-b64, optional: true }
             - name: FACTORY_BRIEF_B64
               value: '${BRIEF_B64}'            # shell substitutes
             - { name: FACTORY_SECURITY_MODE, value: "per-issue" }
