@@ -185,6 +185,16 @@ ${QUEUE_SQL}
 ${CHANNEL_SQL}
 DROP INDEX IF EXISTS ingest_job_claim;`,
   },
+  {
+    // The fake provider used to stamp the configured model name on its
+    // vectors, and no deployment has configured a real provider, so every
+    // stored vector is fake. The honest tag keeps the vector channel and a
+    // future re-embed from trusting them.
+    id: 2,
+    name: "retag-fake-embeddings",
+    sql: `UPDATE chunks SET embedding_model = 'fake/384'
+WHERE embedding IS NOT NULL AND embedding_model NOT LIKE 'fake/%';`,
+  },
 ];
 
 /** The schema version this build needs; recorded in eval provenance. */

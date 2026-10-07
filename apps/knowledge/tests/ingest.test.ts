@@ -840,16 +840,24 @@ test("embedding worker config validates every explicit limit", () => {
 test("provider, model, and dimensions come from configuration", () => {
   const fake = embeddingProviderFromEnv({});
   assert.equal(fake.name, "fake");
-  assert.equal(fake.model, "BAAI/bge-small-en-v1.5");
+  assert.equal(fake.model, "fake/384", "fake vectors carry a fake tag");
   assert.equal(fake.dimensions, EMBEDDING_DIMENSIONS);
 
   const configured = embeddingProviderFromEnv({
     KNOWLEDGE_EMBEDDING_DIMENSIONS: "4",
-    KNOWLEDGE_EMBEDDING_MODEL: "custom/model",
+    KNOWLEDGE_EMBEDDING_MODEL: "BAAI/bge-small-en-v1.5",
     KNOWLEDGE_EMBEDDING_PROVIDER: "fake",
   });
-  assert.equal(configured.model, "custom/model");
+  assert.equal(
+    configured.model,
+    "fake/4",
+    "a configured model name never lands on fake vectors"
+  );
   assert.equal(configured.dimensions, 4);
+  assert.throws(
+    () => createFakeEmbeddingProvider("BAAI/bge-small-en-v1.5"),
+    /must start with fake\//u
+  );
   assert.throws(
     () => embeddingProviderFromEnv({ KNOWLEDGE_EMBEDDING_PROVIDER: "quantum" }),
     /unknown KNOWLEDGE_EMBEDDING_PROVIDER/u
@@ -863,6 +871,7 @@ test("provider, model, and dimensions come from configuration", () => {
     KNOWLEDGE_EMBEDDING_PROVIDER: "openai",
   });
   assert.equal(openai.name, "openai-compatible");
+  assert.equal(openai.model, "BAAI/bge-small-en-v1.5");
   assert.throws(
     () =>
       resolveEmbeddingWorkerConfig({
