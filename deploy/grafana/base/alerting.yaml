@@ -265,7 +265,7 @@ data:
                     type: prometheus
                     uid: victoriametrics
                   editorMode: code
-                  expr: 'count by (statefulset) (kube_statefulset_status_replicas_ready{namespace="agents"} < kube_statefulset_spec_replicas{namespace="agents"})'
+                  expr: 'count by (statefulset) (kube_statefulset_status_replicas_ready{namespace="agents"} < kube_statefulset_replicas{namespace="agents"})'
                   instant: true
                   intervalMs: 1000
                   legendFormat: __auto

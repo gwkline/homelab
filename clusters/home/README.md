@@ -53,4 +53,4 @@ The hand-entered 1Password service-account token (`scripts/create-onepassword-se
 | backup | `kubectl apply -k clusters/home/overlays/backup` | B2 credentials exist in 1Password (docs/secrets-inventory.md) — production backup execution is excluded from the normal set until they do |
 | gvisor | `kubectl apply -k clusters/home/overlays/gvisor` | runsc registered in each node's containerd config (runbook-server-cluster, "Experimental: gVisor"); replaces the stock loop-agent runtime |
 
-Further per-component applies (grafana, loki, cloudbeaver, executor) are documented beside their manifests under `deploy/` and in [runbook-server-cluster.md](../docs/runbook-server-cluster.md); they are intentionally not part of the fast-recovery normal set.
+Further per-component applies (cloudbeaver, executor) are documented beside their manifests under `deploy/` and in [runbook-server-cluster.md](../docs/runbook-server-cluster.md); they are intentionally not part of the fast-recovery normal set.
