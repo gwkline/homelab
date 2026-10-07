@@ -55,7 +55,7 @@ spec:
     - hosts: [my-app] # -> https://my-app.<tailnet>.ts.net
 ```
 
-Avoid `type: LoadBalancer` with `loadBalancerClass: tailscale`. Each one runs a privileged proxy (a `sysctler` init container plus a privileged `tailscale` container) and allocates NodePorts. The executor Service is the one left.
+Don't use `type: LoadBalancer` with `loadBalancerClass: tailscale`. Its proxy needs privileged containers (a `sysctler` init container plus a privileged `tailscale` container), which the namespace's baseline Pod Security rejects, and the Service allocates NodePorts. The executor Service is the one left; move it to an Ingress before deploying it.
 
 `scripts/verify.sh` fails if a tailscale Ingress lacks the tags annotation or a TLS host, or a tailscale LoadBalancer Service lacks the hostname or tags annotation. `scripts/rebuild-check.sh` checks the same on the live cluster and curls each Ingress over HTTPS.
 
