@@ -76,6 +76,7 @@ Every mutation needs a caller: an allowlisted Tailscale login arriving through t
 | `POST /api/factory/run`, `/run/cancel`, `/run/retry` | queue, cancel, or retry a Run |
 | `GET /api/factory/prs?repo=` | factory PRs with draft/review/check state |
 | `POST /api/factory/review` | approve / request changes / comment; requires a `factory/issue-*` head |
+| `POST /api/factory/ready` | mark a draft factory PR ready for review (GraphQL `markPullRequestReadyForReview`) |
 | `POST /api/factory/merge` | merge; requires a `factory/issue-*` head, APPROVED, green checks |
 | `GET /api/factory/stats?repo=`, `/stats/rollup` | 8-week issue/PR stats (cached ~120 s); rollup persists weekly snapshots on the panel-stats PVC, also written by the `factory-stats-snapshot` CronJob |
 

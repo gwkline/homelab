@@ -901,3 +901,233 @@ test("server serves SPA and lists sandbox state; no route launches commands", as
     mock.close();
   }
 });
+
+test("PATCH /api/cronjobs/:name applies real schedules and refuses malformed ones", async () => {
+  const patches: { body: unknown; contentType: string | undefined }[] = [];
+  const k8s = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      if (req.method === "PATCH") {
+        patches.push({
+          body: JSON.parse(body),
+          contentType: req.headers["content-type"],
+        });
+      }
+      res.writeHead(200, { "content-type": "application/json" }).end("{}");
+    });
+  });
+  await new Promise<void>((r) => k8s.listen(0, "127.0.0.1", r));
+  const stage = mkdtempSync(path.join(tmpdir(), "panel-cron-"));
+  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
+  copyFileSync(
+    path.join(root, "dist", "index.js"),
+    path.join(stage, "index.js")
+  );
+  copyFileSync(
+    path.join(root, "web", "dist", "index.html"),
+    path.join(stage, "web", "dist", "index.html")
+  );
+  const port = 3932;
+  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
+    env: {
+      ...process.env,
+      PANEL_AUTH_DIR: writeAuthDir(),
+      PANEL_K8S_BASE: `http://127.0.0.1:${(k8s.address() as AddressInfo).port}`,
+      PANEL_ROOT: stage,
+      PORT: String(port),
+    },
+    stdio: "pipe",
+  });
+  child.stderr.on("data", (d) => process.stderr.write(d));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(
+        () => reject(new Error("server did not start")),
+        5000
+      );
+      child.stdout.on(
+        "data",
+        (d) =>
+          d.toString().includes("listening") && (clearTimeout(t), resolve())
+      );
+    });
+    const edit = async (schedule: unknown): Promise<number> =>
+      (
+        await fetch(`http://127.0.0.1:${port}/api/cronjobs/factory-medic`, {
+          body: JSON.stringify({ schedule }),
+          headers: jsonAs(),
+          method: "PATCH",
+        })
+      ).status;
+
+    // The schedules this repo's CronJobs actually use, plus names and steps.
+    for (const schedule of [
+      "*/10 * * * *",
+      "0 7,19 * * *",
+      "7,17,27,37,47,57 * * * *",
+      "53 23 * * 0",
+      "0 9 * * MON-FRI",
+      "15 3 1 jan,jul *",
+      "0-30/5 */2 1-15 * 1-5",
+    ]) {
+      patches.length = 0;
+      assert.equal(await edit(schedule), 200, schedule);
+      assert.deepEqual(patches, [
+        {
+          body: { spec: { schedule } },
+          contentType: "application/merge-patch+json",
+        },
+      ]);
+    }
+    // Stray whitespace is normalized, not stored.
+    patches.length = 0;
+    assert.equal(await edit("  */5   * * * *  "), 200);
+    assert.deepEqual(patches[0]?.body, { spec: { schedule: "*/5 * * * *" } });
+
+    patches.length = 0;
+    for (const schedule of [
+      "0",
+      "* * * *",
+      "* * * * * *",
+      "60 * * * *",
+      "* 24 * * *",
+      "* * 0 * *",
+      "* * * 13 *",
+      "* * * * 7",
+      "*/0 * * * *",
+      "5-1 * * * *",
+      "1-2-3 * * * *",
+      "*/5/2 * * * *",
+      ",5 * * * *",
+      "@daily",
+      "*/10 * * * *; rm -rf /",
+      "MON * * * *",
+      "",
+      42,
+    ]) {
+      assert.equal(await edit(schedule), 400, JSON.stringify(schedule));
+    }
+    assert.deepEqual(patches, [], "a malformed schedule reached Kubernetes");
+  } finally {
+    child.kill();
+    k8s.close();
+  }
+});
+
+test("POST /api/factory/ready un-drafts a factory PR through GraphQL", async () => {
+  const pulls: Record<number, unknown> = {
+    8: {
+      draft: true,
+      head: { ref: "factory/issue-6/code-pr", sha: "abc" },
+      node_id: "PR_node8",
+      number: 8,
+    },
+    9: {
+      draft: false,
+      head: { ref: "factory/issue-7/code-pr", sha: "def" },
+      node_id: "PR_node9",
+      number: 9,
+    },
+    10: {
+      draft: true,
+      head: { ref: "feat/manual", sha: "ghi" },
+      node_id: "PR_node10",
+      number: 10,
+    },
+  };
+  const mutations: { query: string; variables: { id: string } }[] = [];
+  const gh = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      const url = req.url ?? "";
+      const pull = /\/repos\/gwkline\/launchpad\/pulls\/(?<n>\d+)$/u.exec(url);
+      const meta = pulls[Number(pull?.groups?.n)];
+      if (req.method === "GET" && meta !== undefined) {
+        res
+          .writeHead(200, { "content-type": "application/json" })
+          .end(JSON.stringify(meta));
+        return;
+      }
+      if (req.method === "POST" && url === "/graphql") {
+        mutations.push(JSON.parse(body));
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            data: {
+              markPullRequestReadyForReview: {
+                pullRequest: { isDraft: false },
+              },
+            },
+          })
+        );
+        return;
+      }
+      res.writeHead(404).end('{"message":"Not Found"}');
+    });
+  });
+  await new Promise<void>((r) => gh.listen(0, "127.0.0.1", r));
+  const stage = mkdtempSync(path.join(tmpdir(), "panel-ready-"));
+  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
+  copyFileSync(
+    path.join(root, "dist", "index.js"),
+    path.join(stage, "index.js")
+  );
+  copyFileSync(
+    path.join(root, "web", "dist", "index.html"),
+    path.join(stage, "web", "dist", "index.html")
+  );
+  const port = 3952;
+  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
+    env: {
+      ...process.env,
+      GH_API_BASE: `http://127.0.0.1:${(gh.address() as AddressInfo).port}`,
+      GH_TOKEN: "test-token",
+      PANEL_AUTH_DIR: writeAuthDir(),
+      PANEL_K8S_BASE: "http://127.0.0.1:1",
+      PANEL_ROOT: stage,
+      PORT: String(port),
+    },
+    stdio: "pipe",
+  });
+  child.stderr.on("data", (d) => process.stderr.write(d));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(
+        () => reject(new Error("server did not start")),
+        5000
+      );
+      child.stdout.on(
+        "data",
+        (d) =>
+          d.toString().includes("listening") && (clearTimeout(t), resolve())
+      );
+    });
+    const ready = async (pr: number) =>
+      await fetch(`http://127.0.0.1:${port}/api/factory/ready`, {
+        body: JSON.stringify({ pr, repo: "gwkline/launchpad" }),
+        headers: jsonAs(),
+        method: "POST",
+      });
+
+    const ok = await ready(8);
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), {
+      isDraft: false,
+      pr: 8,
+      repo: "gwkline/launchpad",
+    });
+    assert.equal(mutations.length, 1);
+    assert.match(mutations[0]?.query ?? "", /markPullRequestReadyForReview/u);
+    assert.deepEqual(mutations[0]?.variables, { id: "PR_node8" });
+
+    // Already ready, someone else's branch, or no such PR: nothing mutates.
+    assert.equal((await ready(9)).status, 409);
+    assert.equal((await ready(10)).status, 409);
+    assert.equal((await ready(11)).status, 404);
+    assert.equal(mutations.length, 1);
+  } finally {
+    child.kill();
+    gh.close();
+  }
+});

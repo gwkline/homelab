@@ -1,16 +1,21 @@
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import type { Server } from "node:http";
 import path from "node:path";
 
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
+import { routePath } from "hono/route";
+import { timeout } from "hono/timeout";
 
 import { requireCaller } from "./auth.js";
 import type { AuthEnv } from "./auth.js";
+import { validCronSchedule } from "./cron.js";
 import { DEV_TOOLS, discoverTailnet, evaluateTools } from "./devtools.js";
-import { viewJob } from "./jobs.js";
+import { jobRepo, viewJob } from "./jobs.js";
 import { loadConfig, api } from "./k8s.js";
-import type { K8sObject, JobTemplateSpec } from "./k8s.js";
+import type { EnvVar, K8sObject, JobTemplateSpec } from "./k8s.js";
 import {
   createKnowledgeClient,
   KnowledgeApiError,
@@ -21,6 +26,7 @@ import {
   NAMESPACE_PATTERN,
   SOURCE_ID_PATTERN,
 } from "./knowledge.js";
+import { log } from "./log.js";
 import {
   collectRepoStats,
   historyFromStore,
@@ -33,6 +39,11 @@ import {
   weekStatsOf,
 } from "./stats.js";
 import type { RepoStats } from "./stats.js";
+import {
+  REQUEST_TIMEOUT_MS,
+  UPSTREAM_TIMEOUT_MS,
+  upstreamError,
+} from "./upstream.js";
 
 const root = process.env.PANEL_ROOT ?? process.cwd();
 const port = Number(process.env.PORT ?? 3000);
@@ -40,6 +51,42 @@ const tailnetPort = process.env.PANEL_TAILNET_PORT
   ? Number(process.env.PANEL_TAILNET_PORT)
   : null;
 const app = new Hono<AuthEnv>();
+app.use("*", async (c, next) => {
+  const started = performance.now();
+  try {
+    return await next();
+  } finally {
+    log("info", "request", {
+      durationMs: Math.round(performance.now() - started),
+      method: c.req.method,
+      path: c.req.path,
+      // The pattern of the handler that answered (dispatch has moved past
+      // this middleware by now).
+      route: routePath(c),
+      status: c.res.status,
+    });
+  }
+});
+app.use(
+  "/api/*",
+  timeout(
+    REQUEST_TIMEOUT_MS,
+    new HTTPException(504, {
+      message: `request exceeded ${REQUEST_TIMEOUT_MS}ms`,
+    })
+  )
+);
+app.onError((thrown, c) => {
+  if (thrown instanceof HTTPException) {
+    return c.json({ error: thrown.message }, thrown.status);
+  }
+  log("error", "unhandled error", {
+    error: thrown.message,
+    method: c.req.method,
+    path: c.req.path,
+  });
+  return c.json({ error: "internal error" }, 500);
+});
 app.use(
   "/api/*",
   requireCaller({
@@ -52,22 +99,16 @@ const knowledgeCfg = loadKnowledgeConfig();
 const knowledge = createKnowledgeClient(knowledgeCfg);
 
 const FACTORY_NS = "sandbox";
-const FACTORY_CRONJOB = "factory-orchestrator";
-// Factory-eligible repos; keep in sync with apps/factory/orchestrator/run.sh.
-// Extend via FACTORY_EXTRA_REPOS="a/b,c/d".
-const FACTORY_REPOS = new Set([
-  "gwkline/homelab",
-  "gwkline/launchpad",
-  "gwkline/plantry",
-  "gwkline/personal-site",
-  "gwkline/kline-services-bot",
-  "gwkline/discord-bot",
-  "gwkline/pr-czar",
-  ...(process.env.FACTORY_EXTRA_REPOS ?? "")
-    .split(",")
-    .map((r) => r.trim())
-    .filter(Boolean),
+// Each factory repo and the orchestrator CronJob that serves it
+// (deploy/factory/base/orchestrator-*cronjob.yaml). A run clones that CronJob,
+// so a repo without one could never leave factory/queued.
+const FACTORY_ORCHESTRATORS: ReadonlyMap<string, string> = new Map([
+  ["gwkline/homelab", "factory-orchestrator"],
+  ["gwkline/launchpad", "factory-orchestrator-launchpad"],
 ]);
+const FACTORY_REPOS: ReadonlySet<string> = new Set(
+  FACTORY_ORCHESTRATORS.keys()
+);
 const FACTORY_PROFILES = new Set(["code-pr", "security"]);
 const DEFAULT_FACTORY_REPO = process.env.FACTORY_REPO ?? "gwkline/launchpad";
 const DEFAULT_FACTORY_PROFILE = process.env.FACTORY_PROFILE ?? "code-pr";
@@ -146,6 +187,7 @@ interface GhPull {
   mergeable?: boolean;
   mergeable_state?: string;
   merged_at?: string | null;
+  node_id?: string;
   number: number;
   state: string;
   title: string;
@@ -202,16 +244,24 @@ const ghFetch = async (
       { status: 500 }
     );
   }
-  const res = await fetch(`${GH_API_BASE}${route}`, {
-    ...init,
-    headers: {
-      accept: "application/vnd.github+json",
-      authorization: `Bearer ${token}`,
-      "x-github-api-version": "2022-11-28",
-      ...(init.headers as Record<string, string> | undefined),
-    },
-  });
-  const text = await res.text();
+  const call = { method: init.method ?? "GET", path: route };
+  let res: Response;
+  let text: string;
+  try {
+    res = await fetch(`${GH_API_BASE}${route}`, {
+      ...init,
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${token}`,
+        "x-github-api-version": "2022-11-28",
+        ...(init.headers as Record<string, string> | undefined),
+      },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    text = await res.text();
+  } catch (error: unknown) {
+    throw upstreamError("github", call, error);
+  }
   let json;
   try {
     json = text ? JSON.parse(text) : undefined;
@@ -222,7 +272,7 @@ const ghFetch = async (
     const msg =
       (json as { message?: string } | undefined)?.message ??
       `${res.status} ${res.statusText}`;
-    throw Object.assign(new Error(msg), { body: json, status: res.status });
+    throw upstreamError("github", call, new Error(msg), res.status);
   }
   return json;
 };
@@ -241,11 +291,15 @@ const errStatus = (error: unknown): number | null => {
   return null;
 };
 
-// Statuses in `passThrough` surface verbatim; everything else becomes 502.
-type RespondCode = 400 | 404 | 405 | 409 | 422 | 502;
-const respondStatus = (error: unknown, passThrough: number[]): RespondCode => {
+// Timeouts surface as 504 and statuses in `passThrough` verbatim; every
+// other failure becomes 502.
+type RespondCode = 400 | 404 | 405 | 409 | 422 | 502 | 504;
+const respondStatus = (
+  error: unknown,
+  passThrough: number[] = []
+): RespondCode => {
   const status = errStatus(error);
-  if (status !== null && passThrough.includes(status)) {
+  if (status !== null && (status === 504 || passThrough.includes(status))) {
     return status as RespondCode;
   }
   return 502;
@@ -305,7 +359,7 @@ app.get("/api/state", async (c) => {
       now,
     });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -333,7 +387,7 @@ app.get("/api/cluster", async (c) => {
       podsByNs,
     });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -347,7 +401,7 @@ app.get("/api/devtools", async (c) => {
       tools,
     });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -507,7 +561,7 @@ app.get("/api/cluster/pods", async (c) => {
     }));
     return c.json({ pods: out });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -566,7 +620,7 @@ app.get("/api/factory/issues", async (c) => {
       }));
     return c.json({ issues, repo });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -612,9 +666,9 @@ app.get("/api/factory/stats/rollup", async (c) => {
       upsertSnapshot(FACTORY_STATS_PATH, snapshot);
       persisted = true;
     } catch (error: unknown) {
-      console.warn(
-        `[panel] stats snapshot not persisted: ${errMessage(error)}`
-      );
+      log("warn", "stats snapshot not persisted", {
+        error: errMessage(error),
+      });
     }
   }
   const history = historyFromStore(loadStatsStore(FACTORY_STATS_PATH));
@@ -724,7 +778,7 @@ app.get("/api/factory/prs", async (c) => {
     prs.sort((a, b) => a.number - b.number);
     return c.json({ prs, repo });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -946,7 +1000,7 @@ app.get("/api/factory/stats", async (c) => {
     statsCache.set(repo, { at: Date.now(), body });
     return c.json({ ...body, cached: false });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -1026,17 +1080,28 @@ const rejectUnknownFields = (
     : null;
 };
 
-// Clone the orchestrator CronJob into an ad-hoc Job with FACTORY_ISSUE,
-// FACTORY_PROFILE, and FACTORY_TRIGGERED_BY injected. Returns the job name or
-// the failure message; the queued label is kept either way.
+// Replaces entries by name rather than appending: duplicate env names draw
+// API warnings and leave anyone reading the spec guessing which value runs.
+const withEnv = (env: EnvVar[], set: Record<string, string>): EnvVar[] => [
+  ...env.filter((e) => !Object.hasOwn(set, e.name)),
+  ...Object.entries(set).map(([name, value]) => ({ name, value })),
+];
+
+// Clone the repo's orchestrator CronJob into an ad-hoc Job pinned to the
+// requested repo, issue, profile, and caller. Returns the job name or the
+// failure message; the queued label is kept either way.
 const triggerFactoryJob = async (
   repo: string,
   profile: string,
   issueNum: number,
   requestedBy: string
 ): Promise<string | Error> => {
+  const cronJob = FACTORY_ORCHESTRATORS.get(repo);
+  if (cronJob === undefined) {
+    return new Error(`no orchestrator for ${repo}`);
+  }
   try {
-    const cj = await k8s.getCronJob(FACTORY_CRONJOB);
+    const cj = await k8s.getCronJob(cronJob);
     const template = cj.spec?.jobTemplate;
     if (!template) {
       return new Error("CronJob has no jobTemplate");
@@ -1047,12 +1112,12 @@ const triggerFactoryJob = async (
     const spec = structuredClone(template.spec ?? {}) as JobTemplateSpec;
     const containers = spec.template?.spec?.containers ?? [];
     if (containers[0]) {
-      containers[0].env = [
-        ...(containers[0].env ?? []),
-        { name: "FACTORY_ISSUE", value: String(issueNum) },
-        { name: "FACTORY_PROFILE", value: profile },
-        { name: "FACTORY_TRIGGERED_BY", value: requestedBy },
-      ];
+      containers[0].env = withEnv(containers[0].env ?? [], {
+        FACTORY_ISSUE: String(issueNum),
+        FACTORY_PROFILE: profile,
+        FACTORY_REPO: repo,
+        FACTORY_TRIGGERED_BY: requestedBy,
+      });
     }
     const job = {
       apiVersion: "batch/v1",
@@ -1143,6 +1208,73 @@ app.post("/api/factory/review", async (c) => {
       { error: errMessage(error) },
       respondStatus(error, [404, 422])
     );
+  }
+});
+
+interface GhGraphql {
+  data?: {
+    markPullRequestReadyForReview?: { pullRequest?: { isDraft?: boolean } };
+  };
+  errors?: { message?: string }[];
+}
+
+// Un-draft a factory PR. REST cannot flip draft; only this GraphQL mutation can.
+app.post("/api/factory/ready", async (c) => {
+  let body: { repo?: string; pr?: number | string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const repo = (body.repo ?? DEFAULT_FACTORY_REPO).trim();
+  if (!FACTORY_REPOS.has(repo)) {
+    return c.json(
+      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
+      400
+    );
+  }
+  const pr = parseNum(body.pr);
+  if (pr === null) {
+    return c.json({ error: "pr must be a positive integer" }, 400);
+  }
+  let meta: GhPull;
+  try {
+    meta = (await ghFetch(`/repos/${repo}/pulls/${pr}`)) as GhPull;
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, respondStatus(error, [404]));
+  }
+  const branchError = notFactoryBranch(pr, meta);
+  if (branchError !== null) {
+    return c.json({ error: `${branchError} — refusing to change it` }, 409);
+  }
+  if (meta.draft !== true) {
+    return c.json({ error: `PR #${pr} is already ready for review` }, 409);
+  }
+  try {
+    const out = (await ghFetch("/graphql", {
+      body: JSON.stringify({
+        query:
+          "mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { isDraft } } }",
+        variables: { id: meta.node_id },
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })) as GhGraphql;
+    const isDraft =
+      out.data?.markPullRequestReadyForReview?.pullRequest?.isDraft;
+    if (out.errors?.length || isDraft !== false) {
+      return c.json(
+        {
+          error:
+            out.errors?.map((e) => e.message).join("; ") ||
+            `PR #${pr} is still a draft`,
+        },
+        502
+      );
+    }
+    return c.json({ isDraft, pr, repo });
+  } catch (error: unknown) {
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -1247,7 +1379,7 @@ app.post("/api/factory/run", async (c) => {
     if (errStatus(error) === 404) {
       return c.json({ error: `issue #${issueNum} not found in ${repo}` }, 404);
     }
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
   if (issue.pull_request) {
     return c.json({ error: `issue #${issueNum} is a pull request` }, 400);
@@ -1366,7 +1498,9 @@ const parseMarkerBody = (body: string) => {
 };
 
 // Maps upstream failures to actionable statuses without leaking GitHub internals.
-type IssueFetch = { issue: GhIssue } | { error: string; status: 404 | 502 };
+type IssueFetch =
+  | { issue: GhIssue }
+  | { error: string; status: 404 | 502 | 504 };
 const fetchIssue = async (
   repo: string,
   issueNum: number
@@ -1379,7 +1513,10 @@ const fetchIssue = async (
     if (errStatus(error) === 404) {
       return { error: `issue #${issueNum} not found in ${repo}`, status: 404 };
     }
-    return { error: errMessage(error), status: 502 };
+    return {
+      error: errMessage(error),
+      status: errStatus(error) === 504 ? 504 : 502,
+    };
   }
 };
 
@@ -1406,16 +1543,20 @@ const fetchRunMarker = async (
   }
 };
 
+// Issue numbers repeat across repos, so a run's Jobs match on both. Jobs
+// whose repo is unknown belong to no run.
+const isRunJob = (j: K8sObject, repo: string, issueNum: number): boolean =>
+  j.metadata?.labels?.["factory.gwkline.io/issue"] === String(issueNum) &&
+  jobRepo(j) === repo;
+
 const fetchRunJobs = async (
+  repo: string,
   issueNum: number
 ): Promise<{ name: string; status: string }[]> => {
   try {
     const all = await k8s.listJobs();
     return (all.items ?? [])
-      .filter(
-        (j: K8sObject) =>
-          j.metadata?.labels?.["factory.gwkline.io/issue"] === String(issueNum)
-      )
+      .filter((j: K8sObject) => isRunJob(j, repo, issueNum))
       .map((j: K8sObject) => ({
         name: j.metadata?.name ?? "",
         status: viewJob(j).status,
@@ -1452,7 +1593,7 @@ app.get("/api/factory/run", async (c) => {
     return c.json({ error: `no factory run on issue #${issueNum}` }, 404);
   }
   const { marker, parsed } = await fetchRunMarker(repo, issueNum);
-  const jobs = await fetchRunJobs(issueNum);
+  const jobs = await fetchRunJobs(repo, issueNum);
   return c.json({
     artifacts: {
       logTail: parsed?.logTail ?? null,
@@ -1509,7 +1650,7 @@ app.get("/api/factory/runs", async (c) => {
       .filter((r) => state === undefined || state === "" || r.state === state);
     return c.json({ repo, runs });
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
 });
 
@@ -1570,10 +1711,13 @@ const auditComment = async (
   }
 };
 
-const inFlightJobs = async (issueNum: number): Promise<K8sObject[]> => {
+const inFlightJobs = async (
+  repo: string,
+  issueNum: number
+): Promise<K8sObject[]> => {
   const all = await k8s.listJobs();
   return (all.items ?? []).filter((j: K8sObject) => {
-    if (j.metadata?.labels?.["factory.gwkline.io/issue"] !== String(issueNum)) {
+    if (!isRunJob(j, repo, issueNum)) {
       return false;
     }
     const conditions = j.status?.conditions ?? [];
@@ -1632,10 +1776,10 @@ app.post("/api/factory/run/cancel", async (c) => {
   // A failed delete still leaves the label swapped; the next tick converges.
   let stopping: string[] = [];
   try {
-    const inFlight = await inFlightJobs(target.issue);
+    const inFlight = await inFlightJobs(target.repo, target.issue);
     stopping = inFlight.map((j) => j.metadata?.name ?? "");
   } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error));
   }
   const deletes = await Promise.all(
     stopping.map(async (name): Promise<string | null> => {
@@ -1795,10 +1939,19 @@ app.patch("/api/cronjobs/:name", async (c) => {
     patch.spec.suspend = body.suspended === true;
   }
   if (body.schedule !== undefined) {
-    if (!/^[\d*/,-]+$/u.test(body.schedule)) {
-      return c.json({ error: "invalid cron schedule" }, 400);
+    if (
+      typeof body.schedule !== "string" ||
+      !validCronSchedule(body.schedule)
+    ) {
+      return c.json(
+        {
+          error:
+            "schedule must be five cron fields: minute hour day-of-month month day-of-week",
+        },
+        400
+      );
     }
-    patch.spec.schedule = body.schedule;
+    patch.spec.schedule = body.schedule.trim().split(/\s+/u).join(" ");
   }
   if (!Object.keys(patch.spec).length) {
     return c.json({ error: "nothing to patch" }, 400);
@@ -1807,8 +1960,7 @@ app.patch("/api/cronjobs/:name", async (c) => {
     await k8s.patchCronJob(name, patch);
     return c.json({ name, ok: true });
   } catch (error: unknown) {
-    const status = errStatus(error);
-    return c.json({ error: errMessage(error) }, status === 404 ? 404 : 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error, [404]));
   }
 });
 
@@ -1821,8 +1973,7 @@ app.delete("/api/jobs/:name", async (c) => {
     await k8s.deleteJob(name);
     return c.json({ name, ok: true });
   } catch (error: unknown) {
-    const status = errStatus(error);
-    return c.json({ error: errMessage(error) }, status === 404 ? 404 : 502);
+    return c.json({ error: errMessage(error) }, respondStatus(error, [404]));
   }
 });
 
@@ -1857,7 +2008,41 @@ app.use("*", async (c, next) => {
   }
 });
 const ports = tailnetPort === null ? [port] : [port, tailnetPort];
-await Promise.all(
-  ports.map((p) => once(serve({ fetch: app.fetch, port: p }), "listening"))
+const servers = ports.map(
+  (p) => serve({ fetch: app.fetch, port: p }) as Server
 );
-console.log(`[panel] listening on ${ports.join(", ")}`);
+await Promise.all(servers.map((s) => once(s, "listening")));
+log("info", `listening on ${ports.join(", ")}`, { ports });
+
+// Well inside the pod's default 30 s termination grace period.
+const DRAIN_MS = 10_000;
+
+// SIGTERM: stop accepting connections, let in-flight requests finish, then
+// exit. Keep-alive sockets close as soon as they go idle; whatever is still
+// open after DRAIN_MS is cut.
+const drain = async (): Promise<void> => {
+  log("info", "draining", { drainMs: DRAIN_MS });
+  const idle = setInterval(() => {
+    for (const s of servers) {
+      s.closeIdleConnections();
+    }
+  }, 100);
+  const cut = setTimeout(() => {
+    for (const s of servers) {
+      s.closeAllConnections();
+    }
+  }, DRAIN_MS);
+  await Promise.all(
+    servers.map((s) => {
+      s.close();
+      return once(s, "close");
+    })
+  );
+  clearInterval(idle);
+  clearTimeout(cut);
+  log("info", "stopped");
+  process.exit(0);
+};
+process.once("SIGTERM", () => {
+  void drain();
+});

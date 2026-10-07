@@ -103,6 +103,21 @@ const json = (res: ServerResponse, payload: unknown): void => {
     .end(JSON.stringify(payload));
 };
 
+// An active sandbox Job as the Kubernetes list returns it.
+const seedJob = (
+  name: string,
+  labels: Record<string, string>,
+  env: { name: string; value: string }[] = []
+) => ({
+  metadata: {
+    creationTimestamp: new Date().toISOString(),
+    labels,
+    name,
+  },
+  spec: { template: { spec: { containers: [{ env }] } } },
+  status: { active: 1 },
+});
+
 test("factory MCP surface: denied, idempotent, and successful lifecycle", async () => {
   // ── In-memory GitHub (stateful enough for idempotency + audit checks) ──
   interface GhIssue {
@@ -280,27 +295,33 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
   // ── Mock Kubernetes API: cronjob template + job create/list/delete ──
   const created: Record<string, unknown>[] = [];
   const deleted: string[] = [];
+  // Issue numbers collide across repos: only the launchpad Jobs belong to
+  // launchpad runs. Worker Jobs carry their repo in env, not a label.
   const seedJobs = [
-    {
-      metadata: {
-        creationTimestamp: new Date().toISOString(),
-        labels: { "factory.gwkline.io/issue": "6" },
-        name: "factory-issue-6-old",
-      },
-      status: { active: 1 },
-    },
-    {
-      metadata: {
-        creationTimestamp: new Date().toISOString(),
-        labels: { "factory.gwkline.io/issue": "9" },
-        name: "factory-issue-9-live",
-      },
-      status: { active: 1 },
-    },
+    seedJob("factory-issue-6-old", {
+      "factory.gwkline.io/issue": "6",
+      "factory.gwkline.io/repo": "gwkline/launchpad",
+    }),
+    seedJob("factory-issue-6-homelab", {
+      "factory.gwkline.io/issue": "6",
+      "factory.gwkline.io/repo": "gwkline/homelab",
+    }),
+    seedJob("factory-issue-9-live", { "factory.gwkline.io/issue": "9" }, [
+      { name: "FACTORY_REPO", value: "gwkline/launchpad" },
+    ]),
+    seedJob("factory-issue-9-homelab", {
+      "factory.gwkline.io/issue": "9",
+      "factory.gwkline.io/repo": "gwkline/homelab",
+    }),
+    seedJob("factory-issue-9-unknown", { "factory.gwkline.io/issue": "9" }),
   ];
+  const cronJobsRead: string[] = [];
+  const deleteQueries: string[] = [];
   const k8sMock = createServer((req, res) => {
     const url = req.url ?? "";
     if (req.method === "GET" && url.includes("/cronjobs/")) {
+      cronJobsRead.push(url.split("/cronjobs/")[1] ?? "");
+      // Stale values the clone must replace rather than shadow.
       res.writeHead(200, { "content-type": "application/json" }).end(
         JSON.stringify({
           spec: {
@@ -309,7 +330,18 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
                 template: {
                   spec: {
                     containers: [
-                      { env: [{ name: "FACTORY_REPO", value: "seed" }] },
+                      {
+                        env: [
+                          { name: "FACTORY_REPO", value: "seed" },
+                          { name: "FACTORY_ISSUE", value: "0" },
+                          {
+                            name: "GH_TOKEN",
+                            valueFrom: {
+                              secretKeyRef: { key: "token", name: "gh" },
+                            },
+                          },
+                        ],
+                      },
                     ],
                   },
                 },
@@ -331,8 +363,11 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
       return;
     }
     if (req.method === "DELETE" && url.includes("/jobs/")) {
-      const name = decodeURIComponent(url.split("/jobs/")[1] ?? "");
-      deleted.push(name);
+      const target = new URL(url, "http://k8s");
+      deleted.push(
+        decodeURIComponent(target.pathname.split("/jobs/")[1] ?? "")
+      );
+      deleteQueries.push(target.search);
       res.writeHead(200).end("{}");
       return;
     }
@@ -446,6 +481,17 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
       method: "POST",
     });
     assert.equal(badRepo.status, 400);
+    // A real repo without an orchestrator CronJob would sit queued forever.
+    const noOrchestrator = await fetch(`${base}/api/factory/run`, {
+      body: JSON.stringify({ issue: 6, repo: "gwkline/plantry" }),
+      headers: jsonAs(),
+      method: "POST",
+    });
+    assert.equal(noOrchestrator.status, 400);
+    assert.deepEqual(profilesBody.repos, [
+      "gwkline/homelab",
+      "gwkline/launchpad",
+    ]);
 
     // ── Success: create run (identity from the bearer token) ──
     const create = await fetch(`${base}/api/factory/run`, {
@@ -491,11 +537,45 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
       ])
     );
     assert.equal(env.FACTORY_TRIGGERED_BY, "hermes");
+    assert.equal(cronJobsRead.at(-1), "factory-orchestrator-launchpad");
     assert.equal(
       job.metadata.labels["factory.gwkline.io/requested-by"],
       "hermes"
     );
     assert.equal(job.metadata.labels["factory.gwkline.io/issue"], "7");
+
+    // Each repo runs from its own orchestrator, pinned to that repo; the
+    // template's stale values are replaced, not shadowed.
+    for (const [repo, cronJob] of [
+      ["gwkline/homelab", "factory-orchestrator"],
+      ["gwkline/launchpad", "factory-orchestrator-launchpad"],
+    ] as const) {
+      issue(repo, 40, []);
+      const res = await fetch(`${base}/api/factory/run`, {
+        body: JSON.stringify({ issue: 40, repo }),
+        headers: jsonAs(),
+        method: "POST",
+      });
+      assert.equal(res.status, 201, `${repo}: ${await res.clone().text()}`);
+      assert.equal(cronJobsRead.at(-1), cronJob);
+      const cloned = created.at(-1) as {
+        metadata: { labels: Record<string, string> };
+        spec: {
+          template: {
+            spec: {
+              containers: { env: { name: string; value?: string }[] }[];
+            };
+          };
+        };
+      };
+      const clonedEnv = cloned.spec.template.spec.containers[0]?.env ?? [];
+      const values = (name: string) =>
+        clonedEnv.filter((e) => e.name === name).map((e) => e.value);
+      assert.deepEqual(values("FACTORY_REPO"), [repo]);
+      assert.deepEqual(values("FACTORY_ISSUE"), ["40"]);
+      assert.ok(clonedEnv.some((e) => e.name === "GH_TOKEN"));
+      assert.equal(cloned.metadata.labels["factory.gwkline.io/repo"], repo);
+    }
 
     // ── Idempotent: same call now refused with the actionable state ──
     const jobsBefore = created.length;
@@ -627,7 +707,9 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     assert.equal(cancelBody.cancelled, true);
     assert.deepEqual(cancelBody.jobsStopped, ["factory-issue-9-live"]);
     assert.equal(cancelBody.requestedBy, "hermes");
-    assert.ok(deleted.includes("factory-issue-9-live"));
+    assert.deepEqual(deleted, ["factory-issue-9-live"]);
+    // The Job's pods go with it.
+    assert.deepEqual(deleteQueries, ["?propagationPolicy=Background"]);
     const i9 = findIssue("gwkline/launchpad", 9);
     assert.ok(i9?.labels.some((l) => l.name === "factory/cancelled"));
     assert.ok(!i9?.labels.some((l) => l.name === "factory/queued"));
