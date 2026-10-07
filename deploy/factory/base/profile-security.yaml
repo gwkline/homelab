@@ -1,3 +1,4 @@
+# Field meanings: profile-code-pr.yaml.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,16 +11,16 @@ data:
   profile.json: |
     {
       "name": "security",
-      "version": 1,
       "image": "ghcr.io/gwkline/homelab/factory/security:latest",
       "serviceAccount": "factory-security",
-      "activeDeadlineSeconds": 1800,
-      "backoffLimit": 1,
-      "ttlSecondsAfterFinished": 3600,
-      "resources": { "requests": {"cpu": "500m", "memory": "1Gi"},
-                     "limits":   {  "cpu": "2",     "memory": "4Gi"} },
-      "envAllowlist": ["FACTORY_SECURITY_MODE"],
-      "netpolName": "allow-factory-security"
+      "activeDeadlineSeconds": 3600,
+      "backoffLimit": 0,
+      "ttlSecondsAfterFinished": 86400,
+      "resources": {
+        "requests": { "cpu": "500m", "memory": "512Mi", "ephemeral-storage": "1Gi" },
+        "limits": { "cpu": "2", "memory": "4Gi", "ephemeral-storage": "8Gi" }
+      },
+      "workSizeLimit": "4Gi"
     }
 ---
 # Same egress as code-pr (allow-factory-worker).

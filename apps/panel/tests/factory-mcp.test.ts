@@ -757,11 +757,14 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     );
     const retryJob = created.at(-1) as {
       metadata: { labels: Record<string, string> };
+      spec: { ttlSecondsAfterFinished?: number };
     };
     assert.equal(
       retryJob.metadata.labels["factory.gwkline.io/requested-by"],
       "t3code"
     );
+    // The mocked CronJob template has no TTL; the cloned Job still gets one.
+    assert.equal(retryJob.spec.ttlSecondsAfterFinished, 86_400);
     assert.equal(
       retryJob.metadata.labels["factory.gwkline.io/profile"],
       "security"
