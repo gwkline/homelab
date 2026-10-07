@@ -5,7 +5,7 @@ Every runtime credential, where it comes from, and who consumes it. No secret va
 ## Contract
 
 - One 1Password vault, **`homelab`**. The ESO service account can read only that vault; its token is the one hand-entered bootstrap secret.
-- `SecretStore` `onepassword` (1Password SDK provider, auth from Secret `onepassword-service-account` key `token`) exists in `agents`, `sandbox`, `work` (`deploy/github-tokens/base/secretstore.yaml`) and `tailscale` (`deploy/tailscale/secretstore.yaml`).
+- One store: `ClusterSecretStore` `onepassword` (1Password SDK provider, `deploy/github-tokens/base/secretstore.yaml`). It authenticates with Secret `external-secrets/onepassword-service-account` (key `token`); no other namespace holds that token. Its `spec.conditions` admits ExternalSecrets only from `agents`, `sandbox`, `tailscale` and `work`.
 - 1Password item/field names equal the ExternalSecret `remoteRef.key`/`property` verbatim; Secret names are referenced literally by manifests — never rename one side alone.
 - ExternalSecrets refresh hourly. File-mounted consumers pick up rotations automatically; env consumers need `kubectl rollout restart`.
 - Any new secret reference gets a row here before its manifest lands. Never widen a token's scope as part of an unrelated change.
@@ -30,7 +30,7 @@ Every runtime credential, where it comes from, and who consumes it. No secret va
 
 | Secret (keys) | Namespace | How | Notes |
 | --- | --- | --- | --- |
-| `onepassword-service-account` (`token`) | agents, sandbox, work, tailscale | `scripts/create-onepassword-service-account.sh` (env, stdin, or hidden prompt) | The bootstrap secret. Rotation: `deploy/eso/README.md` |
+| `onepassword-service-account` (`token`) | external-secrets | `scripts/create-onepassword-service-account.sh` (env, stdin, or hidden prompt; server-side apply) | The bootstrap secret. Rotation: `deploy/eso/README.md` |
 | `pg-primary-factory-owner`, `pg-primary-knowledge-owner` (basic-auth) | database | loop in `deploy/postgres/README.md` | CNPG applies the role passwords; the knowledge one must match 1Password `knowledge-db` |
 | `factory-opencode-auth` (`auth-b64`) | sandbox | `kubectl -n sandbox create secret generic factory-opencode-auth --from-file=auth-b64=<file holding base64 of opencode auth.json>` | **Gap:** no ExternalSecret yet. Model-provider keys (OpenRouter) for the orchestrator and worker Jobs |
 | `github-app` (`app-id`, `installation-id`, `private-key`) | sandbox | `scripts/create-github-app-secret.sh sandbox` from 1Password item `factory-github-app` | Collector mints short-lived installation tokens; see [github-app.md](github-app.md) |
@@ -55,5 +55,5 @@ Out of scope: CI's per-run `GITHUB_TOKEN` and Kubernetes ServiceAccount tokens.
 ```sh
 grep -rnE "secretKeyRef|secretRef|secretName|imagePullSecrets" deploy/ apps/ scripts/
 grep -rn "kind: ExternalSecret" deploy/
-kubectl get externalsecret -A && kubectl get secretstore -A
+kubectl get externalsecret -A && kubectl get clustersecretstore
 ```

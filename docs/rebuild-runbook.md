@@ -49,7 +49,7 @@ Server-side apply (two CRDs exceed the client-side annotation limit):
 ```sh
 kubectl apply --server-side -k deploy/eso/base
 kubectl wait --for=condition=Established \
-  crd/externalsecrets.external-secrets.io crd/secretstores.external-secrets.io
+  crd/externalsecrets.external-secrets.io crd/clustersecretstores.external-secrets.io
 kubectl -n external-secrets rollout status deploy/external-secrets-webhook
 kubectl -n external-secrets rollout status deploy/external-secrets
 ```
@@ -58,7 +58,7 @@ kubectl -n external-secrets rollout status deploy/external-secrets
 
 ```sh
 kubectl apply -k deploy/namespaces
-./scripts/create-onepassword-service-account.sh   # agents, sandbox, work, tailscale
+./scripts/create-onepassword-service-account.sh   # external-secrets only; the ClusterSecretStore reads it
 ```
 
 Postgres owner-role Secrets in `database` (generate fresh passwords, then set the `knowledge-db` 1Password item's password to match): see [deploy/postgres/README.md](../deploy/postgres/README.md#prerequisites).
