@@ -2,15 +2,25 @@
   "name": "homelab",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "apps/panel",
+    "apps/knowledge",
+    "apps/knowledge-ingest",
+    "apps/knowledge-retrieval",
+    "apps/factory/collector",
+    "apps/factory/github-app"
+  ],
   "type": "module",
   "scripts": {
     "lint": "ultracite check",
     "lint:fix": "ultracite fix",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "typecheck": "tsc -p apps/panel --noEmit && tsc -p apps/factory/github-app --noEmit && tsc -p apps/factory/collector --noEmit"
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm test --workspaces"
   },
   "devDependencies": {
+    "@types/node": "26.3.0",
     "oxfmt": "0.72.0",
     "oxlint": "1.80.0",
     "typescript": "7.0.2",

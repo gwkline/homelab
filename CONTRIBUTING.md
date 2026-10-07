@@ -1,22 +1,19 @@
 # Contributing
 
-Small repo, few rules.
-
 ## Before opening a PR
 
 ```sh
-./scripts/verify.sh
+npm ci                 # one install for every app (npm workspaces)
+npm run lint && npm run format:check && npm run typecheck && npm test
+./scripts/verify.sh    # shellcheck, manifest builds, secret scan
 ```
 
-It must pass. It runs the same checks CI runs: shell lint, manifest builds, secret-pattern scan, image-reference consistency.
+CI runs the same checks, plus every `apps/**/tests/*.test.sh` fixture test and the panel e2e against a kind cluster.
 
 ## Conventions
 
-- Manifests live under `deploy/<workload>/base/` as kustomize bases. There are no overlays; edit `base/` directly.
-- Shell scripts are POSIX sh (or bash where `read -s` is needed) and must stay shellcheck-clean.
-- Never commit tokens or kubeconfigs. Long-lived secrets are synced from 1Password by External Secrets (`deploy/github-tokens/base/`); the only manually created secret is the 1Password service-account token, applied at bootstrap via env/stdin without logging it.
-- New workload checklist: namespace entry (+ PSA label choice), default-deny NetworkPolicy, `github-token` ExternalSecret coverage in that namespace (`deploy/github-tokens/base/`), manifests under `deploy/`, README "What runs here" entry.
-
-## Adding a workload
-
-Copy the closest existing pattern: StatefulSet + PVC + tailscale Service for long-running apps (`deploy/t3code/base/`), CronJob for batch work (`deploy/node-cleanup/base/`). Keep privilege grants inside `sandbox`.
+- One kustomize base per component under `deploy/<component>/base/`; compose it into `clusters/home/base/kustomization.yaml`.
+- Images built here are referenced as `ghcr.io/gwkline/homelab/<app>:latest`; `deploy/deployer` rolls them out. Add new homelab workloads to the deployer's target list.
+- Shell is POSIX `sh` unless it needs bash, and stays shellcheck-clean. TypeScript is ESM, run directly with `--experimental-strip-types` where no bundle is needed.
+- Never commit secrets or kubeconfigs. Credentials come from 1Password through External Secrets.
+- Comments explain why the code is the way it is now. History belongs in git, not in comments.
