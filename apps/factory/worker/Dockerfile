@@ -1,81 +1,25 @@
-# Factory coding worker (#74): ephemeral, unattended, no server.
-# Reuses t3code's tested CLI-install layers; runtime state stays in-task.
-# Differences vs t3code: no t3 serve, no pairing, no persistent volumes,
-# explicit /task (input) and /out (output) contract dirs.
-#
-# Reproducibility (#74): every CLI is pinned via ARG (t3code floats @latest by
-# design for pairing sessions; the unattended worker must rebuild identical
-# toolchains). Bump the ARGs in lockstep with t3code so builds stay equivalent.
+# Factory coding worker: ephemeral, unattended, no server. Shares t3code's
+# toolchain installers; differs by having no t3 serve, no pairing, no
+# persistent volumes, and explicit /task (input) and /out (output) dirs.
 
 FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS worker-base
-
-ARG RUST_VERSION=1.98.0
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
       git ca-certificates openssh-client python3 make g++ curl unzip xz-utils \
   && rm -rf /var/lib/apt/lists/*
 
-# gh CLI (#23): consistent CLI for issues/branches/PRs/CI checks — exact
-# release, verified against the checksums.txt published with it (#35).
-# renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.+)$
-ARG GH_VERSION=2.98.0
-RUN curl -fsSLo "/tmp/gh_${GH_VERSION}_linux_amd64.tar.gz" \
-      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
-  && (cd /tmp \
-      && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_checksums.txt" \
-          | grep "gh_${GH_VERSION}_linux_amd64.tar.gz" | sha256sum -c -) \
-  && tar -xzf "/tmp/gh_${GH_VERSION}_linux_amd64.tar.gz" -C /tmp --strip-components=1 \
-  && install -m755 /tmp/bin/gh /usr/local/bin/gh \
-  && rm -rf /tmp/* \
-  && gh --version
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:${PATH}
+COPY apps/shared/install-rust.sh /usr/local/lib/install-rust.sh
+RUN sh /usr/local/lib/install-rust.sh
 
-# Pinned Rust toolchain (matches t3code image so builds behave identically).
-RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y \
-      --profile minimal --default-toolchain "${RUST_VERSION}" \
-  && chmod -R a+rwX /usr/local/rustup /usr/local/cargo
+COPY apps/shared/install-gh.sh /usr/local/lib/install-gh.sh
+RUN sh /usr/local/lib/install-gh.sh
 
-# Coding CLIs — same recorded pins as apps/t3code/Dockerfile (keep in sync,
-# issue #35): exact versions, Renovate proposes bumps through reviewed PRs.
-# renovate: datasource=npm depName=@openai/codex
-ARG CODEX_VERSION=0.152.1
-# renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.258
-# renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.18.23
-RUN npm install -g \
-      "@openai/codex@${CODEX_VERSION}" \
-      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-      "opencode-ai@${OPENCODE_VERSION}"
-
-# Cursor CLI — pinned lab release; SHA-256 of the exact tarball (per arch)
-# recorded at pin time and verified here (no upstream checksum file exists).
-# Same mechanism as apps/t3code/Dockerfile; bump version + digests together.
-ARG CURSOR_AGENT_VERSION=2026.08.11-e8db854
-ARG CURSOR_AGENT_SHA256_X64=bfff4bf6f4e9dd30c1d0ef0a70b6077b074015dd2948e4c50685d53afdcfce5a
-ARG CURSOR_AGENT_SHA256_ARM64=ea13f92e295f523a99ce8d8f57d6894d21e5d1e2d030ffad718ccd5955ca2eed
-RUN ARCH="$(uname -m)" \
-  && case "$ARCH" in \
-       x86_64|amd64) CARCH=x64; SHA="${CURSOR_AGENT_SHA256_X64}" ;; \
-       arm64|aarch64) CARCH=arm64; SHA="${CURSOR_AGENT_SHA256_ARM64}" ;; \
-     esac \
-  && curl -fsSL "https://downloads.cursor.com/lab/${CURSOR_AGENT_VERSION}/linux/${CARCH}/agent-cli-package.tar.gz" \
-      -o /tmp/cursor-agent.tar.gz \
-  && echo "${SHA}  /tmp/cursor-agent.tar.gz" | sha256sum -c - \
-  && mkdir -p /opt/cursor-agent \
-  && tar -xzf /tmp/cursor-agent.tar.gz -C /opt/cursor-agent \
-  && ln -s /opt/cursor-agent/dist-package/cursor-agent /usr/local/bin/cursor-agent \
-  && rm /tmp/cursor-agent.tar.gz
-
-# P-Stack agent workflows (issue #68): the official Cursor plugin tree, fetched
-# at build time and pinned to an upstream commit — no local fork. The pin lives
-# here (single source of truth); apps/factory/worker/tests/pstack-sync.test.sh
-# cross-checks it against ADR-007 and verifies every path the runtime installer
-# references still exists at that commit, so an upstream bump cannot break
-# paths unnoticed. License (MIT) and plugin.json ship inside the fetched tree.
+# P-Stack agent workflows: the official Cursor plugin tree, pinned to an
+# upstream commit.
 ARG PSTACK_REPO=cursor/plugins
 ARG PSTACK_REF=efa2a531985e0a8084d36ff3cf87233be8a9f34b
 ARG PSTACK_VERSION=0.14.7
@@ -87,25 +31,27 @@ RUN curl -fsSL "https://codeload.github.com/${PSTACK_REPO}/tar.gz/${PSTACK_REF}"
   && grep -q "\"version\": \"${PSTACK_VERSION}\"" /opt/pstack/.cursor-plugin/plugin.json \
   && grep -q "License" /opt/pstack/LICENSE \
   && rm /tmp/pstack.tar.gz
-# Run contract assets: typed run-input schema (#74) and the verification
-# skills selected by #68, shipped at a pinned version (manifest.json carries
-# the content sha the smoke test enforces).
+
+# Floating CLIs re-resolve on every CI build: CI passes a unique CACHEBUST so
+# the layer cache cannot replay an old resolution.
+ARG CACHEBUST=1
+COPY apps/shared/install-agent-clis.sh /usr/local/lib/install-agent-clis.sh
+RUN sh /usr/local/lib/install-agent-clis.sh
+
+# Typed run-input schema and pinned verification skills (manifest.json
+# carries the content sha the smoke test enforces).
 COPY apps/factory/worker/brief.schema.json /usr/local/share/worker/brief.schema.json
 COPY apps/factory/worker/skills /usr/local/share/worker/skills
 
-# Non-root worker; task I/O on explicit volume-style paths.
-# node:24 base already ships a non-root 'node' user (uid 1000) — reuse it.
+# node:24 already ships the non-root node user (uid 1000).
 RUN mkdir -p /task /out /work && chown -R node:node /task /out /work
 USER node
 WORKDIR /work
 
 COPY --chmod=755 --chown=node:node apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
 COPY --chmod=755 --chown=node:node apps/factory/worker/entrypoint.sh /usr/local/bin/entrypoint
-# Pinned private skills (#81): the entrypoint syncs these before the agent
-# runs. Defaults are reviewed image changes — bumping SKILLS_REF (full SHA,
-# verified by the sync) or SKILLS_ALLOWLIST is the opt-in update path; a Job
-# may override either via env. Status lands in /out/skills-sync.json and is
-# echoed into the run report.
+# Private skills the entrypoint syncs before the agent runs. A Job may
+# override SKILLS_REF (full SHA, verified by the sync) or SKILLS_ALLOWLIST.
 ENV SKILLS_REF=445e4255288732efb00c8878151610c2669f5e93 \
     SKILLS_ALLOWLIST="software-development/homelab-k3s-ops software-development/poteto-mode" \
     SKILLS_TARGET=/work/skills-generated \
@@ -114,13 +60,8 @@ COPY --chmod=755 --chown=node:node apps/factory/worker/smoke-test.sh /usr/local/
 
 ENTRYPOINT ["/usr/local/bin/entrypoint"]
 
-# --- optional capability layers (#74) ---------------------------------------
-# The default image (worker-base) grants NEITHER browser NOR container-build
-# power; a profile opts in by shipping an image built with
-# `--target worker-browser` / `--target worker-container-build`. Both layers
-# stay unprivileged: no docker socket, no privileged mode, no extra caps.
-#   worker-browser          headless Chromium (agents that must inspect web UIs)
-#   worker-container-build  rootless podman (fuse-overlayfs + user namespaces)
+# Optional capability targets (--target worker-browser / worker-container-build).
+# Both stay unprivileged: no docker socket, no privileged mode, no extra caps.
 FROM worker-base AS worker-browser
 USER root
 RUN apt-get update \

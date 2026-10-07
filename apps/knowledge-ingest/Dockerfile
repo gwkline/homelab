@@ -1,8 +1,5 @@
-# Knowledge ingest API + worker — hono queue API (#58), pg SKIP LOCKED
-# queue, and the real extract → chunk → embed → upsert pipeline over the
-# #56 knowledge schema (git-source pulls need git in the runtime image).
-# Base image is digest-pinned so a rebuild cannot silently pick up a new
-# Debian point release (issue #35), matching apps/panel/Dockerfile.
+# Knowledge ingest API + worker: pg SKIP LOCKED queue feeding the
+# extract -> chunk -> embed -> upsert pipeline.
 FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS build
 WORKDIR /src
 COPY package.json package-lock.json ./

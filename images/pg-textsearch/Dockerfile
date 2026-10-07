@@ -1,4 +1,4 @@
-# pg_textsearch extension image for CNPG ImageVolume delivery (homelab#48).
+# pg_textsearch extension image for CNPG ImageVolume delivery.
 #
 # Layout follows cloudnative-pg/postgres-extensions-containers: the .so ships
 # under /lib, control + SQL under /share/extension. CNPG mounts each Cluster
@@ -14,7 +14,7 @@ FROM $BASE AS builder
 USER 0
 
 ARG PG_MAJOR=18
-# timescale/pg_textsearch release pin (homelab#48): tag + release-asset hash.
+# timescale/pg_textsearch release: tag + release-asset hash.
 ARG EXT_VERSION=1.4.0
 ARG EXT_SHA256=313c231136f19ded24a7d6f4de3ca96f3840b10c55adbfc839cd0068042e2e40
 
