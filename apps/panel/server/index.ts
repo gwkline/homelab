@@ -212,21 +212,12 @@ const ghToken = (): string | null => {
   if (direct) {
     return direct.trim();
   }
-  for (const p of [
-    "/secrets/token",
-    "/secrets/github-token",
-    "/var/run/secrets/github-token",
-  ]) {
-    try {
-      const v = readFileSync(p, "utf-8").trim();
-      if (v) {
-        return v;
-      }
-    } catch {
-      // path not mounted — try the next one
-    }
+  try {
+    return readFileSync("/secrets/token", "utf-8").trim() || null;
+  } catch {
+    // github-token not mounted
+    return null;
   }
-  return null;
 };
 
 const GH_API_BASE = (
@@ -597,36 +588,8 @@ app.get("/api/factory/all-issues", async (c) => {
   return c.json({ repos: reposOut });
 });
 
-app.get("/api/factory/issues", async (c) => {
-  const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
-  if (!FACTORY_REPOS.has(repo)) {
-    return c.json(
-      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
-      400
-    );
-  }
-  try {
-    const data = (await ghFetch(
-      `/repos/${repo}/issues?state=open&per_page=50`
-    )) as GhIssue[];
-    const issues = data
-      .filter((i) => !i.pull_request)
-      .map((i) => ({
-        labels: (i.labels ?? []).map((l) => l.name),
-        number: i.number,
-        state: i.state,
-        title: i.title,
-        url: i.html_url,
-      }));
-    return c.json({ issues, repo });
-  } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, respondStatus(error));
-  }
-});
-
 app.get("/api/factory/stats/rollup", async (c) => {
   const now = new Date();
-  const rollupWeeks = weekKeysBack(now, STATS_WINDOW_WEEKS);
   const week = weekStart(now);
   const weeks = weekKeysBack(now, STATS_WINDOW_WEEKS);
   const repoList = [...FACTORY_REPOS];
@@ -676,9 +639,8 @@ app.get("/api/factory/stats/rollup", async (c) => {
     history,
     persisted,
     repos: reposOut,
-    stats: { weeks: rollupWeeks },
     totals,
-    weeks: rollupWeeks,
+    weeks,
   });
 });
 

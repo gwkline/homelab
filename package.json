@@ -12,7 +12,7 @@
   ],
   "type": "module",
   "scripts": {
-    "lint": "ultracite check",
+    "lint": "ultracite check && knip --workspace apps/panel",
     "lint:fix": "ultracite fix",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "26.3.0",
+    "knip": "6.40.0",
     "oxfmt": "0.72.0",
     "oxlint": "1.80.0",
     "typescript": "7.0.2",

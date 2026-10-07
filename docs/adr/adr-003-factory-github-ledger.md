@@ -72,7 +72,7 @@ Every mutation needs a caller: an allowlisted Tailscale login arriving through t
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/factory/issues`, `/runs`, `/all`, `/profiles` | read views over GitHub |
+| `GET /api/factory/all-issues`, `/runs?repo=`, `/run?repo=&issue=`, `/profiles` | read views over GitHub; `/run` adds the run's Jobs |
 | `POST /api/factory/run`, `/run/cancel`, `/run/retry` | queue, cancel, or retry a Run |
 | `GET /api/factory/prs?repo=` | factory PRs with draft/review/check state |
 | `POST /api/factory/review` | approve / request changes / comment; requires a `factory/issue-*` head |

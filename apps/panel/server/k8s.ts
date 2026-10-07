@@ -220,5 +220,3 @@ export const api = (cfg: K8sConfig) => ({
       "application/merge-patch+json"
     ),
 });
-
-export type K8sApi = ReturnType<typeof api>;

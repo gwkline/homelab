@@ -8,7 +8,7 @@
 // - The panel links out; it never iframes tools or proxies credentials.
 import type { K8sObject } from "./k8s.js";
 
-export interface ToolHealth {
+interface ToolHealth {
   service: string;
   namespace: string;
   port: number;
@@ -136,7 +136,7 @@ export const DEV_TOOLS: ToolDef[] = [
   },
 ];
 
-export type ToolStatus = "healthy" | "unhealthy" | "unconfigured" | "disabled";
+type ToolStatus = "healthy" | "unhealthy" | "unconfigured" | "disabled";
 
 export interface ToolState {
   name: string;
