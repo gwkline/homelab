@@ -3,18 +3,13 @@ kind: Namespace
 metadata:
   name: agents
   labels:
-    # Interactive workloads only — no privileged pods allowed here.
     pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/audit: baseline
-    # Opt this namespace into image-signature verification at admission
-    # (sigstore policy-controller, issue #91 / ADR-004). Only namespaces
-    # with this label are intercepted by the webhook; the policy itself
-    # lives in deploy/image-policy/base.
+    # Opts into image-signature verification (deploy/image-policy).
     policy.sigstore.dev/include: "true"
 ---
-# Throwaway Jobs: factory workers, panel-launched runs, chaos. Egress is
-# restricted to the public internet (deploy/policies/base).
+# Throwaway Jobs (factory, chaos); egress is public-internet only.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -23,17 +18,10 @@ metadata:
     pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/audit: baseline
-    # Image-signature verification opt-in (see the agents namespace note).
     policy.sigstore.dev/include: "true"
 ---
-# Work-isolation zone (work-t3code): a code runner for employer/work
-# repositories. Interactive workloads run here
-# behind the same PSA level as `agents`, but the namespace is otherwise
-# walled off: default-deny ingress AND egress (deploy/policies/base), with
-# egress limited to DNS + the public internet — never the Kubernetes API,
-# the LAN, the tailnet, or another homelab service. The only GitHub
-# credential synced into this namespace is work-github-token, a PAT scoped
-# to the operator's selected work repos (deploy/github-tokens/base/work-github-token.yaml).
+# Work isolation zone: egress is public-internet only, and the only
+# credential is the work-scoped GitHub PAT.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -42,12 +30,8 @@ metadata:
     pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/audit: baseline
-    # Image-signature verification opt-in (see the agents namespace note).
     policy.sigstore.dev/include: "true"
 ---
-# Dedicated namespace for the PostgreSQL cluster (deploy/postgres). Restricted
-# PSA works because CloudNativePG's default pod security context already runs
-# non-root with all capabilities dropped (see deploy/postgres/README.md).
 apiVersion: v1
 kind: Namespace
 metadata:

@@ -1,7 +1,6 @@
 #!/bin/sh
-# Tests for knowledge-context.sh (#86): cited context assembly for run briefs.
-# Runs the real script against a stub retrieval service (local HTTP server
-# speaking the apps/knowledge-retrieval /v1/search contract) and proves:
+# Runs knowledge-context.sh against a local stub of the knowledge-retrieval
+# /v1/search contract and checks:
 #   1. ok path: queries derived (title/body/paths), dedupe across queries,
 #      deterministic ranking, citations carry full provenance
 #   2. budget knobs: min_score filter, whole-chunk char budget, source cap
@@ -17,9 +16,8 @@ FIX="$(mktemp -d)"
 trap 'rm -rf "$FIX"' EXIT
 
 # --- stub /v1/search server ----------------------------------------------------
-# Canned results are selected by substring of the query (mirrors how derived
-# queries differ: title/body/paths). When STUB_SLEEP is set the server stalls
-# before answering (timeout test); when STUB_AUTH_FAIL=1 it always 401s.
+# Canned results are selected by query substring. STUB_SLEEP stalls before
+# answering; STUB_AUTH_FAIL=1 always returns 401.
 cat > "${FIX}/stub.py" << 'PYEOF'
 import json, os, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -90,7 +88,6 @@ while ! curl -s -o /dev/null "http://127.0.0.1:${PORT}/" 2>/dev/null && [ "$i" -
   sleep 0.1
 done
 
-# assert_record: helper to pull a value out of the produced record
 assert_eq() { # $1=desc $2=actual $3=expected
   if [ "${2}" != "${3}" ]; then
     echo "FAIL: $1 — got '${2}', expected '${3}'"

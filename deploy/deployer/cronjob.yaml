@@ -1,11 +1,5 @@
-# Continuous delivery for the homelab-image workloads. Manifests name images
-# by tag (ghcr.io/gwkline/homelab/<app>:latest); each pass clones main,
-# resolves every such tag to the digest it points at now, and applies. A new
-# CI build therefore rolls out as an ordinary spec change, and the applied
-# objects record exactly which digest runs.
-#
-# The deployer does not apply itself: changes to this directory need a manual
-# `kubectl apply -k deploy/deployer`.
+# Every 5 minutes: clone main, resolve each homelab :latest image to its current
+# digest, apply the targets. Changes to this directory need a manual apply.
 apiVersion: batch/v1
 kind: CronJob
 metadata:

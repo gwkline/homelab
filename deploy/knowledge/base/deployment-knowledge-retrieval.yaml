@@ -1,8 +1,3 @@
-# Knowledge retrieval API (#63/#64): hybrid BM25 (pg_textsearch) + vector
-# (pgvector) retrieval over the #56 knowledge schema with RRF fusion, plus
-# the sources/sync passthrough to the ingest service (one base URL for the
-# panel and MCP). Stateless; single replica is a sizing choice, not a
-# correctness constraint.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -31,11 +26,8 @@ spec:
                 secretKeyRef:
                   name: knowledge-db
                   key: databaseUrl
-            # Fail-closed bearer token (config.ts reads the mounted file).
             - name: KNOWLEDGE_RETRIEVAL_TOKEN_FILE
               value: /secrets/token
-            # Sources/sync passthrough: the in-cluster ingest API. The
-            # passthrough authenticates with the shared knowledge token.
             - name: KNOWLEDGE_INGEST_BASE_URL
               value: http://knowledge-ingest.agents.svc.cluster.local:3100
             - name: KNOWLEDGE_INGEST_TOKEN_FILE
@@ -65,10 +57,7 @@ spec:
               port: http
             periodSeconds: 30
           readinessProbe:
-            # Plain-liveness route only: /v1/sources requires the bearer token
-            # and kubelet httpGet probes cannot carry secret refs
-            # (httpHeaders values are literal strings), so the authed route
-            # returns 401 to the probe forever and the pod never reports ready.
+            # Unauthenticated route: probes can't carry the bearer token.
             httpGet:
               path: /healthz
               port: http

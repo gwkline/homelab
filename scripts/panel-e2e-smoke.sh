@@ -1,35 +1,13 @@
 #!/bin/sh
-# End-to-end proof of the panel's list-and-launch behavior through the real
-# Kubernetes API (issue #27).
-#
-# The panel is deployed exactly like production: a pod running as the
-# ServiceAccount `panel` (namespace agents, mirroring deploy/panel/base),
-# bound to the sandbox panel-sandbox-runs Role and the agents
-# panel-agents-viewer Role — the exact grants deploy/panel/base/rbac.yaml
-# carries — with the ServiceAccount token mount supplying the
-# cluster CA — so the server's in-cluster loadConfig() path, TLS trust, and
-# RBAC are all exercised for real. Into a disposable kind cluster (or any
-# cluster you already point kubectl at):
-#
-#   1. seeded sandbox fixtures (a CronJob and a completed Job) are created
-#   2. GET /api/state must return them (through the real API, not a mock)
-#   3. POST /api/jobs must create a sandbox Job with the requested command
-#      and the locked-down container fields
-#   4. the created Job must reach a terminal state; its pod runs the command
-#   5. invalid command/issue inputs must stay rejected with 400
-#
-# RBAC is probed with `kubectl auth can-i` as the panel identity before the
-# panel starts, and upstream error bodies are printed by the driver, so TLS
-# trust or RBAC breakage fails loudly with diagnostics instead of silently.
+# Panel list-and-launch e2e against a real Kubernetes API (docs/panel-e2e.md).
+# Runs the panel as its production ServiceAccount and RBAC in a disposable
+# kind cluster (or the current context), then drives /api/state and
+# /api/jobs through a port-forward.
 #
 # Usage:
 #   ./scripts/panel-e2e-smoke.sh
 #   PANEL_E2E_KEEP=1  ./scripts/panel-e2e-smoke.sh   # keep fixtures + cluster
 #   PANEL_E2E_REUSE=1 ./scripts/panel-e2e-smoke.sh   # use current kubectl context
-#       (k3d/k3s: build the images, make them pullable on the node, then reuse;
-#        see docs/panel-e2e.md)
-#   PANEL_E2E_TIMEOUT=900                            # driver budget, seconds
-#   PANEL_E2E_JOB_WAIT=300                           # created-Job terminal wait
 set -eu
 
 NS_SANDBOX=sandbox
@@ -183,7 +161,7 @@ fi
 echo "==> [4/7] namespaces, production-shaped RBAC, seeded sandbox fixtures"
 kubectl create namespace "$NS_AGENTS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl create namespace "$NS_SANDBOX" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-# Exact mirror of deploy/panel/base/rbac.yaml (post-#234 rename): the panel
+# Exact mirror of deploy/panel/base/rbac.yaml: the panel
 # ServiceAccount, the sandbox panel-sandbox-runs Role (create/list/delete
 # Jobs, get/list/patch CronJobs), and the agents panel-agents-viewer Role
 # (get Services only — dev-tools health).
@@ -392,7 +370,7 @@ if [ "${PANEL_E2E_KEEP:-0}" = "1" ]; then
   echo "  PANEL_E2E_KEEP=1 — kept fixtures and the created Job for inspection"
 fi
 
-echo "PASS: panel list-and-launch proven end to end through the real Kubernetes API (issue #27)"
+echo "PASS: panel list-and-launch proven end to end through the real Kubernetes API"
 echo "  - panel pod ran as ServiceAccount panel with the mounted cluster CA (in-cluster loadConfig path)"
 echo "  - GET /api/state returned seeded Job ${SEED_JOB} + CronJob ${SEED_CRONJOB}; RBAC probes matched deploy/panel/base"
 echo "  - POST /api/jobs created Job ${created_name} (locked-down container), which ran to Complete"

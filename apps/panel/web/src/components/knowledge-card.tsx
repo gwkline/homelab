@@ -69,8 +69,7 @@ export const KnowledgeCard = ({
     return () => clearInterval(id);
   }, [loadSources]);
 
-  // Durable job progress: poll the knowledge API's job record every 2s until
-  // it reaches a terminal state, then surface the outcome and refresh.
+  // Poll the sync job every 2s until it reaches a terminal state.
   useEffect(() => {
     if (job === null || job.status === "succeeded" || job.status === "failed") {
       return;

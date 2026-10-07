@@ -1,19 +1,10 @@
-# Hermes' Kubernetes identity, after routing factory orchestration through
-# the Executor MCP gateway (#82): hermes no longer creates or deletes
-# Kubernetes workloads at all — factory work is requested via the governed
-# Executor tools (see executor.yaml + cluster-guide.yaml). What remains is
-# read-only and separately justified below. It cannot touch secrets, CRDs,
-# or other namespaces' workloads.
-#
-# hermes is read-only: it has no Role granting create/patch/delete on Jobs
-# or CronJobs anywhere, and requests factory work through Executor.
+# Read-only. Factory work goes through Executor, never the Kubernetes API.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: hermes
   namespace: agents
 ---
-# Self-visibility: lets hermes report on the workloads that host it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -47,10 +38,6 @@ subjects:
     name: hermes
     namespace: agents
 ---
-# Cluster health: read-only nodes + metrics so hermes can answer "is the
-# cluster healthy?" without writing anything. Nodes expose no secret
-# material via get/list/watch; every write path stays with the operator,
-# the panel, and the Executor gateway.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

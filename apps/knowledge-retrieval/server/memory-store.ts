@@ -41,10 +41,8 @@ export interface MemoryStoreOptions {
   embeddingDimensions?: number;
 }
 
-// Deterministic bag-of-words hashing embedder. Not semantic — it exists so the
-// vector channel is exercisable without a real embedding service; a production
-// store (Postgres + pgvector) computes query embeddings from the ingestion
-// pipeline's model instead.
+// Deterministic bag-of-words hashing embedder: not semantic, but exercises the
+// vector channel without an embedding service.
 
 // 32-bit XOR without bitwise operators (the lint config forbids them);
 // arithmetically identical to `a ^ b` for 32-bit integers.
@@ -255,8 +253,8 @@ export class MemoryStore implements RetrievalStore {
   }
 }
 
-// Seed fixture format for local/dev runs until the Postgres store lands
-// (schema work tracked separately). Same shape as MemoryStoreOptions.documents.
+// Seed fixture for local/dev runs without DATABASE_URL; same shape as
+// MemoryStoreOptions.documents.
 export const memoryStoreFromSeedFile = (path: string): MemoryStore => {
   let raw: unknown;
   try {

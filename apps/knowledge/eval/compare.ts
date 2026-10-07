@@ -24,20 +24,14 @@ export const EVAL_K = 5;
 export const STRATEGIES = ["bm25-only", "vector-only", "fused"] as const;
 export type StrategyName = (typeof STRATEGIES)[number];
 
-/**
- * Retrieval configuration recorded with every run (#59): the cutoff, the RRF
- * parameters, the per-channel abstention floors, and the pgvector channel
- * settings (#62) — `hnsw.ef_search` and the candidate count — so approximate
- * retrieval runs are comparable over time.
- */
+/** Retrieval configuration recorded with every run so runs stay comparable. */
 export interface RetrievalConfig {
   k: number;
   rrfK: number;
   windowSize: number;
   abstainBelow: { bm25: number; vector: number };
-  /** HNSW exploration breadth for the vector channel (#62). */
+  /** HNSW `ef_search` for the vector channel. */
   vectorEfSearch: number;
-  /** Candidate count requested from the vector channel per query (#62). */
   vectorCandidateCount: number;
 }
 
@@ -53,7 +47,6 @@ export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   windowSize: DEFAULT_WINDOW_SIZE,
 };
 
-/** Top-k chunk ids a strategy returns for one query. */
 export const topKFor = (
   query: EvalQuery,
   strategy: StrategyName,
@@ -119,11 +112,7 @@ export const strategyReport = (
   return found;
 };
 
-/**
- * Top-k chunk ids one strategy returns for one corpus query, honoring the
- * per-channel abstention floors. The fused mode abstains only when both
- * channels abstain — fusion reorders candidate lists, it does not rescore.
- */
+/** Fused mode abstains only when both channels abstain: fusion reorders, it does not rescore. */
 export const corpusTopKFor = (
   index: ReturnType<typeof buildBm25Index>,
   chunks: EvalChunk[],
@@ -159,10 +148,8 @@ export const corpusTopKFor = (
     .map((candidate) => candidate.chunkId);
 };
 
-/** Per-query outcome of one strategy on the corpus. */
 export interface CorpusQueryResult {
   queryId: string;
-  /** Top-k chunk ids actually returned (empty when the strategy abstained). */
   returned: string[];
   abstained: boolean;
   metrics: MetricSet;
@@ -170,14 +157,11 @@ export interface CorpusQueryResult {
   latencyMs: number;
 }
 
-/** Per-strategy aggregate over the corpus. */
 export interface CorpusStrategyReport {
   strategy: StrategyName;
-  /** recall/MRR/precision@k averaged over answerable queries only. */
+  /** Averaged over answerable queries only. */
   aggregate: MetricSet;
-  /** Citation accuracy averaged over answerable queries only. */
   citationAccuracy: number;
-  /** Fraction of unanswerable queries where the strategy abstained. */
   noAnswerCorrectRate: number;
   latencyMs: { mean: number; max: number };
   perQuery: Record<string, CorpusQueryResult>;
@@ -195,10 +179,8 @@ const mean = (values: number[]): number =>
     : values.reduce((sum, value) => sum + value, 0) / values.length;
 
 /**
- * Compare BM25-only, vector-only, and fused retrieval over the committed
- * corpus (#59). Metrics aggregate over answerable queries; unanswerable
- * queries feed `noAnswerCorrectRate` instead. Latency is wall time around
- * the full rank+ fuse work per query — informational, never thresholded.
+ * Metrics aggregate over answerable queries; unanswerable ones feed
+ * `noAnswerCorrectRate`. Latency is informational, never thresholded.
  */
 export const runCorpusEval = (
   chunks: EvalChunk[],

@@ -1,68 +1,31 @@
-# VictoriaMetrics — the metrics backend
+# VictoriaMetrics
 
-Single-node **VictoriaMetrics** collects node, pod/container (cAdvisor), Kubernetes-object (kube-state-metrics) and PVC metrics for the whole cluster and serves them to Grafana. The metrics half of the observability ADR from #36 ([ADR-005](../../docs/adr/adr-005-metrics-logging-stack.md), D7/D8): plain kustomize, no Helm, no CRDs, no operators, one replica of everything. Grafana itself lives in [`deploy/grafana/base`](../grafana/base) (tailnet-only, `https://grafana.<tailnet>`); logs/events go to Loki via Alloy ([`deploy/loki`](../loki)).
+Single-node VictoriaMetrics plus kube-state-metrics in `agents`: the metrics backend for Grafana ([ADR-005](../../docs/adr/adr-005-metrics-logging-stack.md)). Scrape interval 30s, retention 30 days, on a 15Gi PVC (the hard ceiling; the `homelab-pvc-nearly-full` alert fires first). It uses built-in promscrape: no vmagent, operators, or CRDs.
 
-## Deploy
+Scrape targets (ConfigMap `victoriametrics-scrape`):
+
+- kubelet `/metrics` and cAdvisor for every node, through the API-server proxy. The pod never dials node IPs.
+- kube-state-metrics, limited by its `--resources` allowlist to nodes, pods, jobs/cronjobs, deployments/statefulsets, and PVCs.
+- VictoriaMetrics itself.
+
+k3s metrics-server is not scraped; nothing consumes its series.
+
+## Apply
 
 ```sh
 kubectl apply -k deploy/victoriametrics/base
-kubectl apply -k deploy/grafana/base        # adds the VM datasource, dashboards, alerts
+kubectl apply -k deploy/grafana/base   # datasource, dashboards, alerts
 ```
 
-No secrets to create: the stack reads the cluster with service-account tokens, and Grafana's admin credential is the one `grafana-admin` Secret documented in `deploy/grafana/base/deployment.yaml` (recreate in one command if lost):
+There are no secrets: scraping uses the read-only `victoriametrics` ServiceAccount. Note that `nodes/proxy` get is a broad kubelet grant.
+
+## Verify
 
 ```sh
-kubectl create secret generic grafana-admin -n agents --from-literal=admin-password='<pw>'
+kubectl -n agents port-forward svc/victoriametrics 8428:8428 &
+curl -s 'http://localhost:8428/api/v1/query?query=up'
 ```
 
-## What runs, and at what cost (ADR D1/D8 budget)
+## Notes
 
-| Workload | Requests | Limits | State |
-| --- | --- | --- | --- |
-| VictoriaMetrics (StatefulSet) | 250m / 512Mi | 1 CPU / 2Gi | PVC **15Gi** (hard ceiling) |
-| kube-state-metrics (Deployment) | 20m / 64Mi | 200m / 256Mi | none |
-
-Together with Grafana/Loki/Alloy this keeps the observability stack under the ADR's `~1Gi requests / ~3.5Gi limits / ≤21Gi claims` envelope on the 8 GB single-machine budget. Metrics retention is **30 days** at a **30s** base scrape (`-retentionPeriod=30d` in `victoriametrics.yaml`); at this scale that is a few GB of actual usage under the 15Gi ceiling — when the ceiling nears, the `homelab-pvc-nearly-full` alert fires and the fix is a retention flag change, not a migration.
-
-## What is scraped (built-in discovery — no vmagent)
-
-`victoriametrics.yaml` carries the promscrape config (ConfigMap `victoriametrics-scrape`):
-
-- **kubelet `/metrics`** and **cAdvisor `/metrics/cadvisor`** for every node, reached _through the API-server proxy_ (`kubernetes_sd` role `node`, `https://kubernetes.default.svc/api/v1/nodes/<node>/proxy/...`) — the pod only ever talks to the apiserver, never to node IPs.
-- **kube-state-metrics** (static target) for Kubernetes object state: nodes, pods, jobs/cronjobs, deployments/statefulsets, PVCs (its `--resources` allowlist in `kube-state-metrics.yaml`).
-- **self-scrape** for VM's own health.
-
-k3s's packaged **metrics-server** (`kube-system`) is deliberately **not** scraped: no dashboard or alert consumes its series, and its self-signed HTTPS endpoint would need extra RBAC plus `insecure_skip_verify` for nothing but target health — every acceptance-criteria series comes from kubelet/cAdvisor/kube-state-metrics above. Revisit only if a consumer for its series appears.
-
-Egress needs no allowlist of its own: the `agents` namespace baseline keeps egress open (`deploy/policies/base`), and this stack adds no Egress policies — the scraper must reach the apiserver (`kubernetes.default.svc:443`) and nothing else has cause to talk to the internet.
-
-The scrape identity is the read-only `victoriametrics` ServiceAccount (`rbac.yaml`): `nodes/metrics` + `nodes/proxy` get, plus get/list/watch on `nodes`, `pods`, `services`, `endpoints` for discovery. It is the documented security-model exception in the main README — no secrets, no writes, no CRDs.
-
-VictoriaMetrics and kube-state-metrics are ClusterIP-only and never touch the tailnet (ADR D5): NetworkPolicies in `netpol.yaml` admit only Grafana → VM (`:8428`) and VM → kube-state-metrics (`:8080`). Ad-hoc access is `kubectl -n agents port-forward svc/victoriametrics 8428:8428`.
-
-## Dashboards and alerts (in git, provisioned)
-
-Grafana provisions the `Homelab` folder (source JSON in `deploy/grafana/base/dashboards/`; see its README for the full catalog — logs, factory jobs, postgres, tailscale, and chaos came from earlier PRs). This stack adds:
-
-- **Homelab Nodes** — node saturation: CPU and memory vs allocatable, Ready / DiskPressure / MemoryPressure counts, pods per node.
-- **Homelab Workloads** — pod restarts (24h), pending/failed Jobs, PVC usage %, Deployment availability (agents), StatefulSet readiness (agents).
-
-Alert rules (provisioned from `deploy/grafana/base/alerting.yaml`, evaluated by Grafana's built-in alerting against the VM datasource, folder **Homelab**):
-
-| Rule | Fires when |
-| --- | --- |
-| `homelab-node-disk-pressure` | a node reports `DiskPressure=True` for 10m |
-| `homelab-pvc-nearly-full` | a PVC is >90% full for 30m |
-| `homelab-deployment-unavailable` | an agents Deployment is under-replicated 5m |
-| `homelab-statefulset-unavailable` | an agents StatefulSet is not fully ready 5m |
-| `homelab-jobs-repeatedly-failing` | ≥3 failed Jobs per namespace in 24h |
-
-States are visible in Grafana's Alerting UI; notification routing is deliberately not configured yet (nothing here pages at 2 a.m., ADR D7) — wire a contact point in Grafana when that changes.
-
-## Recovery
-
-Everything that matters is declarative and in git: scrape config, dashboards, datasources, alert rules, RBAC. A rebuilt node re-applies both kustomize dirs and the stack reappears. The VM PVC (like the Loki PVC and Grafana's SQLite) is **disposable telemetry, deliberately not backed up** (ADR D6): retention is the recovery plan, and nothing in the cluster is backed up. Dashboards/datasources are re-provisioned on restart; only the `grafana-admin` Secret is hand-created (one command above).
-
-## Version pins
-
-`victoriametrics/victoria-metrics:v1.110.0`, `registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0`, and the `busybox:1.36` init container are all pinned tag+digest (the repo supply-chain rule: third-party images are digest-pinned and Renovate-bumped — `renovate.json` automerges digest/patch/minor updates for them). VM's flag surface moves between versions — bump deliberately.
+Both services are ClusterIP-only. Ingress is limited to Grafana → VictoriaMetrics (8428) and VictoriaMetrics → kube-state-metrics (8080). Metrics are disposable telemetry and not backed up.

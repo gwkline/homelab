@@ -35,30 +35,26 @@ import type {
   IngestDocumentVersion,
   IngestJobRecord,
 } from "../src/ingest.ts";
+import type { PgClient } from "../src/pg-client.ts";
 import { EMBEDDING_DIMENSIONS } from "../src/pgvector.ts";
-import type { PgvectorDbClient } from "../src/pgvector.ts";
 import { KNOWLEDGE_SCHEMA_MIGRATION_SQL } from "../src/schema.ts";
 
 // --- fakes ---
 
 interface RecordedClient {
-  client: PgvectorDbClient;
+  client: PgClient;
   params: unknown[][];
   statements: string[];
 }
 
-/** One consume-once scripted response, matched by statement substring. */
 interface ScriptedRows {
   rows: Record<string, unknown>[];
   text: string;
 }
 
 /**
- * Scripted client recording every statement. Default behavior mirrors the
- * #56 schema's answers: the document upsert returns the caller's id at
- * version 1, the version insert returns the caller's version id, SKIP
- * LOCKED claims come off a queue, everything else returns no rows. Scripted
- * entries override the defaults once each, in order.
+ * Records every statement. Defaults mimic a fresh database; each scripted
+ * entry (matched by substring) overrides one response, once.
  */
 const stubClient = (
   claimRowSets: Record<string, unknown>[][] = [],
@@ -68,7 +64,7 @@ const stubClient = (
   const scripted = [...script];
   const params: unknown[][] = [];
   const statements: string[] = [];
-  const client: PgvectorDbClient = {
+  const client: PgClient = {
     query: (text: string, query: unknown[]) => {
       params.push(query);
       statements.push(text);
@@ -92,7 +88,6 @@ const stubClient = (
   return { client, params, statements };
 };
 
-/** Deterministic fake provider, optionally poisoned per input. */
 const fakeProvider = (
   poison?: (input: string) => number[] | null
 ): EmbeddingProvider => {
@@ -132,7 +127,6 @@ const baseDoc = (
   ...overrides,
 });
 
-/** Indices of the chunk upsert statements inside a recorded run. */
 const chunkUpsertIndices = (recorded: RecordedClient): number[] =>
   recorded.statements
     .map((text, index) => (text.startsWith("INSERT INTO chunks") ? index : -1))
@@ -154,7 +148,7 @@ const runHappyPath = async () => {
   return { logs, outcome, recorded };
 };
 
-// --- worker pipeline: chunk → embed → persist, in #56 FK order ---
+// --- worker pipeline: chunk → embed → persist ---
 
 test("happy path writes the #56 document model before chunks", async () => {
   const { outcome, recorded } = await runHappyPath();
@@ -219,8 +213,7 @@ test("chunk upserts satisfy the #56 chunks contract and supersede keeps hashes",
   ]) {
     assert.ok(upsertText.includes(column), `upsert must write ${column}`);
   }
-  // The #56 identity: UNIQUE (document_id, content_hash), never a second
-  // row for the same text, and the embedding pair moves as a pair.
+  // Never a second row for the same text; the embedding pair moves as a pair.
   assert.match(
     upsertText,
     /ON CONFLICT \(document_id, content_hash\) DO UPDATE SET/u
@@ -311,8 +304,7 @@ test("unchanged content resolves the existing document and version rows", async 
         rows: [{ id: "doc-existing", version: 3 }],
         text: "SELECT id, version FROM document",
       },
-      // Same (document_id, version) already recorded: history is never
-      // mutated, the chunks must cite the existing row.
+      // History is never mutated: chunks must cite the existing version row.
       { rows: [], text: "INSERT INTO document_version" },
       {
         rows: [{ id: "v-existing" }],
@@ -534,7 +526,7 @@ test("non-retryable 4xx fails fast; text rows still persist for BM25", async () 
 
 test("database failure rolls the whole version swap back", async () => {
   let queries = 0;
-  const failing: PgvectorDbClient = {
+  const failing: PgClient = {
     query: (text) => {
       queries += 1;
       if (text.startsWith("INSERT INTO chunks")) {
@@ -883,7 +875,6 @@ test("provider, model, and dimensions come from configuration", () => {
     KNOWLEDGE_EMBEDDING_PROVIDER: "openai",
   });
   assert.equal(openai.name, "openai-compatible");
-  // Dimension honesty: a 4-d provider against the 384-d column is refused.
   assert.throws(
     () =>
       resolveEmbeddingWorkerConfig({
@@ -929,7 +920,7 @@ test("re-ingesting a changed version supersedes the dropped content hashes", asy
   );
 });
 
-// --- queue: the #56 ingest_job table ---
+// --- queue ---
 
 test("job SQL builders target the #56 ingest_job table", () => {
   const enqueue = buildEnqueueJobQuery({
@@ -956,8 +947,6 @@ test("job SQL builders target the #56 ingest_job table", () => {
     5
   );
 
-  // The claim is exactly the #56 schema's SKIP LOCKED statement: priority
-  // first, then FIFO, id as the deterministic tie-break.
   const claim = buildClaimJobQuery();
   assert.match(claim.text, /UPDATE ingest_job/u);
   assert.match(claim.text, /FOR UPDATE SKIP LOCKED/u);

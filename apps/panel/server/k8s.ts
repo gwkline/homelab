@@ -7,9 +7,7 @@ import { URL } from "node:url";
 
 const NS = "sandbox";
 
-// Structural subset of the Kubernetes API objects this panel reads. The API
-// returns full objects; we only type what is actually dereferenced so the
-// compiler still forces optional handling on every access.
+// Only the fields the panel reads, all optional so every access is checked.
 export interface K8sObject {
   metadata?: {
     name?: string;
@@ -119,8 +117,6 @@ const k8sFetch = <T>(
     opts.rejectUnauthorized = cfg.rejectUnauthorized;
   }
 
-  // The node:http API is callback/stream based; a Promise executor is the
-  // idiomatic bridge (promise/avoid-new is scoped off for this file).
   return new Promise<T>((resolve, reject) => {
     const req = reqFn(url, opts, (res) => {
       let data = "";

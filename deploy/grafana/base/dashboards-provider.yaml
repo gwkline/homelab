@@ -1,7 +1,3 @@
-# Dashboard provider: tells Grafana to load provisioned dashboards from
-# /etc/grafana/dashboards (mounted from the grafana-dashboards ConfigMap).
-# Mounted as a file at
-# /etc/grafana/provisioning/dashboards/provider.yaml (see deployment.yaml).
 apiVersion: v1
 kind: ConfigMap
 metadata:

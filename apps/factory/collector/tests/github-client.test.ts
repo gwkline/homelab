@@ -1,9 +1,4 @@
-// Client tests for the collector's GitHub REST layer (#78).
-// The GitHub API is faked with an in-memory request router (a fake server
-// behind fetch) — no network, no real tokens. Covers the acceptance cases:
-// pagination (Link-following + page dedupe + cap), conditional requests
-// (ETag/If-None-Match/304), rate limits (Retry-After + reset honoring), and
-// transient failures (5xx + network retries). Client errors must NOT retry.
+// GitHub REST client tests against an in-memory fake server behind fetch.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -144,7 +139,6 @@ test("pagination cap stops unbounded listing", async () => {
   });
   const result = await c.listOpenIssues("o/r");
   assert.equal(result.pages, 10);
-  // default maxPages cap
   assert.ok(requests.length <= 10);
 });
 
@@ -248,7 +242,6 @@ test("network errors retry and eventually throw", async () => {
       error.status === 0
   );
   assert.equal(sleeps.length, 4);
-  // maxRetries default
 });
 
 test("client errors (404) throw immediately without retry", async () => {

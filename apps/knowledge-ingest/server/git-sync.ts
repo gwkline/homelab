@@ -1,22 +1,8 @@
 /**
- * git-source sync adapter for `source_sync` jobs with `github` sources: runs
- * `syncGitSource` against a `GitSourceStore` whose pieces land in the right
- * places —
- *
- * - `upsertDocument` → one `document-version` job on this queue (the bridge
- *   payload from `apps/knowledge/src/git-source.ts` `buildIngestJob`), so
- *   chunking/embedding/persistence run as their own durable, retryable jobs;
- *   enqueue is idempotent on the version identity, so a retried sync never
- *   double-enqueues;
- * - `tombstoneDocument` → the #56 document model via the pipeline sink
- *   (`buildDocumentTombstone` + `buildChunkSupersede` underneath), so deleted
- *   and moved paths stop serving immediately;
- * - `loadManifest`/`saveManifest` → the durable per-source manifest
- *   (`git_source_manifest` in Postgres, in-memory in dev), so incremental
- *   syncs read only changed blobs.
- *
- * The repository handle is opened by the caller's `gitSync` (default: the real
- * clone/fetch sync `syncGitRepository`); tests inject a fixture sync.
+ * Sync adapter for `github` source_sync jobs. Each changed document becomes
+ * its own idempotent `document-version` job so chunk/embed/persist retry
+ * independently; deletions tombstone through the sink immediately, and the
+ * manifest keeps incremental syncs to changed blobs only.
  */
 
 import {
@@ -50,21 +36,13 @@ export interface GitSyncDeps {
   store: IngestStore;
 }
 
-/**
- * Manifest persistence for git-source syncs: the last synced commit and the
- * path → blob-hash map that makes incremental syncs read only changed blobs.
- * Durable implementation: the `git_source_manifest` table (PgKnowledgeSink);
- * `createMemoryManifestStore` mirrors it for DB-less dev and tests.
- */
+/** Last synced commit plus the path → blob-hash map for incremental syncs. */
 export interface GitManifestStore {
   loadManifest: (sourceKey: string) => Promise<GitSourceManifest>;
   saveManifest: (manifest: GitSourceManifest) => Promise<void>;
 }
 
-/**
- * In-memory manifest store for DB-less dev runs and tests. Same contract as
- * the Postgres table: load returns a fresh empty manifest for unknown keys.
- */
+/** In-memory manifest store; unknown keys load as an empty manifest. */
 export const createMemoryManifestStore = (): GitManifestStore & {
   manifests: Map<string, GitSourceManifest>;
 } => {

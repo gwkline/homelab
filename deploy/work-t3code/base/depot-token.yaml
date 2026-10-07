@@ -1,15 +1,5 @@
-# Depot build token for the work runner (optional by design).
-#
-# Work CI builds images with `depot bake` on Depot-hosted runners; the
-# CLI ships in the image, and this token lets runner agents reproduce and
-# inspect those builds. Mirrors the github-token-writer pattern: the item
-# may not exist yet — the ExternalSecret then stays Ready=False and keeps
-# retrying, the documented expected state, and the StatefulSet mounts the
-# env optional so the runner boots regardless.
-#
-# 1Password item contract (docs/secrets-inventory.md B6):
-#   vault:  homelab
-#   item:   work-depot-token   field: token
+# Optional: without the work-depot-token item this stays Ready=False and the
+# runner boots without DEPOT_TOKEN.
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:

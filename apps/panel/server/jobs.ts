@@ -196,9 +196,7 @@ export const viewJob = (j: K8sObject): JobView => {
   const createdRaw = j.metadata?.creationTimestamp ?? null;
   const parsedMs =
     createdRaw === null ? Number.NaN : new Date(createdRaw).getTime();
-  // Missing/invalid timestamps collapse to the epoch so placement is
-  // deterministic (always last, newest-first) instead of NaN-poisoning the
-  // comparator or rendering "NaNs".
+  // Invalid timestamps collapse to the epoch so sorting never sees NaN.
   const createdMs = Number.isFinite(parsedMs) ? parsedMs : 0;
   const seconds = Math.max(0, (Date.now() - createdMs) / 1000);
   return {

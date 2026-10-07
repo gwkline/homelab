@@ -27,14 +27,12 @@ const defaultGateway = () => {
       }
     }
   } catch {
-    /* no /proc/net/route (shouldn't happen in a pod) */
+    /* fall through to the k3s default */
   }
   return "10.42.0.1";
 };
 
-// A TCP connect attempt. Resolves "open" or rejects with the failure mode.
-// (Node's net API is event-based; the Promise executor is the bridge, which
-// promise/avoid-new permits for this exact shape — see oxlint.config.ts.)
+// Resolves "open" or the failure mode (timeout, ECONNREFUSED, ...).
 const tcp = (host, port) =>
   new Promise((resolve) => {
     const sock = net.connect({ host, port });
@@ -48,7 +46,7 @@ const tcp = (host, port) =>
     sock.once("error", (err) => done(err.code || "error"));
   });
 
-// "fail" = no connection of any kind got through (refused/timeout/no-route).
+// "closed" passes on any failure mode: nothing got through.
 const check = (spec, result) => {
   const pass = spec.expect === "open" ? result === "open" : result !== "open";
   return { ...spec, pass, result };
@@ -132,7 +130,7 @@ const tcpSpecs = [
 
 const results = [];
 
-// 1. DNS through the narrow kube-dns rule (must work).
+// DNS through the narrow kube-dns rule.
 try {
   await dns.resolve4("github.com");
   results.push({
@@ -148,12 +146,10 @@ try {
   });
 }
 
-// 2. TCP matrix.
 for (const spec of tcpSpecs) {
   results.push(check(spec, await tcp(spec.host, spec.port)));
 }
-// 3. One real HTTPS round-trip — proves DNS + routing + TLS end to end the
-//    way a clone/package/model call would.
+// One real HTTPS round-trip: DNS + routing + TLS end to end.
 try {
   const res = await fetch("https://api.github.com/zen", {
     signal: AbortSignal.timeout(TIMEOUT_MS * 2),

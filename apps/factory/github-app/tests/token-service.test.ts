@@ -1,7 +1,5 @@
-// Integration tests for the #70 GitHub App token service.
-// The JWT/token exchange is fully mocked (no network, no real GitHub App
-// needed); a throwaway RSA keypair is generated per run so no test key
-// is ever committed. node --test + --experimental-strip-types, like panel.
+// Token service tests with a mocked token exchange and a throwaway RSA keypair
+// generated per run, so no key is ever committed.
 import assert from "node:assert/strict";
 import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
 import { test } from "node:test";
@@ -50,9 +48,8 @@ interface MockExchange {
   fetch: typeof fetch;
 }
 
-// Mocks the JWT/token exchange: records every call and answers with the
-// given static spec, or a per-call spec produced by `response()` (used for
-// dynamic expiry/token sequences). No network is touched.
+// Records every call and answers with a static spec, or a per-call spec from
+// `response()` for dynamic expiry/token sequences.
 const mockExchangeFactory = (
   response: ResponseSpec | (() => ResponseSpec)
 ): MockExchange => {

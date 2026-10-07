@@ -30,23 +30,16 @@ setup_git_auth() {
   export GIT_ASKPASS="${_askpass}"
   unset _token
 
-  # Persist GitHub auth beyond this process's environment. Agent
-  # tooling (t3's workspace provisioning, exec'd shells) spawns git with
-  # a sanitized env — GIT_ASKPASS dropped — so remote fetches fail with
-  # "could not read Username". A user-level credential helper closes
-  # that: it reads the mounted token file at use time, so it works with
-  # no env at all, puts no secret in the config, and picks up kubelet
-  # secret-mount refreshes automatically. Idempotent — safe on every
-  # boot.
+  # Agent tooling spawns git with a sanitized env (no GIT_ASKPASS), so also
+  # install a credential helper that reads the token file at use time: no
+  # secret in the config, and secret-mount refreshes are picked up.
   if [ -n "${GITHUB_TOKEN_FILE:-}" ] && [ -r "${GITHUB_TOKEN_FILE}" ]; then
     git config --global credential.https://github.com.helper \
       "!f() { echo username=x-access-token; echo password=\$(cat \"${GITHUB_TOKEN_FILE}\"); }; f"
   fi
 }
 
-# Optional: expose a write-scoped token to the gh CLI for loops that report
-# back into GitHub (comments, issue updates). No-op unless the operator
-# mounts secret github-token-writer and sets GITHUB_WRITER_TOKEN_FILE.
+# Expose a write-scoped token to gh when GITHUB_WRITER_TOKEN_FILE is mounted.
 setup_gh_cli() {
   if [ -n "${GITHUB_WRITER_TOKEN_FILE:-}" ] && [ -r "${GITHUB_WRITER_TOKEN_FILE}" ]; then
     GH_TOKEN="$(cat "${GITHUB_WRITER_TOKEN_FILE}")"

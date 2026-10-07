@@ -1,59 +1,19 @@
 /**
- * Ingest worker: normalized document version → chunks → embeddings →
- * the #56 knowledge schema (#57; ADR-002 D5/D14 "K-ingest").
+ * Ingest worker: a normalized document version is chunked, embedded, and
+ * persisted in one transaction (ADR-002 D5). Reprocessing is idempotent
+ * because chunks are content-addressed on `(document_id, content_hash)`.
  *
- * `processDocumentVersion` is the pipeline: chunk deterministically
- * (`src/chunk.ts`), embed in explicit batches with bounded concurrency,
- * timeouts, and retries (`src/embedder.ts`), then persist in one transaction
- * against the #56 document model (`src/schema.ts`), in FK order:
- *
- * 1. register the namespace (`knowledge_namespace` — `document`/`chunks`
- *    FK it, so an unregistered collection key cannot ingest);
- * 2. upsert the document row — identity `(namespace, source, external_id)`,
- *    the full-content sha256 decides the version bump, and an unchanged
- *    hash leaves the row untouched (#56 idempotency);
- * 3. append the `document_version` row the chunks will cite (history is
- *    never mutated: an already-recorded `(document_id, version)` keeps its
- *    original row id, and the chunks point at that row);
- * 4. upsert every chunk into `chunks` — content-addressed on
- *    `(document_id, content_hash)` per the #56 UNIQUE constraint — writing
- *    the embedding pair atomically;
- * 5. supersede the live chunks whose content hash disappeared from this
- *    version (`valid_to = now()`).
- *
- * The run is retryable end to end:
- *
- * - Chunk ids are content+position addressed, so reprocessing the same
- *   version re-derives the same ids and values; unchanged content conflicts
- *   on `(document_id, content_hash)` and touches nothing (ADR-002 D3/D10).
- * - A chunk whose embedding failed is still persisted — with `embedding
- *   NULL` and no model tag — so the BM25 channel keeps serving its text and
- *   `countChunksNeedingBackfill` (src/pgvector.ts) reports exactly how many
- *   vectors are waiting on the re-embed backfill. One bad chunk never
- *   discards its valid batchmates.
- * - `embedding` + `embedding_model` are written as an atomic pair (or the
- *   previous pair is kept via COALESCE), so a row can never claim a model it
- *   wasn't embedded under, and a re-embed under a new model migrates per
- *   chunk while chunks from other model generations coexist (retrieval
- *   filters by `embedding_model`).
- *
- * Jobs ride the #56 `ingest_job` table (created by the base schema
- * migration, ADR-002 D5): enqueue is idempotent on the job id, the claim is
- * the schema's `FOR UPDATE SKIP LOCKED` statement (priority first, then
- * FIFO), and `drainIngestJobs` claims until the queue is empty or a
- * per-pass cap. Job payloads carry the normalized content and are never
- * logged.
- *
- * Logs are structured entries carrying only identifiers and counts — job id,
- * document id, version id, namespace, chunk/embed failure counts — never
- * document bodies or chunk texts.
+ * A chunk whose embedding failed is still persisted with a NULL embedding so
+ * BM25 keeps serving it and `countChunksNeedingBackfill` can report it.
+ * Logs carry only identifiers and counts, never document or chunk text.
  */
 
 import { chunkDocumentVersion, CHUNKER_VERSION, sha256Hex } from "./chunk.ts";
 import type { ChunkFormat, NormalizedDocumentVersion } from "./chunk.ts";
 import { embedChunkTexts } from "./embedder.ts";
 import type { EmbeddingWorkerConfig } from "./embedder.ts";
-import type { CitationAnchor, PgvectorDbClient } from "./pgvector.ts";
+import type { PgClient } from "./pg-client.ts";
+import type { CitationAnchor } from "./pgvector.ts";
 import { toPgvectorLiteral } from "./pgvector.ts";
 import {
   buildDocumentUpsert,
@@ -63,16 +23,10 @@ import {
 } from "./schema.ts";
 import type { SchemaQuery } from "./schema.ts";
 
-/**
- * The worker's input unit: a normalized document version plus the #56
- * document identity (`source` + `externalId`) and citation metadata the
- * schema's `document` row requires. The chunker only consumes the
- * `NormalizedDocumentVersion` subset.
- */
 export interface IngestDocumentVersion extends NormalizedDocumentVersion {
-  /** #56 document identity: stable within `(namespace, source, external_id)`. */
+  /** Stable within `(namespace, source)`. */
   externalId: string;
-  /** Source kind label, e.g. `"file"`, `"github"`, `"url"`. */
+  /** e.g. `"file"`, `"git"`, `"url"`. */
   source: string;
   title?: string | null;
   url?: string | null;
@@ -82,11 +36,9 @@ const NAMESPACE_PATTERN = /^[\w.-]{1,128}$/u;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const HASH_PATTERN = /^[0-9a-f]{64}$/u;
 
-/** Job ids/kinds are identifiers; bodies never belong in them. */
 export const isIngestIdentifier = (value: string): boolean =>
   ID_PATTERN.test(value);
 
-/** Errors recorded on jobs are truncated: enough to diagnose, never a body. */
 export const MAX_JOB_ERROR_CHARS = 2000;
 
 const truncateJobError = (message: string): string =>
@@ -94,23 +46,15 @@ const truncateJobError = (message: string): string =>
     ? message.slice(0, MAX_JOB_ERROR_CHARS)
     : message;
 
-// --- queue: the #56 ingest_job table ---
-
 export interface IngestJobSpec {
-  /** Caller-assigned job id; idempotency key for the enqueue. */
+  /** Idempotency key for the enqueue. */
   jobId: string;
   kind: string;
-  /** JSONB payload (the normalized document for `document-version` jobs). */
   payload: Record<string, unknown>;
-  /** Higher runs first (the claim orders `priority DESC`). Default 0. */
+  /** Higher runs first. Default 0. */
   priority?: number;
 }
 
-/**
- * Enqueue one job. Idempotent on the job id: re-enqueuing a known job (a
- * retried sync, a duplicated webhook) changes nothing — the queue, not the
- * caller, owns retry state.
- */
 export const buildEnqueueJobQuery = (job: IngestJobSpec): SchemaQuery => {
   if (!isIngestIdentifier(job.jobId)) {
     throw new TypeError(`ingest: invalid job id ${JSON.stringify(job.jobId)}`);
@@ -135,7 +79,6 @@ ON CONFLICT (id) DO NOTHING`,
   };
 };
 
-/** Claim the next queued job: the #56 schema's SKIP LOCKED claim statement. */
 export const buildClaimJobQuery = (): SchemaQuery => buildIngestJobClaim();
 
 export const buildCompleteJobQuery = (jobId: string): SchemaQuery => ({
@@ -155,7 +98,6 @@ SET status = 'failed', heartbeat_at = now(), error = $2
 WHERE id = $1`,
 });
 
-/** One claimed ingest job, parsed from a driver row. */
 export interface IngestJobRecord {
   attempts: number;
   jobId: string;
@@ -163,7 +105,6 @@ export interface IngestJobRecord {
   payload: unknown;
 }
 
-/** Map a claimed row; malformed rows throw instead of running garbage. */
 export const parseIngestJobRow = (
   row: Record<string, unknown>
 ): IngestJobRecord => {
@@ -189,7 +130,6 @@ export const parseIngestJobRow = (
   return { attempts: attemptsValue, jobId, kind, payload };
 };
 
-/** Required, non-empty string field of a job payload. */
 const payloadRequiredString = (
   record: Record<string, unknown>,
   key: string,
@@ -202,7 +142,6 @@ const payloadRequiredString = (
   return value;
 };
 
-/** Optional chunk-format field of a job payload. */
 const payloadChunkFormat = (
   record: Record<string, unknown>,
   jobId: string
@@ -219,7 +158,6 @@ const payloadChunkFormat = (
   return format;
 };
 
-/** Optional string-or-null field of a job payload. */
 const payloadNullableString = (
   record: Record<string, unknown>,
   key: string,
@@ -234,7 +172,6 @@ const payloadNullableString = (
   );
 };
 
-/** Build the normalized document version a job's payload describes. */
 export const parseDocumentPayload = (
   job: IngestJobRecord
 ): IngestDocumentVersion => {
@@ -275,14 +212,7 @@ export const parseDocumentPayload = (
   };
 };
 
-// --- document-model reads the pipeline needs beyond the schema builders ---
-
-/**
- * Read the document's current row when the version-bump upsert returned
- * nothing (unchanged content): the row exists — that is why the DO UPDATE
- * guard filtered it — so a missing row is a contract violation, not a
- * content question.
- */
+/** Used when the version-bump upsert returns nothing because content is unchanged. */
 export const buildDocumentCurrentVersionQuery = (
   namespace: string,
   source: string,
@@ -306,11 +236,7 @@ WHERE namespace = $1 AND source = $2 AND external_id = $3`,
   };
 };
 
-/**
- * Read the version row id when the append conflicted on
- * `(document_id, version)`: history is never mutated (#56), so the chunks
- * cite the row that already records this version.
- */
+/** History is append-only, so on conflict the chunks cite the existing row. */
 export const buildDocumentVersionIdQuery = (
   documentId: string,
   version: number
@@ -350,9 +276,6 @@ const readRowVersion = (value: unknown, label: string): number => {
   return parsed;
 };
 
-// --- chunk persistence ---
-
-/** One row of the `chunks` upsert. */
 export interface ChunkUpsertRow {
   anchors: CitationAnchor[];
   chunkId: string;
@@ -368,16 +291,9 @@ export interface ChunkUpsertRow {
 }
 
 /**
- * Build the chunk upsert against the #56 `chunks` table. Conflict target is
- * the schema's UNIQUE `(document_id, content_hash)` — chunk identity is
- * content-addressed (#56, ADR-002 D3) — so re-ingesting unchanged chunk
- * text reactivates the existing row and never re-embeds it, while a chunker
- * bump re-points `chunker_version`/`idx` without inventing a second row for
- * the same text. The embedding pair is only ever written together, and a
- * failed re-embed leaves the previous generation's pair intact (COALESCE).
- * `chunk_id` stays out of the SET list on purpose: the row keeps the id it
- * was first inserted under, so citation anchors stay stable across
- * re-chunking.
+ * Unchanged text reactivates its existing row instead of duplicating it. A
+ * failed re-embed keeps the previous embedding pair (COALESCE), and
+ * `chunk_id` is never updated so citations stay stable across re-chunking.
  */
 export const buildChunkUpsertQuery = (row: ChunkUpsertRow): SchemaQuery => {
   if ((row.embedding === null) !== (row.embeddingModel === null)) {
@@ -448,13 +364,8 @@ ON CONFLICT (document_id, content_hash) DO UPDATE SET
 };
 
 /**
- * Supersede every live chunk of `documentId` whose content hash is not in
- * `keepContentHashes` (the hashes absent from the new document version).
- * Keeping by content hash — the #56 identity — stays correct even when the
- * chunker re-ids chunks (version bump, position shift): the upserts above
- * have already reactivated this version's rows, so only genuinely dropped
- * text leaves the live corpus. With an empty keep set this supersedes the
- * whole document — the honest result of re-ingesting an emptied version.
+ * Supersedes live chunks whose content hash is absent from the new version.
+ * Keying on content hash stays correct when the chunker re-ids chunks.
  */
 export const buildSupersedeChunksQuery = (
   documentId: string,
@@ -480,8 +391,6 @@ WHERE document_id = $1
   };
 };
 
-// --- the pipeline ---
-
 export type IngestLogEntry = Record<string, string | number | boolean | null>;
 
 const noopLog = (_entry: IngestLogEntry): undefined => undefined;
@@ -489,42 +398,30 @@ const noopLog = (_entry: IngestLogEntry): undefined => undefined;
 export interface DocumentIngestOutcome {
   chunkerVersion: string;
   documentId: string;
-  /** Chunks that carry a validated embedding after this run. */
   embeddedCount: number;
-  /** Per-chunk embedding failures (chunk id + reason, never chunk text). */
   failedChunks: { chunkId: string; reason: string }[];
   jobId: string | null;
   model: string;
   namespace: string;
-  /** `"ok"` when every chunk embedded; `"partial"` means re-embed backfill. */
+  /** `"partial"` means some chunks await the re-embed backfill. */
   status: "ok" | "partial";
   totalChunks: number;
-  /** The `document_version` row the persisted chunks cite. */
   versionId: string;
 }
 
 export interface IngestRunOptions {
   config: EmbeddingWorkerConfig;
   log?: (entry: IngestLogEntry) => void;
-  /** Job id for structured logs; null for direct (job-less) processing. */
   jobId?: string;
-  /** Injectable sleep forwarded to the embed engine (tests, backoff control). */
   sleep?: (ms: number) => Promise<void>;
 }
 
 /**
- * Run one document version through chunk → embed → persist.
- *
- * The persistence transaction writes the #56 document model in FK order —
- * namespace, document, document version, then chunks — and supersedes the
- * content hashes that no longer exist in this version. Any database failure
- * rolls the whole version swap back. Embedding failures do NOT roll back:
- * they are reported per chunk in the outcome (`status: "partial"`) and
- * surface through `countChunksNeedingBackfill` until a re-run or backfill
- * embeds them.
+ * Any database failure rolls back the whole version swap; embedding failures
+ * do not, and are reported per chunk as `status: "partial"`.
  */
 export const processDocumentVersion = async (
-  client: PgvectorDbClient,
+  client: PgClient,
   doc: IngestDocumentVersion,
   options: IngestRunOptions
 ): Promise<DocumentIngestOutcome> => {
@@ -578,8 +475,7 @@ export const processDocumentVersion = async (
     let documentVersion: number;
     const [documentRow] = upserted.rows;
     if (documentRow === undefined) {
-      // Unchanged content: the DO UPDATE guard filtered the upsert, so
-      // resolve the existing row the document already has.
+      // Unchanged content: the DO UPDATE guard filtered the upsert.
       const current = buildDocumentCurrentVersionQuery(
         doc.namespace,
         doc.source,
@@ -613,8 +509,7 @@ export const processDocumentVersion = async (
     );
     const [versionRow] = inserted.rows;
     if (versionRow === undefined) {
-      // Same (document_id, version) already recorded: history is never
-      // mutated, so the chunks cite the existing row's id.
+      // Version already recorded; cite the existing row.
       const existing = buildDocumentVersionIdQuery(documentId, documentVersion);
       const selected = await client.query(existing.text, existing.params);
       const [row] = selected.rows;
@@ -695,15 +590,9 @@ export interface IngestJobResult {
   status: "done" | "failed";
 }
 
-/**
- * Run one claimed job: parse its payload into a normalized document version,
- * process it, and mark it done — or record a truncated failure. Failures
- * here are unexpected errors (malformed payload, database failure, provider
- * exhaustion that threw); per-chunk embedding failures are not job failures
- * — they are the `partial` outcome above, visible to the backfill.
- */
+/** Per-chunk embedding failures are a `partial` outcome, not a job failure. */
 export const runIngestJob = async (
-  client: PgvectorDbClient,
+  client: PgClient,
   job: IngestJobRecord,
   options: IngestRunOptions
 ): Promise<IngestJobResult> => {
@@ -724,9 +613,8 @@ export const runIngestJob = async (
   }
 };
 
-/** Claim one queued job (`FOR UPDATE SKIP LOCKED`), or null when drained. */
 export const claimIngestJob = async (
-  client: PgvectorDbClient
+  client: PgClient
 ): Promise<IngestJobRecord | null> => {
   const built = buildClaimJobQuery();
   const result = await client.query(built.text, built.params);
@@ -734,13 +622,9 @@ export const claimIngestJob = async (
   return row === undefined ? null : parseIngestJobRow(row);
 };
 
-/**
- * Claim and run queued jobs until the queue is empty or `maxJobs` runs in
- * this pass. The caller (CronJob now, deployment later — ADR-002 D5) decides
- * the schedule; every run is safe to repeat thanks to idempotent upserts.
- */
+/** Claims and runs jobs until the queue is empty or `maxJobs` have run. */
 export const drainIngestJobs = async (
-  client: PgvectorDbClient,
+  client: PgClient,
   options: IngestRunOptions,
   limits: { maxJobs?: number } = {}
 ): Promise<IngestJobResult[]> => {

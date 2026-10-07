@@ -7,12 +7,9 @@ metadata:
     app.kubernetes.io/part-of: homelab
     factory.gwkline.io/component: sweeper
 spec:
-  # Stalled-PR sweep (#242): converts stale ci-red factory PRs into queueable
-  # fix issues when the medic gave up, pings green PRs older than 7d once,
-  # and warns about base drift. Never closes or merges PRs — the human stays
-  # the merge gate. All sweep state is derived from GitHub markers, so ticks
-  # are idempotent.
-  schedule: "48 * * * *" # hourly, clear of collector (:05), reclaimer (:25), reviewer (:35,:55)
+  # Turns stale ci-red factory PRs into fix issues, pings green PRs older than
+  # 7d, warns on base drift. Never closes or merges.
+  schedule: "48 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -25,9 +22,7 @@ spec:
       template:
         metadata:
           labels:
-            # Carries the reviewer profile label on purpose: the sweeper lives
-            # in the reviewer image and inherits allow-factory-reviewer egress
-            # (GitHub API + DNS only).
+            # Reviewer label on purpose: inherits allow-factory-reviewer egress.
             factory.gwkline.io/profile: reviewer
         spec:
           restartPolicy: Never

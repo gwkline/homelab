@@ -7,9 +7,8 @@ metadata:
     app.kubernetes.io/part-of: homelab
     factory.gwkline.io/component: medic
 spec:
-  # Scheduled medic sweep (#239): detect ci-red factory PRs and queue one
-  # repair per tick. Runs in the reviewer image (gh + jq + git + python3, no
-  # k8s API) right after the reviewer's 35,55 slots so it sees fresh verdicts.
+  # Queues one repair per tick for a ci-red factory PR. Runs just after the
+  # reviewer so it sees fresh verdicts.
   schedule: "41 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
@@ -23,14 +22,12 @@ spec:
       template:
         metadata:
           labels:
-            # Carries the reviewer profile label on purpose: the medic lives
-            # in the reviewer image and inherits allow-factory-reviewer egress
-            # (GitHub API + DNS only), same as the sweeper.
+            # Reviewer label on purpose: inherits allow-factory-reviewer egress.
             factory.gwkline.io/component: medic
             factory.gwkline.io/profile: reviewer
         spec:
           restartPolicy: Never
-          serviceAccountName: factory-reviewer # same least-privilege SA: gh API only, no k8s
+          serviceAccountName: factory-reviewer
           automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
@@ -39,8 +36,7 @@ spec:
           containers:
             - name: medic
               image: ghcr.io/gwkline/homelab/factory/reviewer:latest
-              # The image ENTRYPOINT is the reviewer poller; the medic must
-              # override it with its own sweep script (same as the sweeper).
+              # Override the image's reviewer entrypoint.
               command: ["/reviewer/run-medic.sh"]
               env:
                 - name: FACTORY_REPO

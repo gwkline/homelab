@@ -1,6 +1,4 @@
-# In-cluster endpoint for MCP clients and the panel's health check. Port 8080
-# must be declared here: apps/panel/server/devtools.ts probes
-# http://executor.agents.svc:8080/ and rejects undeclared catalog ports.
+# The panel's health check probes port 8080.
 apiVersion: v1
 kind: Service
 metadata:
@@ -15,9 +13,7 @@ spec:
       port: 8080
       targetPort: http
 ---
-# Tailnet exposure: web UI and /mcp for laptop clients at
-# https://executor.<tailnet>. Tailscale identity is the only way in from
-# outside the cluster. Both annotations are required (verify.sh enforces).
+# https://executor.<tailnet>: web UI and /mcp for laptop clients.
 apiVersion: v1
 kind: Service
 metadata:

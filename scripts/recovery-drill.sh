@@ -1,35 +1,14 @@
 #!/bin/sh
-# Timed driver for the bare-machine fast-recovery drill (issue #34).
-#
-# Runs every documented cluster bring-up stage in order, times each stage,
-# and prints the recovery-time table for the drill log in
-# docs/rebuild-runbook.md ("Drill log"). It exercises the same scripts and
-# Kubernetes manifests the runbook documents — no hidden state, no manual
-# fixes: if a stage fails, the drill fails and the fix must become a
-# runbook step or a follow-up issue before the next attempt.
-#
-# Node bootstrap (OS install through `bootstrap/bootstrap.sh server` up to a
-# Ready node) is interactive and cannot be scripted; record its wall time and
-# pass the drill-start timestamp with --from so the printed total covers the
-# whole drill. Without --from the script reports the cluster phase only.
-#
-# Required environment — documented external sources only (see
-# docs/rebuild-runbook.md); nothing is read from an old cluster:
-#   KUBECONFIG                kubeconfig of the fresh cluster (node Ready)
-#   TS_CLIENT_ID              Tailscale OAuth client id (deploy/tailscale/README.md)
-#   TS_CLIENT_SECRET          Tailscale OAuth client secret (same source)
-#   OP_SERVICE_ACCOUNT_TOKEN  1Password service-account token (homelab vault)
+# Timed cluster bring-up for the recovery drill (docs/rebuild-runbook.md
+# steps 3.2-3.8). Run after bootstrap/bootstrap.sh server has a Ready node.
 #
 # Usage: ./scripts/recovery-drill.sh [--from <unix-epoch>]
+#   --from  drill start time, so the total includes node bootstrap
+# Needs kubectl + helm, KUBECONFIG for the new cluster, and the 1Password
+# service-account token (OP_SERVICE_ACCOUNT_TOKEN, or pasted at the prompt).
 set -eu
 
-# Pinned Tailscale operator chart version: the PROXY_TAGS workaround in
-# deploy/tailscale/README.md and scripts/rebuild-check.sh section 7 are
-# tested against it. k3s itself is pinned at bootstrap time (bootstrap.sh).
 TS_CHART_VERSION=1.102.3
-# Pinned sigstore policy-controller chart (issue #91 / ADR-004): the
-# admission webhook that verifies cosign signatures on homelab images
-# (deploy/image-policy/base) before any workload pod is admitted.
 POLICY_CHART_VERSION=0.10.7
 
 POD_TIMEOUT=600s
@@ -63,10 +42,7 @@ while [ $# -gt 0 ]; do
 done
 
 command -v kubectl >/dev/null 2>&1 || fail "kubectl not found"
-command -v helm >/dev/null 2>&1 || fail "helm not found (docs/runbook-server-cluster.md section 5)"
-[ -n "${TS_CLIENT_ID:-}" ] || fail "TS_CLIENT_ID unset — documented source: deploy/tailscale/README.md"
-[ -n "${TS_CLIENT_SECRET:-}" ] || fail "TS_CLIENT_SECRET unset — documented source: deploy/tailscale/README.md"
-[ -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ] || fail "OP_SERVICE_ACCOUNT_TOKEN unset — documented source: docs/rebuild-runbook.md (secrets)"
+command -v helm >/dev/null 2>&1 || fail "helm not found"
 
 cd "$(dirname "$0")/.." || exit 1
 
@@ -92,68 +68,34 @@ end_stage() {
 }
 
 # ---------------------------------------------------------------------------
-stage operator
-helm repo add tailscale https://pkgs.tailscale.com/helmcharts >/dev/null 2>&1 || true
-helm upgrade --install tailscale-operator tailscale/tailscale-operator \
-  --namespace tailscale --create-namespace \
-  --version "$TS_CHART_VERSION" \
-  --set oauth.clientId="$TS_CLIENT_ID" \
-  --set oauth.clientSecret="$TS_CLIENT_SECRET"
-kubectl -n tailscale rollout status deploy/operator --timeout="$PROXY_TIMEOUT"
-kubectl -n tailscale set env deploy/operator PROXY_TAGS=tag:k8s-operator
-kubectl -n tailscale rollout restart deploy/operator
-kubectl -n tailscale rollout status deploy/operator --timeout="$PROXY_TIMEOUT"
+stage eso
+kubectl apply --server-side -k deploy/eso/base
+kubectl wait --for=condition=Established \
+  crd/externalsecrets.external-secrets.io crd/secretstores.external-secrets.io \
+  --timeout=180s
+kubectl -n external-secrets rollout status deploy/external-secrets-webhook --timeout="$POD_TIMEOUT"
+kubectl -n external-secrets rollout status deploy/external-secrets --timeout="$POD_TIMEOUT"
 end_stage
 
 # ---------------------------------------------------------------------------
-stage namespaces
+stage secrets
 kubectl apply -k deploy/namespaces
-kubectl apply -k deploy/policies/base
+./scripts/create-onepassword-service-account.sh
+kubectl -n database get secret pg-primary-knowledge-owner >/dev/null 2>&1 ||
+  echo "WARN: postgres owner Secrets missing (deploy/postgres/README.md) — pg-primary will not bootstrap" >&2
 end_stage
 
 # ---------------------------------------------------------------------------
-# Image admission policy (issue #91 / ADR-004): the webhook must be in force
-# before the workload stage so every homelab pod is admitted only with a
-# verified signature. Namespaces first (they carry the include labels), then
-# controller, then the ClusterImagePolicy, then workloads.
+# Admission webhook must serve before any homelab pod is admitted (ADR-004).
 stage image-policy
 helm repo add sigstore https://sigstore.github.io/helm-charts >/dev/null 2>&1 || true
 helm upgrade --install policy-controller sigstore/policy-controller \
   --namespace cosign-system --create-namespace \
   --version "$POLICY_CHART_VERSION"
 kubectl -n cosign-system rollout status deploy/policy-controller-webhook --timeout="$PROXY_TIMEOUT"
-kubectl apply -k deploy/image-policy/base
 end_stage
 
 # ---------------------------------------------------------------------------
-# External Secrets Operator (issue #38): the pinned install from git
-# (deploy/eso/base) must be ready before any ExternalSecret applies (the
-# tailscale and github-tokens bases below). Pass 1 brings up CRDs, RBAC and
-# Deployments; pass 2 (after the CRDs are Established and the rollout is
-# Ready) applies the fake-provider SecretStore + smoke ExternalSecret, whose
-# Ready condition proves the controller reconciles end to end without real
-# credentials. Idempotent — re-running this stage is the recovery path
-# (deploy/eso/base/README.md).
-stage eso
-kubectl apply --server-side -k deploy/eso/base
-kubectl wait --for=condition=Established \
-  crd/externalsecrets.external-secrets.io crd/secretstores.external-secrets.io \
-  --timeout=180s
-kubectl -n external-secrets rollout status deploy/external-secrets --timeout="$POD_TIMEOUT"
-kubectl -n external-secrets rollout status deploy/external-secrets-webhook --timeout="$POD_TIMEOUT"
-kubectl -n external-secrets rollout status deploy/external-secrets-cert-controller --timeout="$POD_TIMEOUT"
-kubectl apply --server-side -k deploy/eso/base
-kubectl -n external-secrets wait --for=condition=Ready externalsecret/eso-smoke --timeout=120s
-end_stage
-
-# ---------------------------------------------------------------------------
-# CloudNativePG operator (issue #49): the pinned install from git
-# (deploy/cnpg/base) must be Ready before deploy/postgres applies — the
-# Cluster CRDs are part of this bundle, and the admission webhooks fail
-# closed until the controller rollout is serving. One server-side apply
-# carries CRDs, RBAC and the Deployment (CRD ordering contract:
-# deploy/cnpg/README.md). Idempotent — re-running this stage is the
-# recovery path.
 stage cnpg
 kubectl apply --server-side -k deploy/cnpg/base
 kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io \
@@ -163,27 +105,21 @@ kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager \
 end_stage
 
 # ---------------------------------------------------------------------------
-# The stages below mirror the root cluster entry point (clusters/home,
-# issue #20) in its documented dependency order, decomposed per-stage so
-# the drill can time each one; the runbook's one-command equivalent is
-# `kubectl apply -k clusters/home` (docs/rebuild-runbook.md §4).
-
-# ---------------------------------------------------------------------------
-stage secrets
-./scripts/create-onepassword-service-account.sh
-# Secret onepassword-service-account -> agents, sandbox, work, tailscale;
-# the github-tokens ExternalSecrets then sync through the ESO instance
-# guaranteed Ready by the eso stage above (same set the root Kustomization
-# composes). A failed wait means the 1Password item does not exist or the
-# vault is unreachable.
-kubectl apply -k deploy/github-tokens/base
+stage workloads
+kubectl apply -k clusters/home
 kubectl -n agents wait --for=condition=Ready externalsecret/github-token --timeout=120s ||
   echo "WARN: github-token not synced yet (1Password item github-readonly present?)" >&2
 end_stage
 
 # ---------------------------------------------------------------------------
-stage workloads
-kubectl apply -k clusters/home
+# After the core set, which syncs Secret operator-oauth from 1Password.
+stage operator
+helm repo add tailscale https://pkgs.tailscale.com/helmcharts >/dev/null 2>&1 || true
+helm upgrade --install tailscale-operator tailscale/tailscale-operator \
+  --namespace tailscale --create-namespace \
+  --version "$TS_CHART_VERSION" \
+  -f deploy/tailscale/values.yaml
+kubectl -n tailscale rollout status deploy/operator --timeout="$PROXY_TIMEOUT"
 end_stage
 
 # ---------------------------------------------------------------------------
@@ -196,8 +132,6 @@ end_stage
 
 # ---------------------------------------------------------------------------
 stage https
-# Tailscale Ingresses get their tailnet hostname once the proxy is up; poll
-# each status, then require the HTTPS URL to answer.
 for _ing in "t3code-0" "panel"; do
   _tries=0
   while :; do
@@ -228,17 +162,9 @@ while read -r _name _secs; do
 done <"$RESULT_FILE"
 printf '%-12s %6ss\n' "TOTAL" "$_total"
 
-printf '\nRTO (cluster phase, this machine): %ss\n' "$_total"
+printf '\nRTO (cluster phase): %ss\n' "$_total"
 if [ -n "$FROM" ]; then
-  printf 'RTO (from recorded drill start):   %ss\n' "$(( $(date +%s) - FROM ))"
+  printf 'RTO (from drill start): %ss\n' "$(($(date +%s) - FROM))"
 fi
 
-cat >&2 <<'EOF'
-
-Record in docs/rebuild-runbook.md "Drill log":
-- the RTO line(s) above plus node-bootstrap wall time if --from was not used
-- PVCs are recreated empty (nothing is backed up)
-- every manual step you had to do that the runbook does not document —
-  each one becomes a runbook step or a follow-up issue before the next run
-- the pinned versions used: k3s (bootstrap.sh) and Tailscale operator chart
-EOF
+echo 'Record the run in docs/rebuild-runbook.md "Drill log", including every manual step.' >&2

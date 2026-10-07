@@ -41,15 +41,7 @@ else
   fail=1
 fi
 
-echo "== 4. secrets present =="
-# extend as more namespaces adopt workloads
-if kubectl get secret github-token -n agents >/dev/null 2>&1; then
-  echo "  ok: agents/github-token"
-else
-  echo "  WARN: agents/github-token missing (private repos disabled)"
-fi
-
-echo "== 5. tailscale exposure =="
+echo "== 4. tailscale exposure =="
 # HTTPS 443 is the supported endpoint: check the URL users open. TLS errors
 # (curl exit != 0) and non-200s both fail. Hostnames come from each Tailscale
 # Ingress's status.
@@ -80,7 +72,7 @@ check_https agents t3code-0 1
 check_https agents panel 1
 check_https work work-t3code-0 0
 
-echo "== 6. tailscale exposure annotations =="
+echo "== 5. tailscale exposure annotations =="
 # Every tailscale LoadBalancer Service must declare its hostname, and every
 # tailscale-exposed Service or Ingress must carry tags=tag:k8s-operator
 # (mirrors the static check in scripts/verify.sh). The lists are read into
@@ -119,28 +111,27 @@ done <<EOF
 $ings
 EOF
 
-echo "== 7. operator default tag (pinned workaround) =="
-# The chart (1.102.3) hardcodes PROXY_TAGS=tag:k8; the documented workaround
-# pins it to tag:k8s-operator via `kubectl set env` (deploy/tailscale/README.md).
+echo "== 6. operator proxy tag =="
+# deploy/tailscale/values.yaml sets proxyConfig.defaultTags -> PROXY_TAGS.
 ptags=$(kubectl get deploy operator -n tailscale \
   -o jsonpath='{.spec.template.spec.containers[*].env[?(@.name=="PROXY_TAGS")].value}' 2>/dev/null)
 if [ "$ptags" = "tag:k8s-operator" ]; then
   echo "  ok: operator PROXY_TAGS=tag:k8s-operator"
 else
-  echo "  WARN: operator PROXY_TAGS='$ptags' (expected tag:k8s-operator — apply documented workaround)"
+  echo "  WARN: operator PROXY_TAGS='$ptags' (expected tag:k8s-operator — reinstall with -f deploy/tailscale/values.yaml)"
 fi
 
-echo "== 8. external secrets operator =="
-# deploy/eso/base runs a fake-provider smoke ExternalSecret; Ready means the
-# controller reconciles end to end without any real credentials (issue #38).
-state=$(kubectl get externalsecret eso-smoke -n external-secrets \
-  -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
-if [ "$state" = "True" ]; then
-  echo "  ok: externalsecret/eso-smoke Ready (controller reconciling)"
-else
-  echo "  FAIL: externalsecret/eso-smoke not Ready (state: ${state:-missing}) — install/recover: deploy/eso/base/README.md"
-  fail=1
-fi
+echo "== 7. external secrets syncing =="
+for es in tailscale/operator-oauth agents/github-token; do
+  state=$(kubectl get externalsecret "${es#*/}" -n "${es%%/*}" \
+    -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+  if [ "$state" = "True" ]; then
+    echo "  ok: externalsecret/$es Ready"
+  else
+    echo "  FAIL: externalsecret/$es not Ready (state: ${state:-missing}) — see deploy/eso/README.md"
+    fail=1
+  fi
+done
 
 echo
 if [ "$fail" -eq 0 ]; then

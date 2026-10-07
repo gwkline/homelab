@@ -1,14 +1,8 @@
 #!/bin/sh
-# Factory reviewer — GitHub-as-ledger approval loop poller.
-# Harness-agnostic: gh + jq only, no LLM, no k8s API.
-#
-# v1 behavior:
-#   - Reads open PRs carrying factory/* ledger labels with live CI + review
-#     status, echoes per-PR verdicts (visible in CronJob logs).
-#   - Posts ONE idempotent status comment per PR (marker <!-- factory:review:N -->,
-#     edited in place — never duplicated).
-#   - Mutates NOTHING else unless FACTORY_REVIEWER_AUTO_MERGE=true (write path
-#     lands later; default off).
+# Factory reviewer: logs a verdict for every open factory PR from its CI and
+# review status, and keeps one status comment per PR (edited in place).
+# Merges, ready-flips, and labels happen only with
+# FACTORY_REVIEWER_AUTO_MERGE=true. gh + jq only; no LLM, no k8s API.
 set -eu
 
 REPO="${FACTORY_REPO:?FACTORY_REPO required}"
@@ -21,8 +15,7 @@ fi
 
 classify_checks() {
   # $1 = comma-separated check conclusions/statuses (or empty)
-  # Empty = no checks YET (or the API call failed): that is pending, never
-  # green — treating it green let zero-verification PRs get flipped ready.
+  # Empty (no checks yet, or the API call failed) is pending, never green.
   case "$1" in
     *failure*|*timed_out*|*action_required*|*stale*|*cancelled*) echo red ;;
     ""|none)                                                     echo pending ;;
@@ -33,12 +26,8 @@ classify_checks() {
   esac
 }
 
-# List open PRs, then filter factory branches locally. The lifecycle labels
-# live on the linked source issue (the publisher edits the issue), not on the
-# pull request object. Filtering PR labels here made the reviewer permanently
-# blind to every factory PR.
-# NOTE: use printf, never echo — echo mangles JSON content (parse errors on
-# real payloads with emoji/control chars); printf '%s' round-trips byte-safe.
+# Filter by branch, not label: lifecycle labels live on the linked issue.
+# Use printf '%s', never echo, for JSON: echo can mangle escapes.
 PRS_JSON="$(gh api --paginate --slurp "repos/${REPO}/pulls?state=open&per_page=100" \
   | jq '[.[][] | select((.head.ref // "") | startswith("factory/issue-"))]')"
 
@@ -73,8 +62,7 @@ printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
   elif [ "$DECISION" = "APPROVED" ]; then
     VERDICT="ready-to-merge: APPROVED + CI green ✅"
   elif [ "$AUTO_MERGE" = "true" ]; then
-    # Auto-merge mode: the factory authored the PR and CI is the gate —
-    # no human approval needed (GitHub forbids self-approval anyway).
+    # CI is the gate; GitHub forbids self-approval anyway.
     VERDICT="auto-merge: CI green ✅ (CI-as-gate, auto mode)"
   elif [ "$DECISION" = "CHANGES_REQUESTED" ]; then
     VERDICT="changes-requested: address review feedback"
@@ -85,9 +73,7 @@ printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
   echo "[reviewer] issue #${LINKED_ISSUE:-?} → PR #${NUM} (${HEAD_REF}) draft=${DRAFT} ci=${CI} review=${DECISION} labels=[${LABELS}] :: ${VERDICT}"
 
   # ── Write path (only when FACTORY_REVIEWER_AUTO_MERGE=true) ─────────────
-  # Priority: merge if approved+green → flip draft ready if green → otherwise
-  # just label/nudge. Branch protection still gates the actual merge; a refusal
-  # (405/409) is surfaced in the log, never forced.
+  # Branch protection still gates the merge; a refusal is logged, never forced.
   if [ "${AUTO_MERGE}" = "true" ] && [ "$DRY" != "true" ]; then
     case "$CI/$DRAFT" in
       green/false)
@@ -102,10 +88,9 @@ printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
           || echo "[reviewer] PR #${NUM}: could not flip ready (needs Pull requests: write)"
         ;;
       *)
-        : # no safe mutation — comment above already nudges
+        :
         ;;
     esac
-    # Label bookkeeping: needs-review when ready+green; approved when APPROVED.
     if [ "$CI" = "green" ] && [ "$DRAFT" = "false" ] && [ "$DECISION" != "CHANGES_REQUESTED" ] \
        && ! printf '%s' "$LABELS" | grep -q "factory/needs-review"; then
       gh api -X POST "repos/${REPO}/issues/${NUM}/labels" -f 'labels[]=factory/needs-review' >/dev/null 2>&1 || true

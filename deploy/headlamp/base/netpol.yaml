@@ -1,6 +1,3 @@
-# Workload-owned exposure rule. Default-deny ingress lives in policies/base;
-# the only path in is the Tailscale operator's proxies. Tailnet identity is
-# the auth layer, same model as every other UI here.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -20,10 +17,7 @@ spec:
         - protocol: TCP
           port: 4466
 ---
-# Egress narrowed below the namespace baseline (agents egress is otherwise
-# open): the Headlamp backend needs DNS and the Kubernetes API — nothing
-# else. The API is the kubernetes.default ClusterIP (10.43.0.1 under k3s
-# defaults — first IP of the service CIDR).
+# Egress: DNS and the Kubernetes API only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -35,7 +29,7 @@ spec:
       app: headlamp
   policyTypes: [Egress]
   egress:
-    - to: # DNS: kube-dns pods only (k3s coredns carries this label)
+    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
@@ -45,11 +39,9 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    - to: # Kubernetes API: in-cluster ClusterIP AND the node IP the external
-        # kubeconfig uses. kube-router enforces netpol on the FORWARD path, and
-        # post-DNAT egress sees the node IP — allowing only 10.43.0.1 leaves
-        # the backend dialing 192.168.1.2:443 refused. Both ports: 443 is the
-        # ClusterIP service port, 6443 the node's API port.
+    # kube-router filters after DNAT, so the API is matched by both its
+    # ClusterIP and the node's real endpoint.
+    - to:
         - ipBlock:
             cidr: 10.43.0.1/32
         - ipBlock:

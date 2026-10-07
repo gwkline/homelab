@@ -1,23 +1,9 @@
-// Durable GitHub issue collector: open issues become factory Runs, with
-// GitHub labels as the ledger.
+// Durable GitHub issue collector: each tick polls allowlisted repos and adds
+// the queued label to eligible issues — that label is the Run's ledger record.
 //
-// One tick:
-//   1. Load declarative config (repos, eligibility label/status, default
-//      profile, rule version, polling cursor).
-//   2. Mint a short-lived, read-scoped GitHub App installation token (#70).
-//   3. Poll each allowlisted repo's open issues (paginated, conditional,
-//      rate-limit-aware).
-//   4. For every eligible issue, create the logical Run idempotently: the
-//      queued label IS the Run's ledger record (one issue + one label event =
-//      one Run per #71); the #71 idempotency key is computed and logged.
-//   5. Print a machine-readable summary + the next polling cursor.
-//
-// Trust boundary: issue titles/bodies/comments are UNTRUSTED task context.
-// The collector reads none of them — eligibility uses only number, state,
-// labels, updated_at and the pull_request flag. A title is only ever written
-// to stdout JSON-encoded and truncated, never interpolated into any shell
-// command, manifest, or YAML. See apps/factory/collector/README.md for the
-// full behavior matrix (label removal, close/reopen, edits, retries).
+// Issue titles and bodies are untrusted. Eligibility reads only number, state,
+// labels, updated_at and the pull_request flag; titles reach stdout only
+// truncated and JSON-encoded. See README.md for the full behavior matrix.
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -34,18 +20,15 @@ import { GitHubClient } from "./github-client.ts";
 import type { IssueRef } from "./github-client.ts";
 import { GitHubApiError } from "./github-errors.ts";
 
-// The collector's GitHub surface per docs/github-app.md: pure reads plus the
-// one unavoidable ledger write (adding the queued label). `issues:write`
-// implies read; the App-level installation never grants more than the table
-// in docs/github-app.md.
+// Reads plus the one ledger write (adding the queued label); see
+// docs/github-app.md.
 const COLLECTOR_PERMISSIONS: PermissionRequest = {
   contents: "read",
   issues: "write",
   metadata: "read",
 };
 
-// Everything the collector needs from GitHub — structural, so tests can stub
-// it without any HTTP (the real GitHubClient satisfies this shape).
+// Structural, so tests can stub it without HTTP.
 export interface CollectorClient {
   addLabels: (
     repo: string,
@@ -95,7 +78,6 @@ export interface TickResult {
   wouldQueue: number;
 }
 
-// Mutable tick accumulator, threaded through the helpers below.
 interface TickState {
   capOrError: boolean;
   errors: string[];
@@ -113,8 +95,8 @@ const fail = (state: TickState, repo: string, message: string): void => {
   state.capOrError = true;
 };
 
-// Untrusted title → log-safe string: truncated first, then JSON-encoded, so
-// control characters and quotes can never break the log line shape.
+// Truncate, then JSON-encode, so control characters and quotes can never
+// break the log line.
 const logTitle = (title: string): string => JSON.stringify(title.slice(0, 80));
 
 const latest = (a: string | null, b: string): string | null => {
@@ -149,8 +131,6 @@ const classifySkip = (
   return null;
 };
 
-// Creates the logical Run for one candidate: re-reads the issue to narrow the
-// listing race, then adds the queued label — the ledger write.
 const queueCandidate = async (
   config: CollectorConfig,
   client: CollectorClient,
@@ -158,9 +138,8 @@ const queueCandidate = async (
   issue: IssueRef,
   state: TickState
 ): Promise<void> => {
-  // Race narrowing: the listing can be seconds stale. Re-read the issue
-  // right before the ledger write so an orchestrator that claimed (or a
-  // human that closed) it meanwhile is never double-queued.
+  // The listing can be seconds stale: re-read so an issue claimed or closed
+  // meanwhile is not queued again.
   let fresh: IssueRef | null;
   try {
     fresh = await client.getIssue(repo, issue.number);
@@ -242,8 +221,6 @@ export const collectTick = async (
       continue;
     }
     if (page.pages >= config.maxPages && page.issues.length > 0) {
-      // Pagination cap hit: the oldest updates past the cap were not seen,
-      // so the cursor must not advance past this tick (conservative).
       console.log(
         `[collector] ${repo}: pagination cap (${page.pages} pages) — cursor will not advance this tick`
       );
@@ -254,8 +231,6 @@ export const collectTick = async (
     for (const issue of page.issues) {
       seen += 1;
       maxSeenUpdatedAt = latest(maxSeenUpdatedAt, issue.updatedAt);
-      // Same-tick duplicate defense (the client already dedupes pages): an
-      // issue listed twice must map to one Run, never two writes.
       if (seenThisTick.has(issue.number)) {
         state.skipped.duplicate += 1;
         continue;
@@ -271,9 +246,8 @@ export const collectTick = async (
     reposOk += 1;
   }
 
-  // The cursor is an optimization, never a correctness mechanism (full scans
-  // are always safe — eligibility is idempotent). It advances only when every
-  // repo was listed completely, so a failed/capped tick never skips work.
+  // Advance only when every repo was listed completely, so a failed or capped
+  // tick never skips work.
   const nextSince =
     state.errors.length === 0 && !state.capOrError
       ? (maxSeenUpdatedAt ?? config.since)
@@ -303,9 +277,7 @@ export const collectTick = async (
   };
 };
 
-// Short-lived read-scoped App installation token (#70) with an explicit,
-// transitional PAT fallback for clusters that have not passed the App gate
-// yet (docs/github-app.md).
+// Prefers a short-lived App installation token; falls back to GH_TOKEN.
 export const createTokenProvider = (
   env: NodeJS.ProcessEnv
 ): { mode: "app" | "pat"; token: () => Promise<string> } => {
@@ -373,9 +345,8 @@ const main = async (): Promise<void> => {
     tokenProvider: token,
   });
   const result = await collectTick(config, client);
-  // A tick with per-repo errors still processed the healthy repos; the
-  // non-zero exit makes the failure visible in CronJob history and Loki and
-  // (with backoffLimit: 0) leaves the failure record intact.
+  // Healthy repos were still processed; the non-zero exit keeps the failure
+  // visible in CronJob history.
   if (result.errors.length > 0) {
     process.exitCode = 1;
   }

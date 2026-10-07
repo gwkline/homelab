@@ -1,38 +1,32 @@
-# Panel list-and-launch e2e (issue #27)
+# Panel list-and-launch e2e
 
-`scripts/panel-e2e-smoke.sh` proves the panel's core behavior against a real Kubernetes API — not a mock. The panel is deployed the way production deploys it: as a pod running as the `panel` ServiceAccount (namespace `agents`), bound to the exact production grants of `deploy/panel/base/rbac.yaml` — the sandbox `panel-sandbox-runs` Role (create/list/delete Jobs, get/list/patch CronJobs) and the agents `panel-agents-viewer` Role — with the ServiceAccount token mount supplying the cluster CA — so the server's in-cluster `loadConfig()` path, TLS trust, and RBAC are all exercised.
+`scripts/panel-e2e-smoke.sh` tests the panel against a real Kubernetes API. The panel runs as a pod under ServiceAccount `panel` in `agents`, bound to the exact grants in `deploy/panel/base/rbac.yaml` (sandbox `panel-sandbox-runs`, agents `panel-agents-viewer`), so in-cluster config, TLS trust, and RBAC are all exercised. CI runs it in the `panel-e2e` job on a kind cluster.
 
-What it proves, behaviorally:
+| Check | Expectation |
+| --- | --- |
+| Identity | `kubectl auth can-i` as `panel` matches production: create/list/delete Jobs and get/list/patch CronJobs in `sandbox`, get Services in `agents`; Job watch, CronJob create/delete, and secrets denied |
+| Listing | `GET /api/state` returns the seeded sandbox Job and CronJob |
+| Launching | `POST /api/jobs` creates a Job with the requested `LOOP_COMMAND`/`WATCHER_ISSUE` and locked-down fields (non-root uid 1000, no privilege escalation, all capabilities dropped, no SA token, RuntimeDefault seccomp) |
+| Terminal state | the Job runs in a real pod, reaches `Complete`, and the panel reports `complete` |
+| Input rejection | blank commands and bad issue numbers return 400 and create nothing |
 
-1. **Identity**: the panel pod runs as ServiceAccount `panel`; `kubectl auth can-i` probes as that identity must match the production grants exactly (create/list/delete Jobs and get/list/patch CronJobs in `sandbox`; get Services in `agents`; Job watch, CronJob create/delete, and secrets denied).
-2. **Listing**: `GET /api/state` returns the seeded sandbox Job and CronJob.
-3. **Launching**: `POST /api/jobs` creates a sandbox Job whose live API object carries the requested `LOOP_COMMAND` / `WATCHER_ISSUE` env and the locked-down container fields (runAsNonRoot, uid 1000, no privilege escalation, all capabilities dropped, no SA token automount, RuntimeDefault seccomp).
-4. **Terminal state**: the created Job runs its command in a real pod and reaches `Complete`; the panel then reports it as `complete`.
-5. **Input rejection**: blank commands and non-numeric/overlong issue numbers stay rejected with 400, creating nothing.
+RBAC is probed before the panel starts, and non-200 responses print the upstream error with a certificate/forbidden hint.
 
-TLS trust and RBAC breakage fail loudly: RBAC is probed before the panel starts, and non-200 API responses print the upstream error body with a targeted hint (certificate vs forbidden).
-
-## Run it
+## Run
 
 ```sh
-# CI does this (ci.yaml job panel-e2e, disposable kind cluster):
-./scripts/panel-e2e-smoke.sh
-
-# Keep the fixtures + created Job for inspection:
-PANEL_E2E_KEEP=1 ./scripts/panel-e2e-smoke.sh
+./scripts/panel-e2e-smoke.sh                     # kind cluster panel-e2e, deleted on exit
+PANEL_E2E_KEEP=1 ./scripts/panel-e2e-smoke.sh    # keep fixtures, Job, and cluster
 ```
 
-Requirements: `docker` + `kind` + `kubectl` + `node` + `curl`. The script builds the panel image (`apps/panel/Dockerfile`) and a tiny job-runner image (`apps/panel/tests/integration/runner.Dockerfile` — a stand-in for the private loop-agent image that executes `$LOOP_COMMAND` the same way), provisions a disposable kind cluster named `panel-e2e` (reusing one that already exists), loads the images, seeds fixtures, deploys the panel, and drives it through a port-forward. The cluster is deleted on exit unless it already existed; on a reused cluster only what this run created is deleted (the panel pod, the seeded fixtures, and the created Job) — no cluster-wide mutations.
+Needs `docker`, `kind`, `kubectl`, `node`, `curl`. The script builds the panel image and a stand-in job-runner (`apps/panel/tests/integration/runner.Dockerfile`), creates or reuses the kind cluster, and drives the panel through a port-forward. On a reused cluster it deletes only what it created.
 
-## k3d / k3s / any existing cluster
-
-Point kubectl at the cluster, make the two images pullable on the node, and set `PANEL_E2E_REUSE=1` (the script then skips provisioning and image loading):
+Against another cluster (k3d, k3s), make both images pullable on the node, then reuse the current context:
 
 ```sh
 docker build -f apps/panel/Dockerfile -t panel-e2e:local .
 docker build -f apps/panel/tests/integration/runner.Dockerfile -t panel-e2e-runner:local apps/panel/tests/integration
 # k3d: k3d image import panel-e2e:local panel-e2e-runner:local -c <cluster>
-# k3s: the node's containerd must already hold both images (or push them)
 PANEL_E2E_REUSE=1 ./scripts/panel-e2e-smoke.sh
 ```
 
@@ -40,17 +34,17 @@ PANEL_E2E_REUSE=1 ./scripts/panel-e2e-smoke.sh
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `PANEL_E2E_REUSE` | `0` | Use the current kubectl context instead of kind |
-| `PANEL_E2E_KEEP` | `0` | Keep fixtures, created Job, and cluster |
-| `PANEL_E2E_PORT` | `3933` | Host port for the panel port-forward |
-| `PANEL_E2E_TIMEOUT` | `600` | Driver budget (seconds) — the API-driving step runs under `timeout` so a wedged port-forward or apiserver cannot hang CI |
-| `PANEL_E2E_JOB_WAIT` | `300` | Created-Job terminal-state wait in seconds |
-| `PANEL_E2E_PANEL_IMAGE` | `panel-e2e:local` | Panel image ref |
-| `PANEL_E2E_RUNNER_IMAGE` | `panel-e2e-runner:local` | Job-runner image ref |
+| `PANEL_E2E_REUSE` | `0` | use the current kubectl context instead of kind |
+| `PANEL_E2E_KEEP` | `0` | keep fixtures, created Job, and cluster |
+| `PANEL_E2E_PORT` | `3933` | host port for the port-forward |
+| `PANEL_E2E_TIMEOUT` | `600` | driver budget in seconds |
+| `PANEL_E2E_JOB_WAIT` | `300` | created-Job terminal-state wait in seconds |
+| `PANEL_E2E_PANEL_IMAGE` | `panel-e2e:local` | panel image |
+| `PANEL_E2E_RUNNER_IMAGE` | `panel-e2e-runner:local` | job-runner image |
 
-## The driver alone
+## Driver only
 
-The HTTP/kubectl assertions live in `apps/panel/tests/integration/panel-e2e.test.mjs` (node:test). They are reusable against any already-deployed panel — e.g. after a `kubectl port-forward pod/panel 3933:3000 -n agents` on the homelab cluster:
+The assertions live in `apps/panel/tests/integration/panel-e2e.test.mjs` and work against any deployed panel, e.g. after `kubectl port-forward deploy/panel 3933:3000 -n agents`:
 
 ```sh
 PANEL_E2E_URL=http://127.0.0.1:3933 \
@@ -61,4 +55,4 @@ PANEL_E2E_COMMAND='echo panel-e2e-launch-ok' \
   node --test apps/panel/tests/integration/panel-e2e.test.mjs
 ```
 
-Without `PANEL_E2E_URL` every test skips, so the file is inert inside `npm test` (which only globs `tests/*.test.ts` anyway) — the real-cluster coverage stays in this script, kept out of the fast unit suite.
+Without `PANEL_E2E_URL` every test skips, so `npm test` stays fast.

@@ -1,20 +1,8 @@
 /**
- * Eval-local channel rankers (#59).
- *
- * These scorers are deliberately independent of `src/`: the harness must not
- * share ranking code with the system under test, or a shared bug cancels out
- * and regressions become invisible. `rank.ts` implements its own tokenizer and
- * two deterministic, offline channels:
- *
- * - `bm25`: a small BM25 (Okapi k1/b) over corpus tokens. Stands in for
- *   pg_textsearch (#60); swap in the real retriever when it lands.
- * - `vector`: feature-hashed bag-of-words with cosine similarity. Order-free
- *   and deterministic without any paid embedding API; a stand-in for pgvector
- *   (#62) that has no synonym knowledge, so paraphrase wins are out of scope
- *   until real embeddings plug in.
- *
- * Both are pure functions of the committed corpus and query text: same input,
- * same output, no network, no clocks.
+ * Eval-local rankers, deliberately independent of `src/`: sharing ranking code
+ * with the system under test would let a shared bug cancel out. Two offline,
+ * deterministic channels: Okapi BM25, and a feature-hashed bag-of-words
+ * "vector" channel with no synonym knowledge.
  */
 
 import type { EvalChunk, EvalCorpusQuery } from "./corpus.ts";
@@ -25,11 +13,8 @@ export interface ScoredChunk {
 }
 
 export interface Bm25Index {
-  /** term -> chunk ids containing it. */
   postings: Map<string, string[]>;
-  /** term -> chunk id -> term frequency. */
   termFrequencies: Map<string, Map<string, number>>;
-  /** chunk id -> token count. */
   lengths: Map<string, number>;
   averageLength: number;
 }
@@ -37,11 +22,7 @@ export interface Bm25Index {
 const BM25_K1 = 1.2;
 const BM25_B = 0.75;
 
-/**
- * Small eval-local stopword list: function words carry no topical evidence and
- * would otherwise let unanswerable queries match on "the"/"for" alone, which
- * is exactly the fabricated-hit behavior the no-answer metric exists to catch.
- */
+/** Without stopwords, unanswerable queries would match on "the"/"for" alone. */
 const STOPWORDS = new Set([
   "a",
   "an",
@@ -114,7 +95,6 @@ export const buildBm25Index = (chunks: EvalChunk[]): Bm25Index => {
   };
 };
 
-/** Okapi BM25 score of one chunk for one query token count map. */
 const bm25ChunkScore = (
   index: Bm25Index,
   docCount: number,
@@ -138,10 +118,7 @@ const bm25ChunkScore = (
   return score;
 };
 
-/**
- * BM25 channel ranking, best first. Ties break by chunk id ascending so the
- * order is fully determined by the corpus, never by input iteration order.
- */
+/** Ties break by chunk id so order never depends on input iteration order. */
 export const rankBm25 = (
   index: Bm25Index,
   chunks: EvalChunk[],
@@ -168,10 +145,8 @@ export const rankBm25 = (
 };
 
 /**
- * Feature-hashed bag-of-words "embedding": each token hashes to one of
- * `EMBEDDING_DIM` buckets with a deterministic sign, tf-weighted, L2-normalized.
- * Deterministic across runs and platforms (integer FNV-1a, no floats in the
- * hash path). Collisions are the known cost; real embeddings replace this.
+ * Feature-hashed bag-of-words: each token hashes to a signed bucket,
+ * tf-weighted and L2-normalized. Integer FNV-1a keeps it platform-stable.
  */
 export const EMBEDDING_DIM = 64;
 export const EMBEDDING_MODEL = "hashed-bow-v0-standin";
@@ -208,7 +183,6 @@ const embed = (text: string): Float64Array => {
   return vector;
 };
 
-/** Cosine similarity of the hashed query and chunk vectors, in [-1, 1]. */
 export const rankVector = (
   chunks: EvalChunk[],
   query: string
@@ -233,7 +207,6 @@ export const rankVector = (
   });
 };
 
-/** Top chunk ids of a scored ranking, or empty when the channel abstains. */
 export const topIdsAboveThreshold = (
   scored: ScoredChunk[],
   k: number,
@@ -246,11 +219,9 @@ export const topIdsAboveThreshold = (
   return scored.slice(0, k).map((entry) => entry.chunkId);
 };
 
-/** Best (highest) score of a channel ranking, or 0 when nothing scored. */
 export const bestScore = (scored: ScoredChunk[]): number =>
   scored[0]?.score ?? 0;
 
-/** Scores for one corpus query across both channels (shared by eval and tests). */
 export const channelScores = (
   index: Bm25Index,
   chunks: EvalChunk[],

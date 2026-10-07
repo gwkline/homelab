@@ -1,15 +1,8 @@
 /**
- * Queue worker (#58): claims jobs with `FOR UPDATE SKIP LOCKED` semantics via
- * the store, runs the handler, then completes or fails the claim. Handlers
- * publish idempotently (document versions are unique on their identity), so a
- * claim recovered after a crash re-runs the handler without double-publishing.
- *
- * Lease discipline: a claim is owned until `heartbeat_at` + leaseSeconds. The
- * worker heartbeats in-flight jobs every `heartbeatIntervalMs`; a worker that
- * dies stops heartbeating, and another worker's `recoverStale` returns the job
- * to `pending` (or `dead` once attempts are exhausted). Completing or failing
- * a job is guarded on `worker_id` + `status = 'running'`, so a zombie worker
- * that wakes up after losing its claim can never clobber the new attempt.
+ * Queue worker: claim, run the handler, then complete or fail. Claims are
+ * leased via heartbeats; a dead worker's jobs are recovered by others, and
+ * complete/fail are guarded on `worker_id` so a zombie cannot clobber the new
+ * attempt. Handlers publish idempotently, so recovered re-runs are safe.
  */
 
 import { randomUUID } from "node:crypto";
@@ -104,9 +97,7 @@ export const runWorkerCycle = async (
   });
   const results: ("completed" | "failed" | "lost")[] = [];
   for (const job of jobs) {
-    // Jobs are processed one at a time on purpose: a batch is a lease-holding
-    // unit of work, not a fan-out (handlers publish sequentially for the same
-    // reason the queue orders claims deterministically).
+    // Sequential on purpose: a batch is a lease-holding unit, not a fan-out.
     const outcome = await processJob(deps, workerId, job);
     results.push(outcome);
   }

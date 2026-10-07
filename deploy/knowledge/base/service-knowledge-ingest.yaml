@@ -1,6 +1,3 @@
-# In-cluster ingest API endpoint: the retrieval service's passthrough, the
-# panel's sync triggers (via the retrieval proxy), and worker diagnostics.
-# NOT tailnet-exposed — knowledge ingestion happens inside the cluster.
 apiVersion: v1
 kind: Service
 metadata:
@@ -15,8 +12,6 @@ spec:
       port: 3100
       targetPort: http
 ---
-# Internal plaintext HTTP for the retrieval passthrough and in-cluster
-# monitoring. Same-namespace consumers; the netpol scopes who may connect.
 apiVersion: v1
 kind: Service
 metadata:

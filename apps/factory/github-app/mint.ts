@@ -1,10 +1,6 @@
-// CLI: mint a short-lived GitHub App installation token (#70).
-//
-// Reads the App credentials from the environment (sourced from the
-// factory-github-app 1Password item — never pasted into files in this
-// repo) and writes the token to `--out FILE` (mode 0600) or, explicitly
-// requested, `--stdout`. The token is never printed by default and never
-// logged: only its expiry is reported.
+// CLI: mint a short-lived GitHub App installation token and write it to
+// `--out FILE` (mode 0600) or, only when asked, `--stdout`. Only the expiry is
+// ever logged.
 //
 //   GITHUB_APP_ID=123456 \
 //   GITHUB_APP_INSTALLATION_ID=7890 \

@@ -1,11 +1,7 @@
-// Knowledge API client for the panel (#65). The panel server is the only
-// bearer-token holder: the browser talks to these panel routes, the panel
-// talks to the knowledge API over HTTP. There are no database credentials in
-// this path — sources, sync jobs, and cited search all come from the
-// knowledge API (ADR-002 D2: the panel never queries Postgres directly).
+// Knowledge API client. The panel server is the only bearer-token holder and
+// never touches the knowledge database directly.
 //
-// Pinned upstream surface (the ingest/sync contract from #58, retrieval from
-// #64):
+// Upstream surface:
 //   GET  /v1/sources                 → { sources: SourceStatus[] }
 //   POST /v1/sources/:sourceId/sync  → 202 { jobId }
 //   GET  /v1/sync-jobs/:jobId        → SyncJob
@@ -47,7 +43,7 @@ export const loadKnowledgeConfig = (env = process.env): KnowledgeConfig => {
   return { base, timeoutMs, token };
 };
 
-// ── response shapes (normalized; upstream passthrough fields stay upstream) ──
+// ── response shapes (normalized) ──
 
 export interface KnowledgeSourceJob {
   jobId: string;
@@ -117,8 +113,7 @@ export class KnowledgeApiError extends Error {
   }
 }
 
-// `error: unknown` / JSON field accessors — mirror the index.ts helpers but
-// keep this module self-contained (it is unit-imported by tests directly).
+// Duplicates index.ts helpers so tests can import this module standalone.
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)

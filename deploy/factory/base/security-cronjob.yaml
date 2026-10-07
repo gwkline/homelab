@@ -8,16 +8,14 @@ metadata:
     factory.gwkline.io/component: security
     factory.gwkline.io/profile: security
 spec:
-  # Nightly sweep — harness-agnostic. For per-issue runs, panel POSTs
-  # /api/factory/run with profile=security (or label factory/security + manual Job).
-  schedule: "15 */6 * * *" # every 6h at :15; nightly-equivalent coverage without hammering
+  # Per-issue security runs go through the panel (profile=security).
+  schedule: "15 */6 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   suspend: false
   jobTemplate:
     spec:
-      # 24h: finished Jobs GCd; live ledger is GitHub labels, not Job objects.
       ttlSecondsAfterFinished: 86400
       activeDeadlineSeconds: 1800
       backoffLimit: 0

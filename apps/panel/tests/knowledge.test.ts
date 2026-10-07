@@ -18,7 +18,6 @@ const hour = 60 * minute;
 const day = 24 * hour;
 const PORT = 3963;
 
-// Source list per the panel-facing knowledge API contract (#58/#64 + #65).
 const SOURCES = [
   {
     chunkCount: 340,
@@ -264,10 +263,8 @@ const startPanel = async (
   return child;
 };
 
-// Boots the mock knowledge API + a panel server wired to it, runs `fn` with
-// JSON helpers, then tears down. Afterwards it proves the credential rule:
-// every panel response is token-free and every upstream call carried the
-// server-side bearer token.
+// Boots the mock knowledge API and a panel wired to it, runs `fn`, then checks
+// no panel response leaked the token and every upstream call carried it.
 const withPanel = async (
   fn: (panel: Panel) => Promise<void>
 ): Promise<void> => {

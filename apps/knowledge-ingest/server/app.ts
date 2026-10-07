@@ -164,9 +164,8 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
     })
   );
 
-  // Tailnet/internal-network constraint is enforced at the network layer
-  // (ClusterIP + ingress policy); the bearer token from a mounted secret is
-  // the application-layer check. Token compare is constant time.
+  // Network policy limits reachability; this constant-time bearer check is
+  // the application-layer gate.
   app.use(
     "/v1/*",
     createMiddleware<AppEnv>(async (c, next) => {
@@ -461,8 +460,7 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
     }
   });
 
-  // Liveness: the process is up. Readiness (below) is what distinguishes
-  // database unavailability.
+  // Liveness only; /readyz reports database availability.
   app.get("/healthz", (c) => c.json({ status: "ok" }));
 
   app.openapi(
@@ -537,8 +535,7 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
   );
 
   app.onError((thrown, c) => {
-    // Malformed JSON thrown by the body parsers is untrusted input, not a
-    // server fault: answer the 422 validation envelope.
+    // Malformed JSON is bad input, not a server fault.
     if (thrown instanceof SyntaxError || thrown instanceof HTTPException) {
       return c.json(
         errorBody(

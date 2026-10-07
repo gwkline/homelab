@@ -1,10 +1,5 @@
-# Alloy — cluster log collector feeding Loki (issue #47), per the stack
-# chosen in #36 (Loki + Grafana Alloy).
-#
-# Reads every pod's logs through the Kubernetes API (no hostPath, no
-# privilege — works under the `agents` namespace baseline PSA), relabels to
-# the bounded label vocabulary documented in deploy/loki/README.md, redacts
-# credentials at source, and pushes to Loki.
+# Reads every pod's logs via the API (no hostPath, no privilege), relabels to
+# the bounded vocabulary in deploy/loki/README.md, redacts credentials, pushes to Loki.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -122,10 +117,7 @@ data:
       }
     }
 ---
-# One replica is deliberate: loki.source.kubernetes reads every pod via the
-# API, so a second replica would push every line twice. If the pod dies it
-# restarts automatically; lines logged during the gap that are still held by
-# the kubelet get picked up again (at-least-once semantics).
+# Exactly one replica: a second would push every line twice.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -141,8 +133,6 @@ spec:
       labels:
         app: alloy
     spec:
-      # The one token this stack needs: cluster-wide read of pods and their
-      # logs (rbac.yaml). No secrets, nodes, or writes anywhere.
       serviceAccountName: alloy
       automountServiceAccountToken: true
       securityContext:

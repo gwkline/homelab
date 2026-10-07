@@ -1,82 +1,17 @@
-# Root cluster entry point (issue #20): one Kustomization composing the
-# complete normal workload set — namespaces, policies, platform
-# prerequisites, and workloads. Plain kubectl only, no Flux:
-#
-#   kubectl kustomize clusters/home          # render the full inventory
-#   kubectl apply -k clusters/home            # apply it (see ordering below)
-#
-# The resource list below is a valid TOPOLOGICAL ORDER of the dependency
-# graph. `kubectl apply` sorts Namespaces ahead of everything else, so every
-# namespaced object below lands after the namespaces it lives in; the
-# remaining order documents intent for humans and for the per-stage drill
-# (scripts/recovery-drill.sh), which applies this same set stage by stage.
-#
-# Server-side / helm PRE-APPLIES (not composed here — their CRD bundles
-# exceed the 262144-byte annotation limit kubectl's client-side apply
-# writes, so they can never ride along in a plain `kubectl apply -k`;
-# docs/rebuild-runbook.md §4 is the authoritative drill):
-#
-#   1. External Secrets Operator — deploy/eso/base carries the operator CRDs
-#      (two of them serialize >340KB) plus RBAC and Deployments, so on a
-#      fresh cluster it must be applied with `kubectl apply --server-side`
-#      in two passes with waits between (CRDs Established, rollout Ready,
-#      then the smoke ExternalSecret) BEFORE this root applies: every
-#      ExternalSecret composed below (github-tokens, tailscale oauth,
-#      work-t3code) reconciles through it. The hand-entered
-#      1Password service-account token (scripts/create-onepassword-service-account.sh
-#      -> agents, sandbox, work, tailscale) is the other pre-root manual
-#      step — secrets are never rendered into Git.
-#   2. CloudNativePG operator — deploy/cnpg/base is the pinned upstream
-#      bundle (its Cluster CRD alone is >1MB): one
-#      `kubectl apply --server-side -k deploy/cnpg/base`, wait for the
-#      cluster CRD Established and the controller rollout Ready. The
-#      postgres Cluster/Database CRs composed below are rejected by the
-#      API server until those CRDs exist (issue #49).
-#   3. policy-controller (helm, pinned) — its CRD defines the
-#      ClusterImagePolicy composed below, and the admission webhook must be
-#      in force before workload pods are admitted (ADR-004).
-#
-# POST-APPLY (not composed here):
-#
-#   4. tailscale-operator (helm, pinned) — apply AFTER this root: the root
-#      creates the tailscale namespace and syncs its operator-oauth Secret
-#      from 1Password (deploy/tailscale), which the operator consumes.
-#
-# Intentionally NOT composed here (per-component, documented in the
-# deploy/* READMEs and runbook-server-cluster.md):
-#   - cloudbeaver, executor — applied
-#     per-component when wanted
+# Core set, in dependency order. Applied after these server-side/helm
+# pre-applies (CRDs too large for client-side apply; see
+# docs/rebuild-runbook.md): ESO (deploy/eso/base), CNPG (deploy/cnpg/base),
+# policy-controller. tailscale-operator is helm-installed after this root.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  # 1. namespaces (agents, sandbox, work, database) with their PSA and
-  #    sigstore include labels — everything below is namespaced by them
   - ../../../deploy/namespaces
-  # 2. default-deny NetworkPolicies — in force before workload pods exist
-  #    (deploy/postgres/base and deploy/tailscale add the narrow ingress
-  #    allowances on top)
   - ../../../deploy/policies/base
-  # 3. image admission policy — requires the policy-controller CRD
-  #    (pre-apply 3) and must be in force before the workload pods below
-  #    are admitted (ADR-004)
   - ../../../deploy/image-policy/base
-  # 4. secret plumbing: per-namespace 1Password SecretStores + the
-  #    GitHub token ExternalSecrets every workload below mounts — requires
-  #    ESO (pre-apply 1) and the hand-entered onepassword-service-account
-  #    Secrets
   - ../../../deploy/github-tokens/base
-  # 5. tailscale stack: namespace, SecretStore, operator-oauth
-  #    ExternalSecret (the operator itself is helm, post-apply 4)
   - ../../../deploy/tailscale
-  # 6. postgres (pg-primary): CNPG Cluster/Database CRs — requires the
-  #    cnpg CRDs Established + controller Ready (pre-apply 2) and the
-  #    database namespace (1); the factory/knowledge workloads below are
-  #    its clients (issue #49)
   - ../../../deploy/postgres/base
-  # 7. workloads — depend on the namespaces (1), policies (2), admission
-  #    policy (3) and synced secrets (4) above, never on apply order
-  #    among themselves
   - ../../../deploy/t3code/base
   - ../../../deploy/hermes/base
   - ../../../deploy/homepage/base
@@ -88,8 +23,5 @@ resources:
   - ../../../deploy/factory/base
   - ../../../deploy/deployer
   - ../../../deploy/work-t3code/base
-  # 8. operational CronJobs, last so their first run can never race the
-  #    bring-up: chaos deletes pods (agents+sandbox, kill switch in its
-  #    configmap), node-cleanup prunes node disk pressure (#253)
   - ../../../deploy/chaos/base
   - ../../../deploy/node-cleanup/base

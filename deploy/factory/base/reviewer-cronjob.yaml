@@ -7,17 +7,14 @@ metadata:
     app.kubernetes.io/part-of: homelab
     factory.gwkline.io/component: reviewer
 spec:
-  # Approval-loop poller: observes draft PRs, nudges, reports review queue state.
-  # Phase 1 = read-only (+ idempotent status comments). Auto-promote is behind
-  # FACTORY_REVIEWER_AUTO_MERGE and stays OFF until explicitly enabled.
-  schedule: "35,55 * * * *" # after orchestrator, with room for the next collector.
+  # Polls factory draft PRs, comments review state, auto-merges when allowed.
+  schedule: "35,55 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   suspend: false
   jobTemplate:
     spec:
-      # 24h: finished Jobs GCd; live ledger is GitHub labels, not Job objects.
       ttlSecondsAfterFinished: 86400
       activeDeadlineSeconds: 900
       backoffLimit: 0
@@ -43,8 +40,7 @@ spec:
                   valueFrom:
                     secretKeyRef:
                       { name: github-token, key: token, optional: false }
-                # Write path — ON per operator 2026-08-27: CI-as-gate auto-merge
-                # (factory-authored PRs, green checks required, launchpad only).
+                # Auto-merge factory-authored PRs once checks are green.
                 - name: FACTORY_REVIEWER_AUTO_MERGE
                   value: "true"
               resources:

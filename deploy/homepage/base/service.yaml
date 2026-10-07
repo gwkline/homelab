@@ -5,8 +5,6 @@ metadata:
   namespace: agents
   annotations:
     tailscale.com/hostname: homepage
-    # Required so proxy devices carry tag:k8s-operator regardless of the
-    # operator's default tag (see deploy/tailscale/README.md).
     tailscale.com/tags: tag:k8s-operator
 spec:
   type: LoadBalancer
@@ -18,8 +16,6 @@ spec:
       port: 443
       targetPort: http
 ---
-# Workload-owned exposure rule. Default-deny lives in policies/base; each
-# workload that wants inbound declares exactly who may reach it.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

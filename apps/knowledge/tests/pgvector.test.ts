@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import type { PgClient } from "../src/pg-client.ts";
 import {
   buildBackfillCountQuery,
   buildEfSearchStatement,
@@ -24,20 +25,18 @@ import {
   validateQueryEmbedding,
   withPgvectorClientFromEnv,
 } from "../src/pgvector.ts";
-import type { PgvectorDbClient } from "../src/pgvector.ts";
 
 interface RecordedClient {
-  client: PgvectorDbClient;
+  client: PgClient;
   params: unknown[][];
   statements: string[];
 }
 
-/** Scripted client recording every statement in order. */
 const stubClient = (responses: Record<string, unknown>[][]): RecordedClient => {
   const params: unknown[][] = [];
   const statements: string[] = [];
   let call = 0;
-  const client: PgvectorDbClient = {
+  const client: PgClient = {
     query: (text: string, query: unknown[]) => {
       params.push(query);
       statements.push(text);
@@ -283,7 +282,7 @@ test("searchPgvectorExact forces a sequential scan and never sets ef_search", as
 });
 
 test("searchPgvectorExact rolls back and rethrows on failure", async () => {
-  const client: PgvectorDbClient = {
+  const client: PgClient = {
     query: (text: string) => {
       if (text.startsWith("SELECT")) {
         return Promise.reject(new Error("boom"));
@@ -296,7 +295,7 @@ test("searchPgvectorExact rolls back and rethrows on failure", async () => {
 
 test("searchPgvector validates before opening a transaction", async () => {
   let calls = 0;
-  const client: PgvectorDbClient = {
+  const client: PgClient = {
     query: () => {
       calls += 1;
       return Promise.resolve({ rows: [] });
@@ -461,10 +460,8 @@ test("backfill counts reject malformed rows", () => {
   );
 });
 
-// Deterministic fixture: six unit-sphere-ish chunks, query e1. Exact top-3 by
-// cosine: fix-1 (1.0), fix-2 (0.9/sqrt(0.82) ~ 0.994), fix-5 (0.7/sqrt(0.98)
-// ~ 0.707). The test recomputes it brute-force (independent implementation)
-// and uses it as ground truth for the HNSW comparison.
+// Exact top-3 by cosine for query e1: fix-1 (1.0), fix-2 (~0.994), fix-5
+// (~0.707). Recomputed brute-force as ground truth for the HNSW comparison.
 const FIXTURE: { embedding: number[]; id: string }[] = [
   { embedding: [1, 0, 0, 0], id: "fix-1" },
   { embedding: [0.9, 0.1, 0, 0], id: "fix-2" },
@@ -500,7 +497,6 @@ const byCosineThenId = (
   return a.id < b.id ? -1 : 1;
 };
 
-/** Test-local brute-force exact top-k (pgvector's exact-scan semantics). */
 const exactTopK = (query: number[], k: number): string[] =>
   FIXTURE.map(({ embedding, id }) => ({ cosine: cosine(query, embedding), id }))
     .toSorted(byCosineThenId)
@@ -557,8 +553,7 @@ const fixtureDistances: Record<string, number> = {
 };
 
 test("HNSW vs exact on the deterministic fixture through the full search path", async () => {
-  // Simulated HNSW output (small ef, two misses) and exact output, both in
-  // row shape, exercising SQL construction, mapping, and recall end to end.
+  // Simulated HNSW output: small ef, two misses.
   const exactRows = EXACT_TOP_3.map((id) =>
     fixtureRow(id, fixtureDistances[id] ?? 1)
   );
@@ -566,8 +561,7 @@ test("HNSW vs exact on the deterministic fixture through the full search path", 
     fixtureRow(id, fixtureDistances[id] ?? 1)
   );
 
-  // 384-d stand-in for the real bge embedding: the builder requires the
-  // indexed dimension, and the fixture math above is dimension-independent.
+  // The builder requires the indexed dimension; the fixture math is dimension-independent.
   const paddedQuery = padToDimensions(FIXTURE_QUERY, EMBEDDING_DIMENSIONS);
   const exactHits = await searchPgvectorExact(
     stubClient([[], [], exactRows, []]).client,
@@ -591,8 +585,7 @@ test("HNSW vs exact on the deterministic fixture through the full search path", 
   assert.equal(recall, 1 / 3);
 });
 
-// Live-DB integration: runs only when DATABASE_URL points at a Postgres with
-// pgvector. Otherwise skipped in CI/offline, like the BM25 integration test.
+// Live-DB integration: runs only when DATABASE_URL is set.
 const hasLiveDb = Boolean(process.env["DATABASE_URL"]);
 
 test(

@@ -1,15 +1,8 @@
-/**
- * Ranking metrics for the retrieval eval harness. Pure functions over ranked
- * chunk ids and relevance judgments; all metrics are computed within a fixed
- * cutoff `k`.
- */
+/** Pure ranking metrics, all computed within a fixed cutoff `k`. */
 
 export interface MetricSet {
-  /** Fraction of relevant chunks retrieved within the top k. */
   recall: number;
-  /** Reciprocal rank of the first relevant chunk in the top k (0 if none). */
   mrr: number;
-  /** Relevant chunks in the top k divided by k. */
   precision: number;
 }
 
@@ -74,11 +67,8 @@ export const metricsFor = (
 });
 
 /**
- * Citation/source accuracy: fraction of the top-k returned chunks that resolve
- * to a known corpus chunk whose document is in the relevant doc set. Measures
- * provenance (did we cite a supporting source), which is weaker than chunk
- * relevance — the right doc with the wrong chunk still counts as a correct
- * citation. Returns 0 when nothing was returned (no citation, no credit).
+ * Fraction of top-k chunks whose document is relevant. Weaker than chunk
+ * relevance: the right doc with the wrong chunk still counts.
  */
 export const citationAccuracyAtK = (
   ranked: string[],
@@ -101,10 +91,7 @@ export const citationAccuracyAtK = (
   return correct / top.length;
 };
 
-/**
- * No-answer behavior: an unanswerable query is handled correctly when the
- * strategy abstains (returns nothing) instead of presenting a fabricated hit.
- */
+/** An unanswerable query is handled correctly only when the strategy abstains. */
 export const noAnswerCorrectness = (returnedCount: number): number =>
   returnedCount === 0 ? 1 : 0;
 

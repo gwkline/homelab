@@ -1,16 +1,10 @@
 #!/bin/sh
-# Medic fixture tests (#239). Three proofs, all offline:
-#
-#   1. red→green convergence: a REAL local bare remote carries a
-#      factory/issue-* branch with a deliberate lint failure; the medic sweep
-#      queues the repair, a fix publishes through the guarded publish path,
-#      and the branch head moves with only the fix commit on top (no force).
-#   2. write guards: medic_publish_patch refuses main, non-factory branches,
-#      branch creation, and moved heads (no force-push possible).
-#   3. stuck path: 3 recorded failures on one head SHA → escalation, and the
-#      sweep stops queueing repairs.
-#
-# gh is shimmed via PATH (state under a temp dir); git is real.
+# Offline medic tests against a real local bare remote (gh is shimmed):
+#   1. a ci-red factory branch gets one repair queued, and the fix publishes
+#      as a single fast-forward commit;
+#   2. medic_publish_patch refuses main, non-factory branches, branch
+#      creation, and moved heads;
+#   3. three failures on one head SHA escalate to factory/stuck.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
@@ -30,11 +24,12 @@ export GH_STATE
 # ---- fixture git remote: factory/issue-6/code-pr with a broken shell file ----
 BARE="${WORK}/remote.git"
 git init -q --bare -b main "${BARE}"
+# Isolated git identity: never touch the caller's ~/.gitconfig.
+GIT_CONFIG_GLOBAL="${WORK}/gitconfig"
+export GIT_CONFIG_GLOBAL
 git config --global user.email medic-test@local
 git config --global user.name "medic-test"
 git config --global advice.detachedHead false
-# the seed checkout below needs the branch to exist locally before push/pull;
-# use a detached worktree flow instead of relying on remote-tracking refs.
 
 SEED="${WORK}/seed"
 git init -q -b main "${SEED}"
@@ -50,10 +45,8 @@ git -C "${SEED}" push -q "${BARE}" HEAD:refs/heads/factory/issue-6/code-pr
 # main also exists on the remote (guard test 2a needs it):
 git -C "${SEED}" commit -q --allow-empty -m "main tip" && git -C "${SEED}" push -q "${BARE}" HEAD:refs/heads/main
 
-# The verifier for this test (same shape as the homelab table, root-tree diff):
+# Same shape as the homelab verifier, but diffed against the empty tree.
 VERIFY_OK="for f in \$(git diff --name-only 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD -- '*.sh'); do dash -n \"\$f\" || exit 1; done; echo verify-ok"
-# sanity: seed commit IS red under it (diff against the empty tree — no
-# checkout dance, the seed working tree already holds the broken file).
 EMPTY_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904
 if (cd "${SEED}" && sh -c "${VERIFY_OK}" >/dev/null 2>&1); then
   fail "seed branch unexpectedly green — fixture is broken"
@@ -61,8 +54,7 @@ fi
 echo "note: seed branch verified ci-red under the verifier"
 
 # ---- gh shim ------------------------------------------------------------------
-# This environment may lack jq; the sweep needs it, so provide a real jq
-# (or a python fallback) in the shim dir first.
+# Fall back to a python jq subset when jq is not installed.
 mkdir -p "${WORK}/shim"
 if ! command -v jq >/dev/null 2>&1; then
   cat > "${WORK}/shim/jq" <<'JQ'
@@ -109,8 +101,7 @@ argv = {a: v for k, a, v in fl if k == "--arg"}
 
 
 def walk(x):
-    # python equivalent of jq's `.. | objects`: every object node at any
-    # depth — makes flat, page-wrapped, and slurped inputs interchangeable.
+    # jq's `.. | objects`
     if isinstance(x, dict):
         yield x
     elif isinstance(x, list):
@@ -192,9 +183,7 @@ fi
 #   pr-123-comments.json      served as PR #123's comment list
 #   stuck-log                 appended: escalation writes
 #
-# Bodies the case statement produces are piped through the shimmed jq when
-# --jq is present (real gh applies --jq to the API response), with the call's
-# own --slurp/--paginate flags riding along — never force-added.
+# Like real gh, --jq is applied to the canned response.
 set -u
 
 JQ_FILTER=""
@@ -214,13 +203,12 @@ for a in "$@"; do
   esac
   prev="$a"
 done
-# Bash arrays keep multi-line bodies verbatim (word-splitting mangled them).
+# Bash arrays keep multi-line bodies verbatim.
 set -- ${NEWARGS[@]+"${NEWARGS[@]}"}
 
 BODY=""
 case "$*" in
   *"pulls?state=open"*)
-    # one API page: a bare JSON array, exactly like the real pulls endpoint
     BODY="$(cat "$GH_STATE/prs.json")" ;;
   *"commits/${SHA_123}/check-runs"*)
     if [ -f "$GH_STATE/checks-green" ]; then
@@ -243,9 +231,7 @@ case "$*" in
       for a in "$@"; do
         case "$a" in body=*)
           printf '%s\n' "${a#body=}" >> "$GH_STATE/briefs"
-          # Real GitHub makes POSTed comments readable back through the API:
-          # grow the served comment list so ledger recounts (attempt counts)
-          # see what was just posted.
+          # Make the posted comment visible to later ledger recounts.
           COMMENT_BODY="${a#body=}" python3 - "$GH_STATE" <<'PY'
 import json, os, sys
 path = os.path.join(sys.argv[1], "pr-123-comments.json")
@@ -339,8 +325,6 @@ PY
 esac
 
 if [ -n "$JQ_FILTER" ]; then
-  # Real gh applies --jq to the response (to the slurped array with --slurp):
-  # pipe the canned body through the shimmed jq with the call's own flags.
   printf '%s\n' "$BODY" | jq ${JQ_FLAGS} "$JQ_FILTER" 2>/dev/null || true
 else
   [ -n "$BODY" ] && printf '%s\n' "$BODY"
@@ -353,7 +337,6 @@ run_sweep() {
 }
 
 # PR fixture: open draft PR #123, head factory/issue-6/code-pr, red checks.
-# prs.json is one bare API page — a JSON array of PR objects.
 cat > "${GH_STATE}/prs.json" <<EOF
 [{"number":123,"title":"factory PR (ci-red)","head":{"ref":"factory/issue-6/code-pr","sha":"${SHA_123}"},"draft":true,"labels":[],"body":""}]
 EOF
@@ -370,17 +353,14 @@ grep -q "Medic brief" "${GH_STATE}/briefs" || fail "no medic brief posted"
 grep -q "Never open a PR, never push to main, never force-push" "${GH_STATE}/briefs" \
   || fail "brief does not carry the push constraints"
 grep -q "factory/issue-6/code-pr" "${GH_STATE}/briefs" || fail "brief missing the branch (push target)"
-# the brief embeds the queued-marker for the head SHA — the ledger hook the
-# re-detection path (proof 3a) counts failed attempts against.
+# Proof 3a counts failed attempts against this marker.
 grep -q "<!-- factory:medic:${SHA_123}:queued -->" "${GH_STATE}/briefs" \
   || fail "brief missing the head-SHA queued marker"
 BRIEFS=$(grep -c "Medic brief" "${GH_STATE}/briefs" || true)
 [ "${BRIEFS}" = "1" ] || fail "expected 1 brief, got ${BRIEFS}"
 echo "${OUT}" | grep -q "attempt 1/3" || fail "sweep did not report the attempt counter"
 
-# A second sweep while nothing is in flight would double-queue — but the
-# one-PR-per-tick bound is enforced by the sweep's own break; the orchestrator
-# label handoff is what prevents overlap. Simulate the label handoff:
+# While the issue is still factory/queued, a second sweep must not re-queue.
 touch "${GH_STATE}/labels/6/factory/queued"
 OUT_B="$(run_sweep)" || fail "second sweep failed"
 echo "${OUT_B}" | grep -q "nothing new queued" || fail "second sweep re-queued the same red PR: ${OUT_B}"
@@ -441,7 +421,7 @@ if medic_publish_patch "${FIXDIR}" "factory/issue-99/code-pr" "${WORK}/fix.diff"
   fail "guard: branch creation was allowed"
 fi
 grep -q "does not exist on origin" "${WORK}/guard.err" || fail "guard: wrong refusal for new branch"
-# 2d. moved head is refused (the anti-force-push lease)…
+# 2d. moved head is refused…
 git -C "${FIXDIR}" reset -q --hard HEAD~1
 MOVED="$(git -C "${FIXDIR}" rev-parse HEAD)"
 if medic_publish_patch "${FIXDIR}" "factory/issue-6/code-pr" "${WORK}/fix.diff" "${MOVED}" 2>"${WORK}/guard.err"; then
@@ -453,12 +433,7 @@ CUR_HEAD="$(git -C "${FIXDIR}" ls-remote origin refs/heads/factory/issue-6/code-
 [ "${CUR_HEAD}" = "${NEW_HEAD}" ] || fail "guard: branch mutated despite refusal"
 
 # ---- proof 3: stuck path --------------------------------------------------------
-# Re-break the branch (new head, red again) and prove the ledger ladder:
-#   3a. a repair queued for this head that left it red IS recorded as a
-#       failed attempt, then the next repair is queued (attempt 2/3);
-#   3b. 3 recorded failures on the same head → escalation (factory/stuck +
-#       give-up log), and retries stop;
-#   3c. a further sweep is a no-op (stuck issue carries the label).
+# Re-break the branch so the PR has a new red head.
 (
   cd "${FIXDIR}"
   git checkout -q factory/issue-6/code-pr
@@ -473,7 +448,7 @@ git -C "${FIXDIR}" commit -qm "factory(medic): repair attempt (fails again)"
 BAD_HEAD="$(git -C "${FIXDIR}" rev-parse HEAD)"
 git -C "${FIXDIR}" push -q origin HEAD:refs/heads/factory/issue-6/code-pr
 rm -f "${GH_STATE}/checks-green"
-# update the PR fixture to the new head (one bare API page)
+# update the PR fixture to the new head
 cat > "${GH_STATE}/prs.json" <<EOF
 [{"number":123,"title":"factory PR (ci-red again)","head":{"ref":"factory/issue-6/code-pr","sha":"${BAD_HEAD}"},"draft":true,"labels":[],"body":""}]
 EOF
@@ -481,8 +456,7 @@ EOF
 export SHA_123="${BAD_HEAD}"
 
 # ---- 3a. re-detection of the same red head records the failed attempt ---------
-# Seed the ledger with the medic's own queued marker for BAD_HEAD (a repair
-# was dispatched for this exact head) and zero failure markers.
+# Ledger: one queued marker for BAD_HEAD, no failure markers.
 python3 - > "${GH_STATE}/pr-123-comments.json" <<PY
 import json
 marker = "<!-- factory:medic:${BAD_HEAD}:queued -->"
@@ -496,8 +470,7 @@ echo "${OUT3A}" | grep -q "repair queued" || fail "re-detection did not queue th
 echo "${OUT3A}" | grep -q "attempt 2/3" || fail "re-detection lost the attempt counter: ${OUT3A}"
 BRIEFS=$(grep -c "Medic brief" "${GH_STATE}/briefs" || true)
 [ "${BRIEFS}" = "2" ] || fail "expected 2 briefs after the second repair dispatch, got ${BRIEFS}"
-# the dispatch re-added factory/queued to the issue — clear it so the next
-# sweep reaches the ledger gate (the orchestrator "finished" the attempt).
+# Simulate the orchestrator finishing the attempt.
 rm -f "${GH_STATE}/labels/6/factory/queued"
 
 # ---- 3b. 3 recorded failures on one head → escalation, retries stop -----------

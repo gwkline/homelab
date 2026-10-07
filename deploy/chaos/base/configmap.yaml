@@ -1,11 +1,5 @@
-# Chaos monkey for the homelab cluster (issue #113): periodically delete ONE
-# random workload pod in agents/sandbox and verify the cluster brings it back
-# healthy on its own. Node-level chaos is a full-cluster reboot and stays a
-# manual runbook exercise for now.
-#
-# Kill switch: set key `enabled` to anything but "true" and the next run
-# exits before deleting anything. The run script itself lives in this
-# ConfigMap (key run.sh), so behaviour and switch are both in git.
+# Deletes one random controller-owned pod in agents/sandbox and checks that it
+# comes back Ready. Kill switch: set `enabled` to anything but "true".
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -18,7 +12,7 @@ data:
     # Delete exactly ONE random workload pod per run, then verify the
     # controller replaces it and the replacement goes Ready. Targets are
     # Running+Ready pods in $CHAOS_NAMESPACES owned by a ReplicaSet or
-    # StatefulSet. Deliberately excluded (see issue #113):
+    # StatefulSet. Excluded:
     #   - Job-owned pods (factory and panel runs): killing those
     #     breaks GitHub side effects rather than testing recovery, and the
     #     chaos-monkey pod itself is one of them

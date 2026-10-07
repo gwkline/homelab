@@ -1,7 +1,4 @@
-# work-t3code's own state dir: environment-id, browser pairings, sessions,
-# agent CLI credentials. Same standalone-claim pattern as the personal
-# t3code (see deploy/t3code/base/t3state-pvc.yaml): the StatefulSet mounts
-# it by name and declares no volumeClaimTemplate for it.
+# t3code state: environment id, browser pairings, sessions, agent credentials.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

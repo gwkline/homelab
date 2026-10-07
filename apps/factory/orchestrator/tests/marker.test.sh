@@ -1,7 +1,6 @@
 #!/bin/bash
-# Offline test: the Run marker comment (the factory audit event) must record
-# the caller identity injected through the Executor MCP path (#84), and must
-# stay identical to the pre-#84 format when no identity is present (cron).
+# The Run marker comment records the caller identity when one is injected and
+# omits the row when none is present (cron).
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -31,7 +30,7 @@ printf '%s\n' "$body" | grep -q '^| Requested by | hermes |$' || {
   printf '%s\n' "$body"
   exit 1
 }
-# The marker id and workflow rows stay intact alongside the new audit row.
+# The marker id and workflow rows stay intact alongside the audit row.
 printf '%s\n' "$body" | grep -q '<!-- factory:run:6:2026-09-05T00:00:00Z -->' || {
   echo "FAIL: run marker id lost"; exit 1
 }

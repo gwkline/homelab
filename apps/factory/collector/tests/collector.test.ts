@@ -1,8 +1,4 @@
-// Behavior tests for the collector tick logic (#78) against a fake GitHub
-// client (no HTTP at all). Covers the acceptance cases: eligibility, the
-// duplicate-run guarantee (repeated polls and same-tick duplicates never
-// write twice), the pagination-cap cursor rule, race narrowing, the
-// eligibility label gate, dry runs, and the #71 idempotency key shape.
+// Tick behavior against a fake GitHub client (no HTTP).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -28,8 +24,8 @@ interface Call {
   number?: number;
 }
 
-// Fake client: records every call and answers from a per-repo issue map
-// (optionally mutable between calls, to simulate races and pagination).
+// Records every call; the issue map may be mutated between calls to simulate
+// races.
 const fakeClient = (
   repos: Map<string, IssueRef[]>,
   overrides: Partial<CollectorClient> = {}
@@ -60,7 +56,7 @@ const baseEnv = {
   GITHUB_API_BASE: "https://github.example/api/v3",
 };
 
-test("eligible open issue is queued exactly once with the #71 idempotency key", async () => {
+test("eligible open issue is queued exactly once with a deterministic idempotency key", async () => {
   const repos = new Map([["o/r", [issueRef(1)]]]);
   const { calls, client } = fakeClient(repos);
   const config = loadConfig(baseEnv);
@@ -72,7 +68,6 @@ test("eligible open issue is queued exactly once with the #71 idempotency key", 
     number: 1,
     repo: "o/r",
   });
-  // Key is deterministic sha256 over provider:repo:issue:profile@rule.
   const key = runIdempotencyKey("o/r", 1, "code-pr", "v1");
   assert.equal(key, runIdempotencyKey("o/r", 1, "code-pr", "v1"));
   assert.match(key, /^[0-9a-f]{64}$/u);
@@ -86,8 +81,7 @@ test("repeated polls never duplicate the Run (label is the ledger)", async () =>
   const firstResult = await collectTick(config, first.client);
   assert.equal(firstResult.queued, 1);
 
-  // Second tick: the first tick's write is reflected as a lifecycle label
-  // (factory/queued) on the issue — exactly what the ledger shows.
+  // The first tick's label write is now visible on the issue.
   repos.set("o/r", [issueRef(1, { labels: ["factory/queued"] })]);
   const second = fakeClient(repos);
   const secondResult = await collectTick(config, second.client);
@@ -191,8 +185,6 @@ test("untrusted titles are never executed or interpolated — only logged", asyn
   } finally {
     console.log = original;
   }
-  // The title appears only JSON-encoded inside a log line; the command surface
-  // is empty by construction (no child processes exist in the collector).
   const queuedLine = logs.find((line) => line.includes("Run created"));
   assert.ok(queuedLine);
   assert.match(queuedLine, /title=/u);
@@ -211,7 +203,6 @@ test("pagination cap keeps the cursor conservative", async () => {
   const config = loadConfig(baseEnv);
   const result = await collectTick(config, client);
   assert.equal(result.queued, 1);
-  // Cap hit → cursor must not advance past this tick.
   assert.equal(result.nextSince, null);
 });
 
@@ -262,7 +253,7 @@ test("404 on recheck counts as not-found, not an error", async () => {
   assert.ok(!calls.some((c) => c.kind === "add"));
 });
 
-test("token provider prefers the App (#70) and falls back to GH_TOKEN", async () => {
+test("token provider prefers the App and falls back to GH_TOKEN", async () => {
   const app = createTokenProvider({
     GITHUB_APP_ID: "123",
     GITHUB_APP_INSTALLATION_ID: "456",

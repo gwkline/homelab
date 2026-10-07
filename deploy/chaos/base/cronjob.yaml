@@ -1,7 +1,4 @@
-# Runs the chaos monkey twice a day. One run = one pod deleted + one recovery
-# verified (or a failed Job so the failure is visible). concurrencyPolicy:
-# Forbid keeps overlapping runs apart — a previous run that is still watching
-# a recovery wins over a new deletion.
+# One run = one pod deleted and its recovery verified (or a failed Job).
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -23,9 +20,6 @@ spec:
             app: chaos-monkey
         spec:
           serviceAccountName: chaos-monkey
-          # Needs the Kubernetes API by design (that IS the experiment), so
-          # the token is mounted — scoped by rbac.yaml to pod deletes in
-          # agents+sandbox only.
           automountServiceAccountToken: true
           restartPolicy: Never
           securityContext:
@@ -34,9 +28,6 @@ spec:
           containers:
             - name: chaos
               image: ghcr.io/gwkline/homelab/loop-agent:latest
-              # loop-agent ships kubectl + gh + shuf (coreutils) — no new
-              # image needed. The script comes from the chaos-config
-              # ConfigMap, so behaviour stays in git without a rebuild.
               securityContext:
                 runAsNonRoot: true
                 runAsUser: 1000

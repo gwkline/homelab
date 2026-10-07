@@ -10,5 +10,3 @@ labels:
 resources:
   - namespace.yaml
   - eso.yaml
-  - secretstore-placeholder.yaml
-  - externalsecret-smoke.yaml

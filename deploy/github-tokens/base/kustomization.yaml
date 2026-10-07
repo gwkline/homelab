@@ -1,16 +1,14 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# ExternalSecrets sync the GitHub tokens from the 1Password homelab vault.
-resources:
-  - secretstore.yaml
-  - github-token.yaml
-  - github-token-writer.yaml
-  - work-github-token.yaml
-  - externalsecret-smoke.yaml
-
 labels:
   - pairs:
       app.kubernetes.io/part-of: homelab
       app.kubernetes.io/managed-by: kustomize
     includeSelectors: false
+
+resources:
+  - secretstore.yaml
+  - github-token.yaml
+  - github-token-writer.yaml
+  - work-github-token.yaml

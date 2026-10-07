@@ -29,10 +29,8 @@ try {
       })
     : createMemoryIngestStore({ maxAttempts: config.worker.maxAttempts });
 
-  // The queue's schema must land BEFORE the #56 knowledge schema: both are
-  // CREATE TABLE IF NOT EXISTS, and the #56 base migration also names an
-  // `ingest_job` (the library's minimal queue) that this service's richer
-  // queue table must win. See server/queue.ts for the shared-database layout.
+  // The queue schema must apply before the knowledge schema: both create
+  // `ingest_job` IF NOT EXISTS, and this service's richer table must win.
   const sink =
     client === null
       ? createMemoryPipelineSink()

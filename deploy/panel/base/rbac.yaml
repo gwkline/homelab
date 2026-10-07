@@ -1,30 +1,12 @@
-# Third deliberate exception to "pods cannot talk to Kubernetes": the panel
-# backend holds its own purpose-scoped RBAC (#26) covering exactly the
-# calls apps/panel/server/k8s.ts makes — nothing inherited from a shared
-# role. In `sandbox` (run cards + factory trigger): create Jobs (launch
-# ad-hoc runs), list Jobs (state/run views), delete Jobs (job cleanup and
-# run cancel); get CronJobs (clone the factory-orchestrator jobTemplate),
-# list + patch CronJobs (schedules card: edit schedule, pause/resume).
-# In `agents`: get Services (dev tools health) and the `panel` Ingress
-# (tailnet discovery).
-# Cluster-wide (/api/cluster): list nodes and pods. CronJob patch is the
-# documented schedules-card workflow; CronJob create/delete, pod/log
-# reads, and secrets are denied — that is the whole write surface.
-#
-# Also owns the GitHub token mount for the factory manual-trigger (label
-# queued + create Job from CronJob).
-#
-# One-time cleanup after applying (#26 renamed the objects):
-#   kubectl -n sandbox delete rolebinding panel-loop-manager
-#   kubectl delete clusterrole panel-nodes-viewer
-#   kubectl delete clusterrolebinding panel-nodes-viewer
+# Exactly the calls apps/panel/server/k8s.ts makes. sandbox: launch, list, and
+# cancel Jobs; read and patch CronJobs (schedules card). agents: Service
+# health checks and the panel Ingress (tailnet discovery). No secrets.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: panel
   namespace: agents
 ---
-# Run surface: everything the panel does to workloads in sandbox.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -52,9 +34,6 @@ subjects:
     name: panel
     namespace: agents
 ---
-# Dev tools health checks read Services here only — every health entry in
-# apps/panel/server/devtools.ts targets agents. Tailnet discovery reads the
-# panel Ingress status.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

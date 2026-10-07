@@ -1,5 +1,5 @@
 #!/bin/sh
-# Offline fixture test for the shared skills-sync library (homelab#81).
+# Offline fixture test for the shared skills-sync library.
 # Uses a real local fixture repository (file:// remote) to prove:
 #   - pinned commit is fetched, verified, and recorded in status metadata
 #   - only allowlisted skill paths are installed
@@ -166,9 +166,8 @@ grep -q 'private-poteto' "$STORE/software-development/poteto-mode/SKILL.md" \
   || die "secret-scan failure clobbered the previous good store"
 
 echo '==> 8b. docs that merely name token shapes still install'
-# Shape mentions assembled at runtime so this file carries no literal the
-# repo-wide secret scan could flag; the fixture (temp dir only) mirrors real
-# skill docs that tripped the old bare-prefix pattern (homelab#81 follow-up).
+# Assembled at runtime so this file carries no literal the repo-wide secret
+# scan could flag.
 _M1="github""_pat_"
 _M2="tskey-auth""-"
 mk_skill "homelab/doc-skill" "docs mention ${_M1}11ASQ3L rotation, ${_M2}rotation, and ghp_ notes"
@@ -194,8 +193,6 @@ REAL_GIT2="$(command -v git)"
 cat > "$SHIM2/git" <<SHIM2EOF
 #!/bin/sh
 # Simulate an authenticated remote: git must exec \$GIT_ASKPASS as a child.
-# Without the exec bit this fails exactly like the worker did:
-#   fatal: cannot exec '/tmp/tmp.XXXX': Permission denied
 REAL_GIT="$REAL_GIT2"
 case "\$*" in
   *fetch*)

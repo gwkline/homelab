@@ -319,9 +319,7 @@ test("glob matching covers **, dir subtrees, bare names, and anchoring", () => {
 });
 
 test("defaults exclude vendored, generated, lockfiles, binaries, and secrets", () => {
-  // Name-based defaults cover vendored/generated dirs, lockfiles, and
-  // secret-looking names; binary payloads are excluded by default at
-  // assessment time (the fixture sync proves that end to end).
+  // Binary payloads are excluded later, at assessment time.
   for (const excluded of [
     "package-lock.json",
     "yarn.lock",
@@ -511,7 +509,6 @@ test("plan diffs add/change/delete/rename and skips unchanged blobs", () => {
   } else {
     assert.fail("expected rename op");
   }
-  // Deterministic: same inputs, same ops.
   assert.deepEqual(planGitSource(manifest, tree, NAMESPACE), ops);
 });
 

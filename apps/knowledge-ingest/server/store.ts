@@ -1,11 +1,6 @@
-// Domain types and the storage contract for the knowledge ingestion queue
-// (#58). The queue is Postgres-native (ADR-002 D5): one `ingest_job` table
-// claimed with `FOR UPDATE SKIP LOCKED`, no Redis or external broker.
-//
-// Two stores implement `IngestStore`:
-//   - `PgIngestStore` (pg-store.ts): the durable service path.
-//   - `MemoryIngestStore` (memory-store.ts): identical semantics in-process
-//     for offline tests and local dev; jobs are not durable there.
+// Storage contract for the ingestion queue: one Postgres `ingest_job` table
+// claimed with `FOR UPDATE SKIP LOCKED` (ADR-002 D5). The memory store
+// mirrors the semantics for tests and DB-less dev.
 
 export type JobState =
   | "pending"
@@ -60,16 +55,14 @@ export interface SourceSyncPayload {
 }
 
 /**
- * One normalized document version carrying its own content — the git-source
- * bridge shape (`apps/knowledge/src/git-source.ts` `toIngestJobPayload`):
- * `parseDocumentPayload` in `src/ingest.ts` consumes exactly these fields
- * (plus the provenance object kept for auditability, never logged).
+ * A document version with inline content, as emitted by git-source and
+ * consumed by `parseDocumentPayload`. Provenance is kept for audit, never logged.
  */
 export interface DocumentVersionPayload {
   content: string;
   documentId: string;
   externalId: string;
-  /** Chunker format: `"markdown" | "code" | "text"` (`format` upstream). */
+  /** Chunker format: `"markdown" | "code" | "text"`. */
   format?: string;
   namespace: string;
   /** Source provenance (repository, commit, blob hashes, path, lineage). */
@@ -99,7 +92,7 @@ export interface IngestJobRecord {
   maxAttempts: number;
   namespace: string;
   priority: number;
-  /** Resolved #56 provenance for document jobs; null for source_sync jobs. */
+  /** Resolved provenance for document jobs; null for source_sync jobs. */
   provenance: IngestProvenance | null;
   sourceId: string;
   startedAt: string | null;
@@ -164,9 +157,8 @@ export interface IngestStore {
   /** Idempotent DDL (no-op for the memory store). */
   applySchema: () => Promise<void>;
   /**
-   * Fail a claimed attempt. Returns the resulting state (`retryable` while
-   * attempts remain, `dead` once exhausted) or null when the caller no
-   * longer owns the claim (recovered by another worker meanwhile).
+   * Fail a claimed attempt. Returns `retryable` or `dead`, or null when the
+   * claim was lost to stale recovery.
    */
   fail: (
     workerId: string,
@@ -191,10 +183,8 @@ export interface IngestStore {
   /** Enqueue a source resync; throws SourceNotFoundError for unknown sources. */
   enqueueSourceSync: (sourceId: string) => Promise<EnqueueResult>;
   /**
-   * Enqueue one normalized document version (content-inlined, the git-source
-   * bridge shape). Idempotent on the version identity: the same
-   * (documentId, versionId, content) re-emitted by a retried sync collides
-   * on the derived key and returns the original job.
+   * Enqueue one inline-content document version. Idempotent on
+   * (documentId, versionId, content), so a retried sync returns the original job.
    */
   enqueueDocumentVersion: (
     payload: DocumentVersionPayload,
@@ -203,10 +193,9 @@ export interface IngestStore {
   getJob: (jobId: string) => Promise<IngestJobRecord | null>;
   listSources: () => Promise<SourceStatus[]>;
   /**
-   * Idempotent publish of a document version keyed by
-   * (namespace, source_id, external_id, version_id). Returns true when a new
-   * version row was created, false when the version already existed — the
-   * property that makes stale-claim recovery safe against double-publishing.
+   * Publish a version keyed by (namespace, source_id, external_id, version_id).
+   * False when it already existed, which keeps stale-claim recovery from
+   * double-publishing.
    */
   publishDocumentVersion: (
     payload: DocumentPayload,

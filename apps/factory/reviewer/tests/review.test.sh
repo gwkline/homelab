@@ -1,8 +1,6 @@
 #!/bin/bash
-# Offline behavior test for run-reviewer.sh.
-# Stubs `gh` via PATH shim so no network and no mutation happens (v1 is
-# read-only anyway — the shim also FAILS the test if the reviewer tries to
-# write: pr merge / ready / label edits on PRs).
+# Offline test for run-reviewer.sh with a PATH-shimmed gh that fails the test
+# on any PR write (merge / ready / label edits).
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/../../../../"

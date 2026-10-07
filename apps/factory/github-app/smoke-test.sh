@@ -1,19 +1,9 @@
 #!/bin/sh
-# Manual smoke test for the factory GitHub App token service (#70).
+# Manual smoke test for the GitHub App token service: with a short-lived
+# installation token, read an issue, then create and delete a throwaway branch.
 #
-# Proves a short-lived App installation token can, with only the
-# permissions it was minted for:
-#   1. read an issue              (issues:read)
-#   2. resolve the default branch (metadata:read, contents:read)
-#   3. create a throwaway branch  (contents:write)
-#   4. delete the throwaway branch (contents:write)
-#
-# Token sourcing (never printed, never written outside a mktemp file):
-#   GH_TOKEN        existing installation token, or
-#   GH_TOKEN_FILE   file containing one, or
-#   (fallback)      minted via mint.ts from the 1Password-sourced env:
-#                     GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID,
-#                     GITHUB_APP_PRIVATE_KEY_FILE (or _PRIVATE_KEY)
+# Token: GH_TOKEN, else GH_TOKEN_FILE, else minted via mint.ts from
+# GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY_FILE.
 #
 # Usage:
 #   REPO=owner/name ISSUE=<n> sh apps/factory/github-app/smoke-test.sh
@@ -29,7 +19,6 @@ WORK="$(mktemp -d)"
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 cleanup() {
-  # Best-effort rollback: a leftover smoke branch must not accumulate.
   if [ "$CREATED" = "1" ]; then
     if "$GH_BIN" api -X DELETE "repos/${REPO}/git/refs/heads/${TEST_BRANCH}" >/dev/null 2>&1; then
       echo "[smoke] cleaned up branch ${TEST_BRANCH}"
@@ -54,8 +43,6 @@ else
     exit 78
   fi
   echo "[smoke] minting a short-lived installation token via mint.ts"
-  # Token lands in the mktemp dir with mode 0600; stdout of the mint
-  # carries only the expiry, never the token itself.
   node --experimental-strip-types "${APP_DIR}/mint.ts" \
     --permissions contents:write,issues:read,metadata:read \
     --out "${WORK}/token" >/dev/null

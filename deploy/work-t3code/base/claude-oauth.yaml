@@ -1,25 +1,5 @@
-# Claude Code long-lived OAuth token for the work runner.
-#
-# Claude Code's interactive paste-prompt does not consume non-TTY stdin,
-# so the headless OAuth flow cannot complete inside the pod (verified
-# 2026-10-04: the login process parks in the event loop and never reads
-# the piped code). The supported headless path is the token minted by
-# `claude setup-token` on an operator machine, consumed via the
-# CLAUDE_CODE_OAUTH_TOKEN env var (statefulset.yaml).
-#
-# 1Password item contract (docs/secrets-inventory.md B5):
-#   vault:  homelab
-#   item:   work-claude-oauth   field: token
-#   value:  the claude_oauth_... token printed by `claude setup-token`
-#           (run on a machine where the operator is logged in; no trailing
-#           newline). Rotating = mint a new token and update the field —
-#           the env var is read fresh by every claude session, but a
-#           RUNNING pod keeps its old env, so rollout-restart after
-#           rotating (see README).
-#
-# This credential is a personal subscription token deliberately placed on
-# the work runner (operator decision 2026-10-04); it grants no repository
-# access, and the work namespace's egress/netpol isolation still applies.
+# Token from `claude setup-token` (the in-pod login can't complete headless).
+# 1Password item: work-claude-oauth/token.
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:

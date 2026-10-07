@@ -11,16 +11,10 @@ import { INGEST_SCHEMA_VERSION } from "../server/queue.ts";
 import { runWorkerCycle } from "../server/worker.ts";
 import { makeIngestInput, makeWorkerConfig, noopLogger } from "./helpers.ts";
 /**
- * Live-DB integration for the durable queue (#58): runs only when
- * DATABASE_URL points at a Postgres (the knowledge CNPG cluster in CI/dev).
- * Proves the properties the in-memory suite can only mirror:
- *   - concurrent claims from independent connections never overlap
- *     (`FOR UPDATE SKIP LOCKED`),
- *   - duplicate enqueues collapse to one row under the UNIQUE constraint,
- *   - failed attempts retry and dead-letter through real SQL transitions,
- *   - a crashed claim is recovered and re-run without double-publishing the
- *     document version.
- * Everything is namespaced per run and cleaned up afterwards.
+ * Live-Postgres queue tests, run only when DATABASE_URL is set. Covers what
+ * the memory store can only mirror: SKIP LOCKED concurrency, UNIQUE dedupe,
+ * real retry/dead-letter transitions, and crash recovery. Data is namespaced
+ * per run and cleaned up.
  */
 
 const hasLiveDb = Boolean(process.env["DATABASE_URL"]);

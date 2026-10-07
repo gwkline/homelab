@@ -1,8 +1,5 @@
-// Contract + integration tests for the factory operations surface exposed
-// through Executor MCP (#84). The OpenAPI contract lives in
-// deploy/executor/factory-openapi.json; these tests keep spec and server
-// honest and cover the lifecycle: denied, approval-required (policy class),
-// idempotent, and successful calls, plus caller/run identity preservation.
+// Contract + integration tests for the factory MCP surface; the spec lives in
+// deploy/executor/factory-openapi.json.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
@@ -42,8 +39,7 @@ const OPS: [string, string][] = [
 
 test("factory OpenAPI contract: policy classes, strict bodies, no k8s surface", () => {
   const spec = readSpec();
-  // Every factory operation carries an explicit policy class: reads are
-  // policy-allowed, mutations are approval-required (Executor gates them).
+  // Reads are policy-allowed; mutations are approval-required.
   const mutating = new Set(["post", "delete", "put", "patch"]);
   for (const [route, method] of OPS) {
     const op = spec.paths[route]?.[method];
@@ -63,8 +59,7 @@ test("factory OpenAPI contract: policy classes, strict bodies, no k8s surface", 
       );
     }
   }
-  // Request bodies are closed: only (repo, issue, profile) exist — never raw
-  // Kubernetes fields or profile overrides.
+  // Request bodies are closed: only (repo, issue, profile).
   for (const schemaName of ["CreateRun", "RetryRun", "RunTarget"]) {
     const s = spec.components.schemas[schemaName];
     assert.ok(s, `${schemaName} exists`);
@@ -87,8 +82,7 @@ test("factory OpenAPI contract: policy classes, strict bodies, no k8s surface", 
   assert.match(server.url, /^http:\/\/panel-http\.agents\.svc:3000$/u);
 });
 
-// Mock-server helpers shared by the in-memory GitHub (module scope so they
-// are not recreated per request).
+// Mock-server helpers for the in-memory GitHub.
 const readBody = (req: IncomingMessage): Promise<string> => {
   let b = "";
   req.on("data", (c) => (b += c));
@@ -443,8 +437,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     });
     assert.equal(badRepo.status, 400);
 
-    // ── Success: create run (approval-required policy class; identity rides
-    // the host-side header, never the tool arguments) ──
+    // ── Success: create run (identity from the host-side header) ──
     const create = await fetch(`${base}/api/factory/run`, {
       body: JSON.stringify({ issue: 7, repo: "gwkline/launchpad" }),
       headers: {

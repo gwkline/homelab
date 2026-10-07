@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Runs every check CI runs. Must pass before pushing.
+# Repo static checks; CI's `validate` job runs this. It does not cover the
+# `check` job (ultracite, oxfmt, typecheck, npm test), shell fixture tests,
+# or the panel e2e.
+#
+# Usage: ./scripts/verify.sh   (needs bash, shellcheck, kubectl, git)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -7,31 +11,24 @@ cd "$(dirname "$0")/.."
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
 echo '==> shellcheck'
-# Strictness: fail on errors, allow warnings/info (existing repo has intentional WORKDIR/ISSUE_BODY patterns).
-# The outer `if ! shellcheck` would trip on any warning (exit 1), so gate on -S error.
+# Fail on errors; print warnings without failing.
 if ! shellcheck -S error bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/factory/**/run-reviewer.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh >/dev/null 2>&1; then
   shellcheck -S error bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/factory/**/run-reviewer.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh 2>&1 | head -n 80
   fail 'shell script lint (error)'
 fi
-# Also show warnings for visibility without failing
 shellcheck bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/factory/**/run-reviewer.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh 2>&1 | head -n 100 || true
 
 echo '==> kustomize builds'
-# deploy/*/base: every component base; deploy/namespaces + deploy/tailscale:
-# the two non-`base` kustomizations; clusters/home: the root
-# entry point (issue #20) — building it in CI proves the composed normal
-# set renders deterministically with no duplicate resource IDs.
+# Every base, the non-base kustomizations, and the root (proves the core set
+# renders with no duplicate resource IDs).
 for d in deploy/*/base deploy/namespaces deploy/tailscale \
           clusters/home; do
   kubectl kustomize "$d" >/dev/null || fail "kustomize build: $d"
 done
 
 echo '==> factory CronJob schedule collision lint'
-# All factory CronJobs firing on the same minute-of-hour pattern hit the GitHub
-# API simultaneously (rate-limit noise, races — issue #105). Extract
-# spec.schedule from every CronJob in deploy/factory/base/*.yaml and fail when
-# two jobs expand to the same minute/hour pattern. The current stagger
-# (orchestrator "0 */6", reviewer "0 */3", security "15 */3") stays distinct.
+# Two factory CronJobs whose schedules expand to the same minute/hour pattern
+# hit the GitHub API at the same instant; fail on any such pair.
 trim() {
   local s="$1"
   s="${s#"${s%%[![:space:]]*}"}"
@@ -170,53 +167,25 @@ for d in deploy/*/base; do
 done
 
 echo '==> no hard-coded personal tailnet DNS suffix'
-# Tailnet suffix must come from the single documented value (see
-# deploy/tailscale/README.md), never be committed. `<tailnet>` placeholders are fine.
-# "e.g. tail<...>.ts.net" doc examples are allowed; only real-looking suffixes
-# outside comment/placeholder contexts fail.
+# The tailnet suffix is runtime config (deploy/tailscale/README.md), never
+# committed. `<tailnet>` placeholders and "e.g." examples are allowed.
 if grep -rnE '[a-z0-9][a-z0-9-]*\.ts\.net' scripts/ deploy/ apps/ bootstrap/ examples/ docs/ README.md \
     | grep -v '<tailnet>' | grep -viE 'e\.g\.|for example|never hard-coded' | grep .; then
   fail 'hard-coded tailnet DNS suffix committed'
 fi
 
-echo '==> secret patterns (working tree + all reachable history)'
+echo '==> secret patterns (working tree)'
+# Tracked + untracked files only; history is not scanned. Excluded files hold
+# redaction/scan patterns or synthetic fixtures by design.
 pattern='(github_pat_|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|tskey-auth-)'
-# alloy.yaml carries the log-redaction patterns themselves, skills-lib.sh
-# carries the skills-sync scrub pattern, the github-app token test uses a
-# synthetic PEM fixture ("abc" body, never a real key), and the loki README
-# names token shapes in prose (ghp_/gho_/etc. as documentation, never values)
-# — literals required by design in all four; other docs describe shapes
-# without literals.
 secret_exclusions=':!scripts/verify.sh :!deploy/loki/base/alloy.yaml :!apps/shared/skills-lib.sh :!apps/factory/github-app/tests/token-service.test.ts :!apps/knowledge/tests/git-source.test.ts :!apps/factory/collector/tests/collector.test.ts :!deploy/loki/README.md'
+# shellcheck disable=SC2086 # pathspecs are a word list
 if git grep --untracked -nIE "$pattern" -- $secret_exclusions 2>/dev/null | grep .; then
   fail 'secret-looking string in working tree'
 fi
-# History scan (#22): every merge-base-to-HEAD revision on the current branch,
-# one rev at a time (a quoted `$(rev-list --all)` collapses to a single bogus
-# revision and scans nothing). Scoped to first-parent mainline so stale
-# feature-branch fixtures (already closed, e.g. #179's TLS fixtures) can't
-# red-fail unrelated PRs; CI checks out the PR merge commit, whose history is
-# exactly mainline + the PR. Filenames only (-l) so findings never print
-# secret contents.
-# git grep exit: 0 = match, 1 = clean, >=2 = scanner error (distinct failure).
-history_hits=""
-while IFS= read -r rev; do
-  [ -n "$rev" ] || continue
-  set +e
-  rev_hits="$(git grep -lIE "$pattern" "$rev" -- $secret_exclusions 2>/dev/null)"
-  rc=$?
-  set -e
-  if [ "$rc" -ge 2 ]; then
-    fail "history scan error at revision $rev (git grep exit $rc)"
-  elif [ "$rc" -eq 0 ]; then
-    history_hits="${history_hits}${rev}: ${rev_hits}
-"
-  fi
-done < <(git rev-list --first-parent HEAD || fail 'cannot list reachable revisions')
-if [ -n "$history_hits" ]; then
-  printf '%s' "$history_hits" | head -n 20 >&2
-  fail 'secret-looking string found in history (revisions:filenames above)'
-fi
+
+echo '==> personal-skills fixture contract'
+sh scripts/check-personal-skills.sh >/dev/null || fail 'personal-skills contract (run scripts/check-personal-skills.sh)'
 
 echo '==> homelab image references match the published namespace'
 owner="$(git remote get-url origin | sed -E 's#.*[:/]([^/]+)/[^/]+(\.git)?$#\1#')"

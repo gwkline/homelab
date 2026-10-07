@@ -1,12 +1,5 @@
-# Executor's full network contract. Default-deny ingress comes from
-# policies/base; this declares the two allowed inbound paths. The egress half
-# is the practical outbound restriction the gateway issue (#72) asks for:
-# integrations may be public HTTPS endpoints and DNS, nothing else — no
-# Kubernetes API, node/LAN, metadata, or tailnet addresses from tool calls.
-# NetworkPolicies cannot filter by domain, so "integration destinations" are
-# restricted to the whole public internet over 443 (the same trade-off the
-# sandbox egress allowlist documents); FQDN-level filtering would need an
-# egress proxy and is deliberately out of scope for the spike.
+# Egress: DNS, the factory API on the panel, and public HTTPS for integrations.
+# No FQDN filtering; that would need an egress proxy.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -18,20 +11,20 @@ spec:
       app: executor
   policyTypes: [Ingress, Egress]
   ingress:
-    - from: # Tailscale operator proxies (executor-tailnet LoadBalancer)
+    - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: tailscale
       ports:
         - protocol: TCP
           port: 4788
-    - from: # In-cluster MCP clients: t3code, hermes, panel health probe
+    - from: # in-cluster MCP clients
         - podSelector: {}
       ports:
         - protocol: TCP
           port: 4788
   egress:
-    - to: # DNS — kube-dns pods only (k3s coredns carries this label)
+    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
@@ -41,26 +34,23 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    - to: # Factory API host-side calls (issue #84): the panel's in-cluster
-        # plaintext Service is the factory contract (deploy/executor/
-        # factory-openapi.json). Pod-scoped, port 3000 — the factory API is
-        # reachable ONLY from this pod, so agents cannot bypass Executor
-        # policies to hit it directly (same trust model as the panel's other
-        # in-cluster callers).
+    # Factory API (factory-openapi.json). Only Executor may call it, so agents
+    # can't bypass its approval policies.
+    - to:
         - podSelector:
             matchLabels:
               app: panel
       ports:
         - { protocol: TCP, port: 3000 }
-    - to: # Integration calls: public internet over TLS, private ranges carved out
+    - to:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
-              - 10.0.0.0/8 # RFC1918 + k3s pod CIDR (10.42/16) + service CIDR (10.43/16, incl. API 10.43.0.1)
-              - 172.16.0.0/12 # RFC1918 (node/LAN)
-              - 192.168.0.0/16 # RFC1918 (node/LAN)
-              - 169.254.0.0/16 # link-local (cloud metadata)
-              - 100.64.0.0/10 # CGNAT — Tailscale tailnet
+              - 10.0.0.0/8 # LAN + k3s pod/service CIDRs, incl. the API
+              - 172.16.0.0/12
+              - 192.168.0.0/16 # node/LAN
+              - 169.254.0.0/16 # link-local metadata
+              - 100.64.0.0/10 # tailnet
       ports:
         - protocol: TCP
           port: 443

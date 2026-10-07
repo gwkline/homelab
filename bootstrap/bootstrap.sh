@@ -7,19 +7,13 @@ set -euo pipefail
 
 ROLE="${1:?usage: bootstrap.sh server|agent [server-ip]}"
 
-# Pinned for reproducible recovery (issue #29): a rebuild must install exactly
-# the versions the manifests and workarounds were tested against. Override only
-# for a deliberate upgrade — version and installer sha256 change together, and
-# the cluster smoke tests in docs/rebuild-runbook.md §2a run afterwards.
+# Pinned so a rebuild installs exactly what was tested. Override only for a
+# deliberate upgrade; version and installer sha256 change together.
 K3S_VERSION="${K3S_VERSION:-v1.36.4+k3s1}"
 TAILSCALE_VERSION="${TAILSCALE_VERSION:-1.102.4}"
-# sha256 of each installer at its immutable version tag; a mismatch refuses to
-# execute instead of piping unverified remote content into a root shell.
 K3S_INSTALLER_SHA256="${K3S_INSTALLER_SHA256:-46177d4c99440b4c0311b67233823a8e8a2fc09693f6c89af1a7161e152fbfad}"
 TAILSCALE_INSTALLER_SHA256="${TAILSCALE_INSTALLER_SHA256:-805e85ed6f6f81a7ea2e70d52d47e7d5290863299e5c922b2787d71aa312f22e}"
 
-# Platform contract: Ubuntu Server 24.04 on amd64 or arm64 — the only
-# combinations both k3s and Tailscale publish and the drill has covered.
 if [[ $EUID -eq 0 ]]; then
   echo "run as a normal user with sudo access, not root" >&2
   exit 1
@@ -35,8 +29,6 @@ case "$ARCH" in
   *) echo "unsupported architecture: $ARCH (need amd64 or arm64)" >&2; exit 1 ;;
 esac
 
-# Download an installer from its immutable version tag and verify its content
-# against the pinned sha256 before running it.
 fetch_verified() {
   local url="$1" want="$2" dest="$3"
   echo "==> fetching installer: $url"

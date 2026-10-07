@@ -220,8 +220,7 @@ test("GET /api/factory/stats/rollup aggregates all repos and persists weekly his
   const mondayMs = Date.parse(`${weekStart(now)}T00:00:00Z`);
   const at = (weeksAgo: number, hour: number): string =>
     new Date(mondayMs - weeksAgo * WEEK_MS + hour * 3_600_000).toISOString();
-  // A snapshot from 40 weeks ago — far outside anything GitHub-derived lists
-  // would return — pre-seeds the artifact to prove trends outlive the window.
+  // A 40-week-old snapshot proves trends outlive the GitHub-derived window.
   const oldWeek = weekStart(mondayMs - 40 * WEEK_MS);
   const statsFile = path.join(stage, "factory-stats.json");
   writeFileSync(
@@ -378,10 +377,8 @@ test("GET /api/factory/stats/rollup aggregates all repos and persists weekly his
     // surfaces, so it adds 2 calls of its own.
     assert.equal(ghCalls.length - callsBeforeRollup, 6 * 4 + 2);
 
-    // Trend history: the pre-seeded 40-week-old snapshot plus the current
-    // week — history is read from the artifact, not GitHub. The current
-    // entry's totals are the cross-repo week sums (open counts exclude the
-    // failed repo).
+    // History comes from the snapshot file: the seeded week plus the current
+    // one, whose totals exclude the failed repo.
     assert.equal(j.history.length, 2);
     assert.equal((j.history[0] ?? { week: "" }).week, oldWeek);
     assert.equal(

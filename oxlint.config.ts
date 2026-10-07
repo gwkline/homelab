@@ -1,6 +1,5 @@
-// oxlint config overrides on top of the Ultracite core preset (#115).
-// Everything not listed here is exactly as Ultracite ships it: error severity,
-// no warnings. Each override needs a justification comment.
+// Ultracite core preset plus the few exceptions below; everything else is
+// exactly as Ultracite ships it (error severity, no warnings).
 import core from "ultracite/oxlint/core";
 
 export default {
@@ -8,117 +7,46 @@ export default {
   overrides: [
     ...(core.overrides ?? []),
     {
-      // k8sFetch bridges node:http's callback/stream API; a Promise executor
-      // is the idiomatic wrapper there, not an anti-pattern.
-      files: ["apps/panel/server/k8s.ts"],
-      rules: { "promise/avoid-new": "off" },
+      // Tests drive state machines step by step, stub node APIs, and keep
+      // fixtures shaped like real payloads.
+      files: ["**/tests/**"],
+      rules: {
+        "no-await-in-loop": "off",
+        "no-promise-executor-return": "off",
+        "no-template-curly-in-string": "off",
+        "promise/avoid-new": "off",
+        "promise/param-names": "off",
+        "promise/prefer-await-to-callbacks": "off",
+        "require-await": "off",
+        "sort-keys": "off",
+        "unicorn/no-await-expression-member": "off",
+      },
     },
     {
-      // Egress smoke (examples/egress-smoke.mjs): the TCP prober wraps node:net's
-      // event API in one Promise, and the checks run sequentially on purpose —
-      // deterministic report order, no 13-socket fan-out from a sandbox pod.
-      files: ["examples/egress-smoke.mjs"],
+      // Sequential-by-design loops (rate limits, leases, ordered upserts) and
+      // Promise wrappers around callback-style node:http / node:net.
+      files: [
+        "apps/factory/collector/*.ts",
+        "apps/knowledge/src/embedder.ts",
+        "apps/knowledge/src/ingest.ts",
+        "apps/knowledge-ingest/server/worker.ts",
+        "apps/panel/server/k8s.ts",
+        "examples/egress-smoke.mjs",
+      ],
       rules: {
         "no-await-in-loop": "off",
         "promise/avoid-new": "off",
       },
     },
     {
-      // Tests deliberately exercise raw error paths (unawaited promises,
-      // process spin-up) and keep fixture objects shaped like real payloads.
-      files: ["apps/panel/tests/**"],
-      rules: {
-        "no-promise-executor-return": "off",
-        "promise/avoid-new": "off",
-        "promise/param-names": "off",
-        "unicorn/no-await-expression-member": "off",
-      },
-    },
-    {
-      // FNV-1a feature hashing (deterministic eval embeddings, #59) is a
-      // bitwise algorithm by definition — the xor/shift path is the hash,
-      // not a mistyped boolean. Every other rule in the file complies.
+      // FNV-1a hashing is bitwise by definition.
       files: ["apps/knowledge/eval/rank.ts"],
       rules: { "no-bitwise": "off" },
     },
     {
-      // Panel e2e driver (#27): the terminal-state poller watches one Job
-      // until it reaches Complete — each iteration re-reads live cluster
-      // state, so the awaits ARE the poll — and the rejection checks run
-      // sequentially so the created-Job count assertion stays deterministic.
-      files: ["apps/panel/tests/integration/panel-e2e.test.mjs"],
-      rules: { "no-await-in-loop": "off" },
-    },
-    {
-      // The ingest/embedding workers (#57) are sequential by design: retries
-      // back off between attempts, the bounded pool drains a cursor, and
-      // chunk upserts must preserve order inside one transaction.
-      files: ["apps/knowledge/src/embedder.ts", "apps/knowledge/src/ingest.ts"],
-      rules: { "no-await-in-loop": "off" },
-    },
-    {
-      // Ingest queue tests (#58) drive the state machine step by step —
-      // claim, lease, recover — where sequential awaits ARE the behavior
-      // under test, and simulate hangs with deliberately unsettled Promise
-      // executors. Parallelizing would test a different system.
-      files: ["apps/knowledge-ingest/tests/**"],
-      rules: {
-        "no-await-in-loop": "off",
-        "no-promise-executor-return": "off",
-        "promise/avoid-new": "off",
-        "unicorn/no-await-expression-member": "off",
-      },
-    },
-    {
-      // Retrieval service tests stub node:http servers and drive request
-      // sequences where sequential awaits are the behavior under test; the
-      // Promise executor is the idiomatic listen() wrapper.
-      files: ["apps/knowledge-retrieval/tests/**"],
-      rules: {
-        "no-await-in-loop": "off",
-        "no-promise-executor-return": "off",
-        "promise/avoid-new": "off",
-        "unicorn/no-await-expression-member": "off",
-      },
-    },
-    {
-      // The ingest worker (#58) processes a claimed batch sequentially on
-      // purpose: each job holds a lease, so concurrent handler execution
-      // would reorder publishes across documents for zero throughput gain
-      // (the parallelism axis is worker count, not in-batch fan-out). The
-      // poll loop is inherently sequential for the same reason.
-      files: ["apps/knowledge-ingest/server/worker.ts"],
-      rules: { "no-await-in-loop": "off" },
-    },
-    {
-      // store.ts (#58) carries the two domain error types
-      // (StoreUnavailableError, SourceNotFoundError) next to the IngestStore
-      // contract they guard — one file per two-line Error subclass would
-      // scatter the contract for no clarity.
+      // Two small domain errors live beside the store contract they guard.
       files: ["apps/knowledge-ingest/server/store.ts"],
       rules: { "max-classes-per-file": "off" },
-    },
-    {
-      // Issue collector (#78): polling is deliberately sequential — one
-      // bounded stream of GitHub API calls per tick. Fan-out via Promise.all
-      // would spike concurrent request bursts against the rate limiter, and
-      // per-repo error isolation needs sequential try/catch so one repo's
-      // failure never masks another's progress.
-      files: ["apps/factory/collector/*.ts"],
-      rules: { "no-await-in-loop": "off" },
-    },
-    {
-      // Collector tests (#78): fakes intentionally return values without
-      // awaiting (require-await), carry hostile/untrusted fixture strings
-      // that look like template placeholders, and reuse the repo's object
-      // fixtures verbatim (sort-keys) — all by design.
-      files: ["apps/factory/collector/tests/**"],
-      rules: {
-        "no-template-curly-in-string": "off",
-        "promise/prefer-await-to-callbacks": "off",
-        "require-await": "off",
-        "sort-keys": "off",
-      },
     },
   ],
 };

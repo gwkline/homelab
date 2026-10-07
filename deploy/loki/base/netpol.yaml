@@ -1,7 +1,4 @@
-# Workload-owned exposure rule for Loki (default-deny lives in policies/base).
-# Loki is reached only from inside the `agents` namespace: the alloy collector
-# pushes, Grafana (#44) queries, operators port-forward for ad-hoc queries.
-# It is deliberately not exposed to the tailnet — Grafana fronts it.
+# Reached only from inside `agents` (alloy, Grafana, port-forward).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

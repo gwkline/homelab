@@ -11,8 +11,7 @@ RUN npm run build -w apps/knowledge-ingest
 
 FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
 WORKDIR /app
-# git: the ingest worker clones/fetches knowledge sources (git-source).
-# ca-certificates: https clones and url fetches.
+# git clones knowledge sources; ca-certificates serves https clones and fetches.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates \
   && rm -rf /var/lib/apt/lists/*

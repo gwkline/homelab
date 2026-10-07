@@ -1,6 +1,6 @@
 #!/bin/sh
-# Factory security worker (# security) — harness-agnostic.
-# Contract: same as code-pr so orchestrator + publisher reuse the path.
+# Factory security worker: deterministic scanners only, no LLM. Same /task ->
+# /out contract as code-pr, so the orchestrator's publish path is shared.
 #   /task/brief.json  input: run_id, repository, issue{number,title,body}
 #   /work/<repo>      clone
 #   /out/patch.diff   git diff (empty if report-only)
@@ -23,8 +23,7 @@ except Exception:
 " "${FACTORY_BRIEF_B64}" && printf '%s' "${FACTORY_BRIEF_B64}" | base64 -d > "${BRIEF}" || printf '%s' "${FACTORY_BRIEF_B64}" > "${BRIEF}"
 fi
 
-# Nightly mode needs no brief — synthesize a minimal one from env.
-# (CronJob sets FACTORY_SECURITY_MODE=nightly + FACTORY_REPO but no brief.)
+# The nightly CronJob passes FACTORY_REPO but no brief: synthesize one.
 if [ ! -f "${BRIEF}" ] && [ "${FACTORY_SECURITY_MODE:-}" = "nightly" ] && [ -n "${FACTORY_REPO:-}" ]; then
   mkdir -p /task
   RUN_ID="nightly-$(date +%s)"
@@ -65,7 +64,7 @@ run_section() {
   append '```'
   # shellcheck disable=SC2068
   if $@ >> "${OUT}/report.md" 2>&1; then
-    : # ok
+    :
   else
     append "(exit $?)"
   fi
@@ -112,15 +111,11 @@ if command -v trivy >/dev/null 2>&1; then
   run_section "trivy fs (HIGH,CRITICAL)" sh -c 'trivy fs --severity HIGH,CRITICAL --ignore-unfixed --format table . 2>&1 | head -n 300; echo "trivy exit $?"'
 fi
 
-# Summarize: did anything look bad?
 if grep -qi "leak\|secret\|HIGH\|CRITICAL\|error\|fail" "${OUT}/report.md" 2>/dev/null; then
-  # keep report; don't auto-fail for sweep — human reviews
   :
 fi
 
-# For per-issue mode, optionally draft a minimal patch if the issue is actionable
-# (harness-agnostic: no LLM — only deterministic fix stubs). For v1, patch is empty
-# so the run is report-only; publisher will still post the marker comment + report.
+# Scanners do not modify the tree, so the patch is normally empty (report-only).
 git diff --quiet || git diff --binary > "${OUT}/patch.diff" 2>/dev/null || true
 if [ ! -f "${OUT}/patch.diff" ]; then : > "${OUT}/patch.diff"; fi
 
@@ -143,7 +138,6 @@ echo "---PATCH_B64_END---"
 echo "---REPORT_B64_BEGIN---"
 base64 -w0 "${OUT}/report.json" 2>/dev/null || true; echo ""
 echo "---REPORT_B64_END---"
-# Also emit report.md b64 for publisher convenience
 echo "---REPORT_MD_B64_BEGIN---"
 base64 -w0 "${OUT}/report.md" 2>/dev/null || true; echo ""
 echo "---REPORT_MD_B64_END---"

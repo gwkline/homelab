@@ -1,8 +1,3 @@
-# kube-state-metrics — Kubernetes object state as metrics (issue #44, ADR
-# D8.3). One small Deployment plus its own read-only RBAC: exporting object
-# state is what this pod does, so it needs list/watch on exactly the object
-# kinds its enabled collectors (the --resources allowlist below) read —
-# nothing else, no secrets, no writes.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -60,10 +55,7 @@ spec:
       containers:
         - name: kube-state-metrics
           image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0@sha256:639a1e2da549210adddc0391ff91e270e83f7873014aec53258462812f741e6f
-          # Collector allowlist: only the object kinds the dashboards and
-          # alerts (issue #44) consume — nodes, pods, jobs/cronjobs,
-          # deployments/statefulsets, PVCs. Fewer watches = smaller blast
-          # radius and less memory on this node.
+          # Only what dashboards and alerts consume; RBAC matches.
           args:
             - --resources=nodes,pods,jobs,cronjobs,deployments,statefulsets,persistentvolumeclaims
           securityContext:
@@ -89,7 +81,6 @@ spec:
               port: http
             periodSeconds: 10
           resources:
-            # ADR D8.3.
             requests:
               cpu: 20m
               memory: 64Mi

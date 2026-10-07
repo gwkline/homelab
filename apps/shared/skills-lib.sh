@@ -1,26 +1,20 @@
 #!/bin/sh
-# Shared pinned private-skills sync (homelab#81, design in #69). One
-# implementation consumed by every agent harness (Hermes, T3 Code, factory
-# workers) in driver mode or as a sourced library:
+# Pinned private-skills sync shared by every agent harness (Hermes, T3 Code,
+# factory workers), run as a driver or sourced as a library:
 #
-#   fetch    Read-only token auth (GITHUB_TOKEN_FILE / GITHUB_TOKEN / GH_TOKEN)
-#            answered through a throwaway GIT_ASKPASS helper. The token never
-#            appears in a clone URL, so no credential is persisted in Git
-#            config, FETCH_HEAD, or the emitted metadata.
-#   verify   SKILLS_REF must be a full 40-hex commit SHA, a tag, or a branch.
-#            A pinned SHA is verified (resolved HEAD must equal the request)
-#            and the resolved commit is recorded in SKILLS_STATUS_FILE.
-#   install  Only SKILLS_ALLOWLIST paths are installed, into an isolated
-#            generated store (SKILLS_TARGET) rebuilt stage-then-swap on every
-#            run: idempotent, and obsolete files from earlier syncs are
-#            removed. Public skills (SKILLS_PUBLIC_DIR, e.g. a pinned P-Stack
-#            checkout) are merged FIRST and allowlisted private skills SECOND,
-#            so private deterministically shadows public on collision (#69).
-#   scan     Staged content is refused when it looks like a credential.
+#   fetch    The token (GITHUB_TOKEN_FILE / GITHUB_TOKEN / GH_TOKEN) is
+#            answered through a throwaway GIT_ASKPASS helper, never put in a
+#            URL, so no credential lands in Git config or FETCH_HEAD.
+#   verify   SKILLS_REF is a full commit SHA, a tag, or a branch. A SHA must
+#            equal the resolved HEAD; the resolved commit is recorded.
+#   install  Only SKILLS_ALLOWLIST paths are installed, into SKILLS_TARGET,
+#            rebuilt stage-then-swap so repeat runs are idempotent and drop
+#            obsolete files. SKILLS_PUBLIC_DIR is merged first, so private
+#            skills shadow public ones on collision.
+#   scan     Staged content that looks like a credential is refused.
 #
-# Failure policy lives with the caller: this library exits non-zero after
-# recording SKILLS_STATUS_FILE ({ok:false,error}); interactive harnesses
-# degrade loudly, ephemeral ones record the failure in run metadata.
+# Failures exit non-zero after writing {ok:false,error} to SKILLS_STATUS_FILE;
+# the caller decides whether that is fatal.
 #
 # Driver mode (env-configured):
 #   SKILLS_REF=<sha|tag|branch> SKILLS_ALLOWLIST="cat/name ..." \
@@ -112,10 +106,7 @@ skills_auth_token() {
     skills_fail "no credentials for $SKILLS_REPO_URL (set GITHUB_TOKEN_FILE, GITHUB_TOKEN, or GH_TOKEN)"
     return 1
   fi
-  # Exported: the throwaway GIT_ASKPASS helper runs as a child process of git
-  # and only inherits exported variables. Without this, the helper answers the
-  # password prompt with an empty string and every fetch fails with
-  # "Invalid username or token" even when the token itself is valid (#81).
+  # Exported: the GIT_ASKPASS helper is a child of git and only sees exports.
   SKILLS_TOKEN_SESSION="$_tok"
   export SKILLS_TOKEN_SESSION
   return 0
@@ -134,9 +125,7 @@ skills_fetch_repo() {
     skills_fail "git remote add failed for $SKILLS_REPO_URL"
     return 1
   fi
-  # Throwaway askpass: git's credential prompts are answered from the runtime
-  # token, so the remote URL stays clean and no credential can reach Git
-  # config, FETCH_HEAD, or any other persisted file (homelab#81).
+  # Answer git's prompts from the session token so the remote URL stays clean.
   _ap="$(mktemp)" || { skills_fail "mktemp failed"; return 1; }
   {
     echo '#!/bin/sh'
@@ -145,9 +134,7 @@ skills_fetch_repo() {
     echo '  Password*) printf %s "$SKILLS_TOKEN_SESSION" ;;'
     echo 'esac'
   } > "$_ap"
-  # mktemp creates mode 600: without the exec bit the child git process (and
-  # any non-root UID, e.g. the factory worker's `node` user) gets
-  # "cannot exec ...: Permission denied". workspace-lib.sh already does this.
+  # mktemp creates mode 600; git cannot exec the helper without the exec bit.
   chmod 700 "$_ap" || { skills_fail "chmod askpass helper failed"; return 1; }
   _rc=0
   GIT_ASKPASS="$_ap" GIT_TERMINAL_PROMPT=0 \
@@ -203,8 +190,7 @@ skills_stage() {
   rm -rf "${SKILLS_TARGET}".staging.* "${SKILLS_TARGET}".old.* 2>/dev/null || true
   mkdir -p "$_staging" || { skills_fail "cannot create staging dir"; return 1; }
 
-  # 1) Public skills first (e.g. a pinned P-Stack tree, #68). Entries mirror
-  #    the store layout; copied in glob (sorted) order for determinism.
+  # Public skills first, in sorted glob order; entries mirror the store layout.
   if [ -n "${SKILLS_PUBLIC_DIR:-}" ]; then
     if [ -d "$SKILLS_PUBLIC_DIR" ]; then
       for _e in "$SKILLS_PUBLIC_DIR"/*; do
@@ -219,8 +205,7 @@ skills_stage() {
     fi
   fi
 
-  # 2) Allowlisted private skills second — they overwrite any public entry of
-  #    the same path, so precedence is private > public, deterministically.
+  # Allowlisted private skills second, overwriting any public entry.
   SKILLS_INSTALLED=0
   for _name in $(skills_allowlist_entries); do
     case "$_name" in
@@ -246,9 +231,7 @@ skills_stage() {
     SKILLS_INSTALLED=$((SKILLS_INSTALLED + 1))
   done
 
-  # Ownership marker: everything inside SKILLS_TARGET is sync-generated.
-  # (No timestamp: the marker is part of the store, and the store must stay
-  # byte-identical across repeat syncs of the same ref.)
+  # Ownership marker. No timestamp: repeat syncs of a ref must be byte-identical.
   {
     echo "generated by apps/shared/skills-lib.sh (homelab#81) — do not edit"
     echo "repo: $SKILLS_REPO_URL"
@@ -259,7 +242,7 @@ skills_stage() {
     return 1
   }
 
-  # Trust gate: never install credential-looking content (#69).
+  # Never install credential-looking content.
   if [ "${SKILLS_SECRET_SCAN:-1}" != "0" ]; then
     _hits="$(grep -rIlE "$SKILLS_SECRET_PATTERN" "$_staging" 2>/dev/null || true)"
     if [ -n "$_hits" ]; then
@@ -285,8 +268,6 @@ skills_swap() {
     if [ -e "$_old" ]; then mv "$_old" "$SKILLS_TARGET" || true; fi
     return 1
   fi
-  # Whole-store replacement is what removes obsolete generated files and
-  # makes repeated syncs idempotent.
   rm -rf "$_old" 2>/dev/null || true
   return 0
 }
@@ -305,10 +286,9 @@ skills_sync() {
 }
 
 # skills_link_generated <store> <linkdir>
-# Expose the generated store to a harness skill dir via symlinks that mirror
-# the store layout. Only links owned by this library (pointing into the
-# store) are created or removed; real user files and foreign symlinks are
-# reported and left untouched. Dangling store links are stale removals.
+# Mirror the store into a harness skill dir as symlinks. Only links pointing
+# into the store are created or removed; anything else is reported and left
+# alone. Dangling store links are removed as stale.
 skills_link_generated() {
   _store="$1" _link="$2"
   if [ ! -d "$_store" ]; then

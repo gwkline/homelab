@@ -14,11 +14,6 @@ spec:
       labels:
         app: hermes
     spec:
-      # Hermes' ServiceAccount token is NOT for factory orchestration (#82):
-      # that now goes through the Executor MCP endpoint with its own client
-      # identity (EXECUTOR_* below, credentials host-side in Executor). The
-      # token only backs the read-only RBAC in rbac.yaml — self-visibility
-      # and cluster-health reads.
       serviceAccountName: hermes
       automountServiceAccountToken: true
       securityContext:
@@ -38,18 +33,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-        # Skills sync (#81): apps/shared/skills-lib.sh clones the private
-        # skills repo at the pinned commit from hermes-skills-sync (token
-        # answered via throwaway GIT_ASKPASS — nothing lands in Git config),
-        # verifies the pin, and installs only the allowlisted skill paths
-        # into the generated store $HERMES_HOME/skills-generated, then links
-        # them into $HERMES_HOME/skills. The link step only manages its own
-        # symlinks — a pre-existing real entry from the earlier `dot install`
-        # era is reported and left untouched (remove it manually once, if a
-        # collision is reported). Degrades explicitly on failure: records
-        # skills-sync/status.json and always exits 0 — the gateway starts on
-        # stale skills rather than refusing to boot during a GitHub outage;
-        # run-hermes.sh prints the fresh/stale line loudly at boot.
+        # Installs the allowlisted skills at the pinned ref. Always exits 0:
+        # on failure the gateway starts on stale skills.
         - name: skills-sync
           image: ghcr.io/gwkline/homelab/hermes:latest
           command:
@@ -107,15 +92,11 @@ spec:
             capabilities:
               drop: ["ALL"]
           env:
-            # HOME lives on the PVC (issue #19): the agent CLIs' auth/session
-            # state is /data/home/.claude and /data/home/.codex — persistent
-            # in place, no /home/node restore target and no write-back hook.
+            # On the PVC so CLI logins (.claude, .codex) survive rollouts.
             - name: HOME
               value: /data/home
             - name: GITHUB_TOKEN_FILE
               value: /secrets/token
-            # gh CLI + git credential helpers read GH_TOKEN; the token is the
-            # same fine-grained PAT the factory uses (secret github-token).
             - name: GH_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -137,11 +118,6 @@ spec:
                   name: hermes-workspaces
                   key: command
                   optional: true
-            # Executor MCP gateway (#82): factory orchestration happens
-            # through these governed tools — create/inspect/cancel/retry Run
-            # — never through direct Kubernetes writes. The token is
-            # optional so the gateway boots before Executor is deployed;
-            # see deploy/hermes/base/README.md for provisioning.
             - name: EXECUTOR_MCP_URL
               valueFrom:
                 configMapKeyRef:

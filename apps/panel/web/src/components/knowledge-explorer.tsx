@@ -223,9 +223,7 @@ const SearchResults = ({
   </>
 );
 
-// Full-page knowledge base explorer: cited search with expandable passages,
-// search history, and live source health + sync controls. The dashboard card
-// stays the summary; this is the working surface.
+// Full-page explorer: cited search, history, and source health + sync controls.
 export const KnowledgeExplorer = () => {
   const [phase, setPhase] = useState<Phase>("loading");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -268,8 +266,7 @@ export const KnowledgeExplorer = () => {
     return () => clearInterval(id);
   }, [loadSources]);
 
-  // Durable job progress: poll the knowledge API's job record every 2s until
-  // it reaches a terminal state, then surface the outcome and refresh.
+  // Poll the sync job every 2s until it reaches a terminal state.
   useEffect(() => {
     if (job === null || job.status === "succeeded" || job.status === "failed") {
       return;

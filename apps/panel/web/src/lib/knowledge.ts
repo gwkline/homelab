@@ -1,7 +1,4 @@
-// Shared knowledge-API types and view helpers for the panel's knowledge
-// surfaces (the dashboard card and the full-page explorer). One contract —
-// the retrieval/ingest API shapes the panel server proxies — so both views
-// stay in lockstep.
+// Knowledge-API types and view helpers shared by the card and the explorer.
 
 export interface SourceJob {
   jobId: string;
@@ -88,10 +85,8 @@ export const sourceLabel = (s: SourceRow): string => {
   return s.path ?? s.url ?? s.sourceId;
 };
 
-// Citation link: prefer the resolvable source URL; github sources without one
-// are rebuilt from (owner/repo, commit, path). GitHub blob links get a line
-// anchor from the chunk's first offset anchor so the link opens at the cited
-// passage.
+// Prefer the source URL; otherwise rebuild a GitHub blob link, anchored at
+// the cited line.
 export const withLineAnchor = (url: string, hit: SearchHit): string => {
   if (!url.startsWith("https://github.com/") || !url.includes("/blob/")) {
     return url;

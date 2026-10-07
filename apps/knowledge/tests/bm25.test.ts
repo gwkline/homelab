@@ -10,13 +10,14 @@ import {
   searchBm25,
   withBm25ClientFromEnv,
 } from "../src/bm25.ts";
-import type { Bm25DbClient, Bm25SearchQuery } from "../src/bm25.ts";
+import type { Bm25SearchQuery } from "../src/bm25.ts";
+import type { PgClient } from "../src/pg-client.ts";
 import { ensurePgvectorSchema } from "../src/pgvector.ts";
 
 const stubClient = (
   rows: Record<string, unknown>[],
   seen: { text?: string; params?: unknown[] } = {}
-): Bm25DbClient => ({
+): PgClient => ({
   query: (text: string, params: unknown[]) => {
     seen.text = text;
     seen.params = params;
@@ -105,10 +106,8 @@ test("builder rejects empty queries, bad namespaces, and bad limits", () => {
 });
 
 test("query classes pass through verbatim as bind params", () => {
-  // Exact identifiers, punctuation, and stemming candidates must reach the
-  // index untouched: the english text_config tokenizes/stems on the database
-  // side, and any application-side mangling would break provenance. Rare-term
-  // and no-result classes are proven live (they need real IDF/statistics).
+  // The database tokenizes and stems; any application-side mangling would
+  // break provenance. Rare-term and no-result cases need live IDF, below.
   const classes = [
     "KWREF-6087",
     "zzqqxw qwertyuiopvbx",
@@ -238,7 +237,7 @@ test("searchBm25 returns hits best-first and sends the built query", async () =>
 
 test("searchBm25 validates before issuing any query", async () => {
   let calls = 0;
-  const client: Bm25DbClient = {
+  const client: PgClient = {
     query: () => {
       calls += 1;
       return Promise.resolve({ rows: [] });
@@ -297,10 +296,8 @@ test("integration path requires DATABASE_URL when env is empty", async () => {
   }
 });
 
-// Live-DB integration: runs only when DATABASE_URL points at a Postgres with
-// BOTH pg_textsearch and pgvector (the knowledge CNPG cluster: the shared
-// chunks schema needs the vector type, the keyword channel needs the BM25
-// index). Otherwise skipped in CI/offline, like the pgvector integration test.
+// Live-DB integration: needs DATABASE_URL with both pg_textsearch and pgvector
+// (the shared chunks schema uses the vector type).
 const hasLiveDb = Boolean(process.env["DATABASE_URL"]);
 
 const WIDE_NAMESPACE = "bm25-wide";
@@ -309,15 +306,12 @@ const OTHER_NAMESPACE = "bm25-other";
 const TEST_NAMESPACES = [WIDE_NAMESPACE, SPARSE_NAMESPACE, OTHER_NAMESPACE];
 
 /**
- * Deterministic filler corpus: 10_000 rows cycling two topic lists (LCM 70
- * distinct texts, no digits, no probe terms) so the planner has realistic
- * statistics and BM25 has varied term frequencies. "Sufficiently sized" per
- * #60: the EXPLAIN assertions below need a corpus big enough that top-k
- * planning prefers the indexes over a sequential scan.
+ * 10_000 filler rows (70 distinct texts, no probe terms): big enough that the
+ * planner prefers the indexes over a sequential scan in the EXPLAIN checks.
  */
 const FILLER_ROWS = 10_000;
 
-const seedFixture = async (client: Bm25DbClient): Promise<void> => {
+const seedFixture = async (client: PgClient): Promise<void> => {
   await client.query("DELETE FROM chunks WHERE namespace = ANY($1)", [
     TEST_NAMESPACES,
   ]);
@@ -386,14 +380,12 @@ SELECT 'bm25-sparse-' || g,
 FROM generate_series(1, 5) AS g`,
     [SPARSE_NAMESPACE]
   );
-  // Refresh planner statistics after the bulk load so EXPLAIN reflects the
-  // real corpus size instead of stale pre-load estimates.
+  // Refresh planner statistics so EXPLAIN sees the loaded corpus size.
   await client.query("ANALYZE chunks", []);
 };
 
-/** EXPLAIN the built search query and return the plan as one string. */
 const explainSearch = async (
-  client: Bm25DbClient,
+  client: PgClient,
   built: Bm25SearchQuery
 ): Promise<string> => {
   const result = await client.query(`EXPLAIN (COSTS OFF) ${built.text}`, [
@@ -407,8 +399,6 @@ test(
   { skip: !hasLiveDb },
   async () => {
     await withBm25ClientFromEnv(async (client) => {
-      // The shared chunks schema (vector type + base indexes), then the BM25
-      // channel's extension + indexes.
       await ensurePgvectorSchema(client);
       await ensureBm25Schema(client);
       await seedFixture(client);

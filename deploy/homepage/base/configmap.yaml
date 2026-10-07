@@ -40,11 +40,7 @@ data:
         memory: true
         expanded: true
 ---
-# The single place the tailnet DNS suffix is configured (homepage substitutes
-# HOMEPAGE_VAR_* env vars into config hrefs). Set it to your tailnet's suffix,
-# e.g. tailabc1234.ts.net (discover with:
-# kubectl get ingress panel -n agents -o jsonpath='{.status.loadBalancer.ingress[0].hostname}').
-# Do not commit a personal tailnet name — scripts/verify.sh rejects it.
+# Set tailnet-name on the cluster, never in git (see deploy/tailscale/README.md).
 apiVersion: v1
 kind: ConfigMap
 metadata:

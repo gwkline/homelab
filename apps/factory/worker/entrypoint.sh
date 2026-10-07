@@ -1,6 +1,6 @@
 #!/bin/sh
-# Factory worker entrypoint (#74).
-# Contract (ADR-009 / factory-v1-github-ledger.md):
+# Factory worker entrypoint.
+# Contract (ADR-003):
 #   /task/brief.json   input: run_id, repository, issue, profile, verify_command
 #   /work/<repo>       clone, make changes here
 #   /out/patch.diff    git diff of the change
@@ -8,18 +8,15 @@
 #   exit 0             success; non-zero = failed attempt
 #   exit 78            invalid run input / misconfiguration
 #
-# Credential boundaries (#74): repository + model credentials arrive ONLY at
-# runtime — as env from a Secret, or as files mounted under /run/secrets.
-# They are never baked into the image, never written to /out or the repo, and
-# are scrubbed on every exit path: graceful shutdown (SIGTERM/SIGINT) keeps
-# the result artifacts but deletes the decoded credentials.
+# Credentials arrive only at runtime (Secret env or mounted files), never touch
+# /out or the repo, and are scrubbed on every exit path.
 set -eu
 
 TASK_DIR="${TASK_DIR:-/task}"
 OUT_DIR="${OUT_DIR:-/out}"
 WORK_DIR="${WORK_DIR:-/work}"
-# Contract assets: image layout puts them under /usr/local/share/worker, the
-# checkout layout puts them next to this script (used by the fixture tests).
+# Contract assets live under /usr/local/share/worker in the image and next to
+# this script in a checkout (fixture tests).
 _ENTRYPOINT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -z "${SCHEMA:-}" ]; then
   if [ -f /usr/local/share/worker/brief.schema.json ]; then
@@ -42,8 +39,7 @@ AGENT_PID=""
 SHUTDOWN=0
 
 # --- signal handling: graceful shutdown -------------------------------------
-# SIGTERM/SIGINT (kubectl delete / activeDeadline / preemption): stop the
-# agent, capture whatever patch exists, write a report, scrub credentials.
+# Stop the agent; interrupted_exit then captures the patch and report.
 on_signal() {
   SHUTDOWN=1
   if [ -n "${AGENT_PID}" ]; then
@@ -63,7 +59,6 @@ import json, os, re, sys
 tests, summary, base_sha, run_id, profile = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 doc = {"success": tests in ("passed", "no-command-configured"),
        "summary": summary, "tests": tests or None}
-# Model attribution (#241): which model produced this run.
 wm = os.environ.get("WORKER_MODEL")
 if wm:
     doc["model"] = wm
@@ -73,15 +68,13 @@ if run_id:
     doc["run_id"] = run_id
 if profile:
     doc["profile"] = profile
-# Run metadata (#81): which private-skills commit this run was built with.
+# Which private-skills commit this run was built with.
 try:
     doc["skills_sync"] = json.load(open("/out/skills-sync.json"))
 except Exception:
     doc["skills_sync"] = None
-# Knowledge context attribution (#86): which supplied citations the agent says
-# influenced the change. The agent marks them with a final `context-used:`
-# line in its output; ids are validated against the supplied set so the report
-# cannot claim context that was never injected.
+# Citations the agent says it used (final `context-used:` line), filtered to
+# the supplied set so the report cannot claim context never injected.
 doc["knowledge"] = {"status": None, "supplied": 0, "used": None}
 brief_path = os.environ.get("BRIEF", "")
 if brief_path:
@@ -149,8 +142,7 @@ trap scrub_credentials EXIT
 mkdir -p "${OUT_DIR}"
 
 # --- credentials: runtime-only mounts/exports --------------------------------
-# Repository credential: prefer a mounted token file over env (both are
-# runtime-only; the file mount keeps tokens out of Job specs entirely).
+# GITHUB_TOKEN_FILE is used only when GH_TOKEN is unset.
 if [ -z "${GH_TOKEN:-}" ] && [ -n "${GITHUB_TOKEN_FILE:-}" ] && [ -r "${GITHUB_TOKEN_FILE}" ]; then
   GH_TOKEN="$(tr -d '[:space:]' < "${GITHUB_TOKEN_FILE}")"
   export GH_TOKEN
@@ -163,8 +155,6 @@ if [ -z "${OC_AUTH_INPUT}" ] && [ -n "${OPENCODE_AUTH_FILE:-}" ] && [ -r "${OPEN
 fi
 if [ -n "${OC_AUTH_INPUT}" ]; then
   mkdir -p "${HOME}/.local/share/opencode" "${HOME}/.config/opencode"
-  # The value may be raw JSON or base64(JSON) depending on how the secret was
-  # created — validate, and decode once if needed.
   printf '%s' "${OC_AUTH_INPUT}" | python3 -c "
 import json, sys, base64
 v = sys.stdin.read().strip()
@@ -173,14 +163,12 @@ try:
 except json.JSONDecodeError:
     print(base64.b64decode(v).decode())
 " > "${OC_AUTH_FILE}"
-  # npm provider requires the key as env too:
+  # The npm provider also wants the key as env.
   OPENROUTER_API_KEY=$(python3 -c "import json;print(json.load(open('${OC_AUTH_FILE}'))['openrouter']['key'])")
   export OPENROUTER_API_KEY
 
-  # Force openrouter as THE provider — no zen router, no nous fallback.
-  # Model identity is kept in WORKER_MODEL (#241): the run report and the
-  # orchestrator's run-marker comment record it so outcomes are attributable
-  # per model (A/B evals like the union-alpha trial must leave a trail).
+  # Pin openrouter as the only provider. WORKER_MODEL is recorded in the run
+  # report and marker so outcomes are attributable per model.
   WORKER_MODEL="openrouter/stealth/union-alpha"
   export WORKER_MODEL
   cat > "${OC_CONFIG_FILE}" <<OCEOF
@@ -200,17 +188,10 @@ fi
 
 # --- typed run input ----------------------------------------------------------
 BRIEF="${TASK_DIR}/brief.json"
-export BRIEF # write_report reads the knowledge section for attribution (#86)
+export BRIEF # write_report reads its knowledge section
 
-# ---------------------------------------------------------------------------
-# Pinned private skills (#81): apps/shared/skills-lib.sh builds the generated
-# store at $SKILLS_TARGET from the pinned commit (SKILLS_REF, verified) with
-# only the allowlisted skill paths, then links into the coding CLIs' skill
-# dir. Auth is the read-only GH_TOKEN via throwaway GIT_ASKPASS — nothing
-# lands in Git config. Degrade explicitly on failure: loud warning, the run
-# continues WITHOUT private skills, and the status (recorded commit included)
-# lands in /out/skills-sync.json and the final run report.
-# ---------------------------------------------------------------------------
+# Pinned private skills (apps/shared/skills-lib.sh). On failure the run
+# continues without them; the status lands in /out/skills-sync.json.
 . /usr/local/lib/skills-lib.sh
 SKILLS_SYNC_RC=0
 skills_sync || SKILLS_SYNC_RC=$?
@@ -238,7 +219,7 @@ fi
 
 [ -f "${BRIEF}" ] || { echo "[worker] FATAL: no ${BRIEF}" >&2; exit 78; }
 
-# Validate the brief against the schema before doing ANY work (#74 typed input).
+# Validate the brief against the schema before doing any work.
 if ! python3 - "${SCHEMA}" "${BRIEF}" << 'EOF'
 import json, re, sys
 
@@ -313,17 +294,15 @@ PROFILE=$(python3 -c "import json;print(json.load(open('${BRIEF}')).get('profile
 
 echo "[worker] run=${RUN_ID} repo=${REPO} issue=#${ISSUE_NUM}"
 
-# --- clone (worker builds the authenticated URL from GH_TOKEN itself) --------
-# Token never rides in the Job manifest (ADR D6); origin is scrubbed after
-# clone so it doesn't leak into the emitted patch either.
+# --- clone ---------------------------------------------------------------------
+# The authenticated URL is built here so the token never rides in the Job spec
+# (ADR D6); origin is reset after clone.
 GITGUARD="-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30"
 CLONE_URL="${CLONE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git}"
 mkdir -p "${WORK_DIR}"
 cd "${WORK_DIR}"
-# Writable scratch for the agent: the image rootfs is read-only and the coding
-# CLI's sandbox denies writes outside the repo, so agents probing versions or
-# staging downloads into /tmp or $HOME die on permissions. Point temp files at
-# the work dir (writable, ephemeral with the pod) instead.
+# The rootfs is read-only and the CLI sandbox denies writes outside the work
+# dir, so point temp files at a scratch dir there.
 mkdir -p "${WORK_DIR}/scratch" || {
   echo "[worker] FATAL: cannot create scratch dir" >&2
   write_report "not-run" "cannot create scratch dir"
@@ -339,10 +318,8 @@ git ${GITGUARD} clone --depth 20 "${CLONE_URL}" repo || {
   exit 1
 }
 git -C repo remote set-url origin "https://github.com/${REPO}.git"
-# Credential boundary: the clone was the only authenticated operation. Drop
-# the long-lived token BEFORE the agent runs so the coding CLI (and anything
-# it executes) can never read or reuse it — publishing happens in the
-# orchestrator, which holds the writer role.
+# The clone was the only authenticated step: drop the token before the agent
+# runs. Publishing happens in the orchestrator.
 unset GH_TOKEN GITHUB_TOKEN CLONE_URL
 
 # Checkpoint: SIGTERM while cloning → bail out gracefully from here.
@@ -350,9 +327,8 @@ unset GH_TOKEN GITHUB_TOKEN CLONE_URL
 cd repo
 BASE_SHA=$(git rev-parse HEAD)
 
-# --- pinned verification skills (#68) ----------------------------------------
-# Runtime copies into the agent-global skill dirs; they never touch the repo
-# (which would pollute the emitted patch) and are ephemeral with the pod.
+# --- pinned verification skills ---------------------------------------------
+# Copied into agent-global skill dirs, never the repo (would pollute the patch).
 if [ -f "${SKILLS_SRC}/manifest.json" ]; then
   for SKILL_DIR in "${HOME}/.claude/skills" "${HOME}/.config/opencode/skill"; do
     mkdir -p "${SKILL_DIR}"
@@ -368,16 +344,12 @@ else
 fi
 
 # --- let the agent do the work -------------------------------------------
-# The coding CLI is chosen by the profile via $WORKER_CMD (default claude).
-# It receives the task brief on stdin and operates autonomously.
+# The profile picks the coding CLI via $WORKER_CMD; the prompt goes on stdin.
 if [ -n "${WORKER_CMD:-}" ]; then
   python3 - "$BRIEF" << 'EOF' > /tmp/task-prompt.txt
 import json, sys
 b = json.load(open(sys.argv[1]))
-# Knowledge context (#86): rendered as explicitly UNTRUSTED, cited reference
-# data. It is part of the task input, never part of the instruction stack —
-# content retrieved from the knowledge base must not be able to steer the
-# agent away from system rules, this brief, or repository policy.
+# Knowledge context is rendered as untrusted, cited data, never instructions.
 k = b.get("knowledge") or {}
 cites = k.get("citations") or []
 ctx_section = ""
@@ -434,11 +406,8 @@ Rules:
 - When done, print a one-paragraph summary of what changed and why.
 - {ctx_rule}""")
 EOF
-  # Hard ceiling on the agent command: a hung provider/model must not burn
-  # the pod's whole 3600s budget (and a retry on top of it). 45 min leaves
-  # time for clone + verify + artifact emission inside the deadline. The
-  # redirect lives OUTSIDE the pipeline so $? stays the agent's exit code.
-  # Backgrounded so SIGTERM can reach the agent for graceful shutdown.
+  # 45 min ceiling leaves room for clone, verify and artifact emission inside
+  # the 3600s pod deadline. Backgrounded so SIGTERM can reach the agent.
   WORKER_TIMEOUT="${WORKER_TIMEOUT:-2700}"
   echo "[worker] agent budget: ${WORKER_TIMEOUT}s"
   # shellcheck disable=SC2086  # word-splitting is intended: WORKER_CMD is a command line
@@ -469,9 +438,6 @@ fi
 git add -A
 if git diff --cached --quiet; then
   echo "[worker] no changes produced"
-  # Self-diagnosing: the agent's output otherwise vanishes with the pod here
-  # (it is only echoed on the success path below), leaving "no changes" with
-  # no explanation of what the agent actually did or concluded.
   echo "[worker] --- agent output (tail, no-changes path) ---"
   tail -40 /tmp/task-prompt-output.log 2>/dev/null || echo "[worker] (no agent output file)"
   echo "[worker] --- end agent output ---"
@@ -482,9 +448,7 @@ fi
 git diff --cached --binary > "${OUT_DIR}/patch.diff"
 
 # --- verification ----------------------------------------------------------
-# The default verify for repos without a specific command is diff-scoped, not
-# fixed-file: every changed *.sh gets parsed (dash -n is in the base image),
-# so "verify passes" carries signal about the patch, not one arbitrary file.
+# Without a verify command, every changed *.sh is parsed with dash -n.
 TESTS="not-run"
 if [ -n "${VERIFY}" ]; then
   echo "[worker] running verify: ${VERIFY}"
@@ -505,8 +469,6 @@ EOF
   fi
 fi
 
-# Audit trail: the agent's full output goes to pod logs on success too (the
-# panel Runs UI and postmortems want the summary; before this it vanished).
 echo "[worker] --- agent output (tail) ---"
 tail -40 /tmp/task-prompt-output.log 2>/dev/null || true
 echo "[worker] --- end agent output ---"
@@ -516,8 +478,6 @@ write_report "${TESTS}" "${SUMMARY}" "${BASE_SHA}" "${RUN_ID}" "${PROFILE}"
 
 cat "${OUT_DIR}/report.json"
 
-# Emit artifacts to pod logs (publisher extracts via kubectl logs, not kubectl cp
-# which requires a Running container and fails on terminated Job pods).
 emit_artifacts
 
 [ "${TESTS}" != "failed" ]

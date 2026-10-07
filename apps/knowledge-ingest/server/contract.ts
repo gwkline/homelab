@@ -2,7 +2,7 @@ import { z } from "@hono/zod-openapi";
 
 import { JOB_KINDS, JOB_STATES } from "./queue.ts";
 
-// ── shared patterns (kept identical to the panel's pinned knowledge API) ──
+// Patterns must match the panel's pinned knowledge API.
 
 export const NAMESPACE_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 export const SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -11,7 +11,7 @@ export const IDEMPOTENCY_KEY_PATTERN = /^[\w.:-]{8,200}$/u;
 export const CONTENT_HASH_PATTERN = /^[0-9a-f]{64}$/u;
 export const CONTENT_HASH_LENGTH = 64;
 
-// ── error envelope (same shape as apps/knowledge-retrieval) ──
+// Error envelope shared with apps/knowledge-retrieval.
 
 export type ApiErrorCode =
   | "invalid_request"
@@ -43,9 +43,6 @@ export const errorBody = (
   message: string,
   runId: string | null
 ): z.infer<typeof errorSchema> => ({ error: { code, message, runId } });
-
-// ── ingest request (#58: source, namespace, external id, version/content
-// identifier, and the #56 provenance block) ──
 
 const sourceKindSchema = z
   .enum(["github", "file", "url", "web"])

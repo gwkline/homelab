@@ -1,10 +1,7 @@
 #!/bin/bash
-# Offline contract test for the factory stalled-PR sweeper (#242).
-#
-# A stateful `gh` shim (GH_STATE) makes the idempotency claim real: the
-# second sweep reads back exactly what the first sweep wrote, so re-running
-# must NOT re-ping, re-file, or duplicate comments. The shim also FAILS the
-# test if the sweeper ever tries to close/merge/edit a PR (human merge gate).
+# Offline test for the stalled-PR sweeper. The gh shim is stateful, so the
+# second sweep reads back what the first wrote and must not re-ping, re-file,
+# or duplicate comments. The shim fails the test on any PR close/merge/edit.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -16,7 +13,7 @@ FIXD="${FIX}/fixture"
 mkdir -p "${SHIM}" "${STATE}" "${FIXD}"
 trap 'rm -rf "${FIX}"' EXIT
 
-# Fixed "now": 2026-09-17T12:00:00Z (sweep is date-independent via SWEEP_NOW).
+# Fixed "now" via SWEEP_NOW.
 SWEEP_NOW="$(python3 -c 'import datetime;print(int(datetime.datetime.fromisoformat("2026-09-17T12:00:00+00:00").timestamp()))')"
 
 cat > "${SHIM}/gh" << 'SHIMEOF'
@@ -271,7 +268,7 @@ OUT1="$(run_sweep)"
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
 # ── Run 1 assertions ────────────────────────────────────────────────────────
-printf '%s\n' "$OUT1" | grep -q "leaving for medic (#239)" \
+printf '%s\n' "$OUT1" | grep -q "leaving for medic" \
   || fail "fresh red PR #22 was not left for the medic"
 printf '%s\n' "$OUT1" | grep -q "pinged .*#21" || fail "old green PR #21 was not pinged"
 printf '%s\n' "$OUT1" | grep -q "filed fix issue .*#23" || fail "stale red PR #23 did not file a fix issue"

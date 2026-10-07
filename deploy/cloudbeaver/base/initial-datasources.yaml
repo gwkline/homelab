@@ -1,15 +1,5 @@
-# Default connection, seeded into the workspace on first boot by the image's
-# run-cloudbeaver-server.sh (only when the workspace has no data-sources.json
-# yet). Deliberately credential-free: the operator enters the least-privilege
-# role's credentials once, sourced from Secret cloudbeaver-db / the password
-# manager; CloudBeaver then stores them encrypted in the workspace. See
-# README.md for the full credential chain.
-#
-# The host is the CNPG read/write Service convention (<cluster>-rw.<ns>).
-# Update it when the PostgreSQL cluster lands (#52). Note the seed only runs
-# on first boot: to re-seed after changing this ConfigMap, delete the
-# workspace's GlobalConfiguration/.dbeaver/data-sources.json and restart the
-# pod, or edit the connection in the admin UI.
+# Credential-free connection seeded only into an empty workspace. To re-seed,
+# delete GlobalConfiguration/.dbeaver/data-sources.json and restart.
 apiVersion: v1
 kind: ConfigMap
 metadata:

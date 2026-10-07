@@ -1,21 +1,7 @@
-// GitHub REST client for the issue collector (#78).
-//
-// Bounded, polite, and observable:
-// - **Pagination** — list calls follow `Link: rel="next"` up to `maxPages`
-//   and de-duplicate issues by number (an issue updated between page fetches
-//   can appear on two pages; the newest copy wins).
-// - **Conditional requests** — callers pass the ETag of the previous list
-//   response; a `304 Not Modified` short-circuits the tick without spending
-//   rate limit on unchanged state.
-// - **Rate limits** — 429 and primary rate-limit 403s honor `Retry-After` /
-//   `x-ratelimit-reset` (capped), then retry; secondary rate limits are
-//   treated the same way.
-// - **Transient failures** — network errors and 5xx retry with capped
-//   exponential backoff; exhausted retries surface as a thrown
-//   `GitHubApiError` so the tick fails visibly (never silently).
-//
-// Error messages carry fixed strings + status codes only — never tokens,
-// URLs with query strings, or response bodies (same redaction stance as #70).
+// GitHub REST client for the collector: paginated, ETag-aware, and retrying
+// rate limits (honoring Retry-After / x-ratelimit-reset) and 5xx with capped
+// exponential backoff. Exhausted retries throw GitHubApiError so the tick
+// fails visibly.
 import { promisify } from "node:util";
 
 import { GitHubApiError } from "./github-errors.ts";
@@ -68,8 +54,7 @@ interface RawIssue {
   updated_at?: unknown;
 }
 
-// GitHub label objects arrive as either "name" strings (GraphQL-ish) or
-// {name} objects (REST) depending on endpoint/version — accept both.
+// Labels arrive as plain strings or {name} objects depending on endpoint.
 const labelName = (label: unknown): string | null => {
   if (typeof label === "string") {
     return label;
@@ -121,7 +106,6 @@ export const nextPageUrl = (linkHeader: string | null): string | null => {
   return null;
 };
 
-// Transient (retryable) vs permanent failures, decided from status + headers.
 const classifyFailure = (response: Response): GitHubApiError => {
   const remaining = response.headers.get("x-ratelimit-remaining");
   const retryAfter = response.headers.get("retry-after");
@@ -176,10 +160,7 @@ export class GitHubClient {
     return `${this.apiBase}${path}${search.length > 0 ? `?${search}` : ""}`;
   }
 
-  // One HTTP request with retry/backoff. GET requests may carry an ETag and
-  // return null on 304 Not Modified. Exactly one wait happens per retry
-  // transition (in the failure branches below); every retry is logged so
-  // operators can see throttling in the job logs.
+  // One request with retry/backoff; returns null on 304 Not Modified.
   private async request(
     method: "GET" | "POST" | "PATCH",
     url: string,
@@ -238,16 +219,12 @@ export class GitHubClient {
       }
 
       lastError = classifyFailure(response);
-      // Client errors (401/403 forbidden/404/422…) are not transient:
-      // surface them immediately.
       if (lastError.kind === "http") {
         throw lastError;
       }
       if (attempt >= this.maxRetries) {
         throw lastError;
       }
-      // Honor the server's own pacing hints (Retry-After, rate-limit reset)
-      // when present; fall back to capped exponential backoff.
       const waits: number[] = [this.waitMs(attempt)];
       const retryAfterHeader = response.headers.get("retry-after");
       if (retryAfterHeader !== null && /^\d+$/u.test(retryAfterHeader)) {
@@ -273,16 +250,13 @@ export class GitHubClient {
     }
   }
 
-  // Capped exponential backoff for the n-th retry transition.
   private waitMs(transition: number): number {
     return Math.min(this.maxWaitMs, this.backoffMs * 2 ** transition);
   }
 
   /**
-   * Lists open issues for a repo (pull requests excluded server-side via
-   * the caller's filtering — the issues endpoint returns PRs too, and each
-   * ref carries isPullRequest). Follows pagination, dedupes by number, and
-   * supports conditional GETs via `etag`.
+   * Lists open issues for a repo, following pagination and deduping by
+   * number. The endpoint also returns PRs; callers filter on isPullRequest.
    */
   async listOpenIssues(
     repo: string,

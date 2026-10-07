@@ -1,9 +1,4 @@
-# VictoriaMetrics — the metrics backend (issue #44, observability ADR D7/D8).
-#
-# Single-node VM, one replica, one PVC — the entire metrics state of the
-# cluster. The PVC size below IS the hard disk ceiling; -retentionPeriod
-# (30d, D3) keeps actual usage a few GB underneath it. Scraping is built in
-# (-promscrape.config): no vmagent, no operators, no CRDs — plain kustomize.
+# Single node with built-in scraping (no vmagent). The PVC size is the hard ceiling.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -12,11 +7,7 @@ metadata:
   labels:
     app: victoriametrics
 data:
-  # 30s base scrape (ADR D3). Node-level kubelet and cAdvisor metrics are
-  # reached THROUGH THE API SERVER PROXY (kubernetes_sd role: node), so the
-  # pod never talks to node IPs directly — only the kube-apiserver, using
-  # its read-only service account (rbac.yaml). Self-scrape and
-  # kube-state-metrics are plain static targets.
+  # Node metrics go through the API-server proxy, so the pod never dials node IPs.
   promscrape.yml: |
     global:
       scrape_interval: 30s
@@ -78,9 +69,6 @@ metadata:
   labels:
     app: victoriametrics
 spec:
-  # ClusterIP only — Grafana (and port-forwarding operators) are the only
-  # readers; the tailnet never sees this API (ADR D5: no application auth,
-  # default-deny netpol is the boundary).
   type: ClusterIP
   selector:
     app: victoriametrics
@@ -106,8 +94,6 @@ spec:
       labels:
         app: victoriametrics
     spec:
-      # kubernetes_sd_configs reads the in-cluster API (node discovery) with
-      # this account — rbac.yaml keeps it read-only.
       serviceAccountName: victoriametrics
       automountServiceAccountToken: true
       securityContext:
@@ -115,8 +101,7 @@ spec:
           type: RuntimeDefault
         fsGroup: 1000
       initContainers:
-        # Same pattern as loki: local-path hands us a root-owned directory,
-        # so fix ownership once before the unprivileged VM user (1000) writes.
+        # Root only to chown the local-path volume for uid 1000.
         - name: volume-init
           image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
           command: ["chown", "-R", "1000:1000", "/var/lib/victoria-metrics"]
@@ -130,9 +115,7 @@ spec:
               mountPath: /var/lib/victoria-metrics
       containers:
         - name: victoriametrics
-          # Tag+digest pinned (repo supply-chain rule: third-party images are
-          # digest-pinned and Renovate-bumped); VM's flag surface moves
-          # between versions — bump deliberately.
+          # Flags change between versions; bump deliberately.
           image: victoriametrics/victoria-metrics:v1.110.0@sha256:77f49c5f05df8d4d19602b0e7cc20c8fbed7cb0a9bb1b36066a50b788036a7c7
           args:
             - -storageDataPath=/var/lib/victoria-metrics
@@ -167,8 +150,6 @@ spec:
             periodSeconds: 30
             failureThreshold: 6
           resources:
-            # ADR D8.1 — the single-machine budget (D1): 250m/512Mi steady,
-            # 1 CPU/2Gi burst.
             requests:
               cpu: 250m
               memory: 512Mi
@@ -196,7 +177,5 @@ spec:
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
-            # ADR D3/D8.1: ~4 GB of actual metrics per 30d at this scale; 15Gi
-            # is the hard ceiling on the node's spare disk (local-path).
-            # Retention is the recovery plan — never backed up (ADR D6).
+            # ~4GB per 30d at this scale. Not backed up.
             storage: 15Gi

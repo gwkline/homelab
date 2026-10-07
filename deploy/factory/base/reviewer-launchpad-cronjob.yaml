@@ -7,10 +7,7 @@ metadata:
     app.kubernetes.io/part-of: homelab
     factory.gwkline.io/component: reviewer
 spec:
-  # Reviewer instance for gwkline/launchpad factory PRs (branch convention
-  # factory/issue-<N>/<profile>). Same policy as homelab: CI-as-gate
-  # auto-merge, factory-authored PRs only, green checks required.
-  # Staggered off the homelab reviewer (35,55) and collector (:05).
+  # gwkline/launchpad instance of factory-reviewer.
   schedule: "15,45 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
@@ -43,8 +40,7 @@ spec:
                   valueFrom:
                     secretKeyRef:
                       { name: github-token, key: token, optional: false }
-                # Write path — same as homelab: CI-as-gate auto-merge
-                # (factory-authored PRs, green checks required).
+                # Auto-merge factory-authored PRs once checks are green.
                 - name: FACTORY_REVIEWER_AUTO_MERGE
                   value: "true"
               resources:
