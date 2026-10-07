@@ -5,8 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  # Weekly full rebuild: t3code floats its agent CLIs on npm dist-tags and
-  # every image picks up base-image security updates.
+  # Weekly full rebuild: picks up Debian package updates from apt. Base
+  # images are digest-pinned and move only through Renovate PRs.
   schedule:
     - cron: "0 10 * * 1"
 
@@ -181,20 +181,14 @@ jobs:
         with:
           context: .
           file: ${{ matrix.image.dir }}/Dockerfile
-          # t3code and factory/worker float their agent CLIs on dist-tags; a
-          # unique CACHEBUST per run keeps the GHA cache from replaying a
-          # stale resolution layer (apps/shared/install-agent-clis.sh).
-          # Other images don't declare the ARG, so it is ignored there.
-          build-args: |
-            CACHEBUST=${{ github.run_id }}
           cache-from: type=gha,scope=${{ matrix.image.name }}
 
       # Every advertised coding CLI answers, non-root holds, pinned skills
-      # match their sha. Same CACHEBUST, so this rebuild is a cache hit.
+      # match their sha. The rebuild is a cache hit.
       - name: Smoke test factory/worker image
         if: matrix.image.name == 'factory/worker'
         run: |
-          docker buildx build --load --build-arg CACHEBUST=${{ github.run_id }} -t factory-worker-smoke -f apps/factory/worker/Dockerfile .
+          docker buildx build --load -t factory-worker-smoke -f apps/factory/worker/Dockerfile .
           docker run --rm --entrypoint /usr/local/bin/smoke-test factory-worker-smoke
 
   # Main only. The image is pushed by digest, smoke-tested and signed before
@@ -248,15 +242,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           sbom: generator=${{ env.SBOM_GENERATOR }}
           provenance: mode=max
-          build-args: |
-            CACHEBUST=${{ github.run_id }}
           cache-from: type=gha,scope=${{ matrix.image.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
 
       - name: Smoke test factory/worker image
         if: matrix.image.name == 'factory/worker'
         run: |
-          docker buildx build --load --build-arg CACHEBUST=${{ github.run_id }} -t factory-worker-smoke -f apps/factory/worker/Dockerfile .
+          docker buildx build --load -t factory-worker-smoke -f apps/factory/worker/Dockerfile .
           docker run --rm --entrypoint /usr/local/bin/smoke-test factory-worker-smoke
 
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
