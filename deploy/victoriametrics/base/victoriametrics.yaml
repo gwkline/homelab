@@ -47,6 +47,11 @@ data:
         static_configs:
           - targets: ["kube-state-metrics.agents.svc:8080"]
 
+      # ESO's controller: ExternalSecret Ready conditions for alerting.
+      - job_name: external-secrets
+        static_configs:
+          - targets: ["external-secrets-metrics.external-secrets.svc:8080"]
+
       - job_name: victoriametrics
         static_configs:
           - targets: ["localhost:8428"]

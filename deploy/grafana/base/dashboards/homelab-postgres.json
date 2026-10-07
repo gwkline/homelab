@@ -106,7 +106,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${DS_METRICS}" },
-      "description": "Fullest postgres PVC (pg_wal + data). Fires homelab-pvc-nearly-full at >90%.",
+      "description": "Fullest postgres PVC (pg_wal + data).",
       "fieldConfig": {
         "defaults": {
           "thresholds": {
