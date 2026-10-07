@@ -47,8 +47,8 @@ CloudBeaver's own admin account is for workspace administration (users, connecti
 
 Only state: PVC `workspace-cloudbeaver-0` (`/opt/cloudbeaver/workspace`) - server config, users, encrypted credentials, saved SQL scripts, and the embedded H2 metadata DB (`workspace/.data/cb.h2v2.dat`). Everything else converges from git (ConfigMaps re-seed only an empty workspace).
 
-- Backup: nightly restic pattern (runbook section 11) - add a `/mnt/cloudbeaver` mount with claimName `workspace-cloudbeaver-0` to `deploy/backup/base/cronjob.yaml` when backups are enabled.
-- Recovery: restore the snapshot into a fresh PVC (runbook section 11 restore command) and re-apply this directory. No workspace = re-seeded defaults: create the admin again (password manager) and re-enter the connection credentials from Secret `cloudbeaver-db`; saved SQL scripts are lost.
+- Backup: none. The PVC is not backed up.
+- Recovery: re-apply this directory. No workspace = re-seeded defaults: create the admin again (password manager) and re-enter the connection credentials from Secret `cloudbeaver-db`; saved SQL scripts are lost.
 - Rotation: update the password in the password manager, re-run `scripts/create-cloudbeaver-secret.sh`, update the role in PostgreSQL (`ALTER ROLE ... PASSWORD`), then update the connection in the UI (admin -> connections). Admin password: use CloudBeaver's user management.
 
 ## Upgrades

@@ -101,7 +101,7 @@ The `factory-medic` CronJob (hourly at :41, lives in the reviewer image) takes f
 - Budget: `FACTORY_MEDIC_MAX_ATTEMPTS` (3) failures per head SHA; a pushed fix moves the head and resets the budget.
 - Budget exhausted → linked issue relabeled `factory/stuck` + a give-up comment; retries stop (the sweeper's stale-red path and the reclaimer's `factory/failed` handling take it from there — see below).
 
-Bounds: one repair per tick, at most one in flight (counted live from `factory/in-progress` labels), 20-min worker deadline (profile `factory-profile-medic`), and the only git write path is `medic_publish_patch`: a fast-forward-only push to the PR's existing `factory/issue-<N>/<profile>` branch — no force, no branch creation, no main, verified by the fixture test.
+Bounds: one repair per tick, at most one in flight (counted live from `factory/in-progress` labels), the `factory-profile-code-pr` worker deadline, and the only git write path is `medic_publish_patch`: a fast-forward-only push to the PR's existing `factory/issue-<N>/<profile>` branch — no force, no branch creation, no main, verified by the fixture test.
 
 ### Stalled-PR sweeper (#242)
 

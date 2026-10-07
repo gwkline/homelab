@@ -25,7 +25,7 @@ A sandbox pod must reach: DNS, GitHub (git/codeload/API), a package registry, an
 
 1. Put the named allowance **beside the workload's manifests** (the workload-owned pattern used across this repo), never in `deploy/policies/base` — one `kubectl apply -k` must bring up everything a workload needs.
 2. Keep it scoped: `podSelector` + `namespaceSelector` + ports. Never widen with `ipBlock: 0.0.0.0/0`.
-3. Verify with `./scripts/egress-smoke.sh`: it runs the full matrix from a sandbox pod and from inside a dind inner container (docker0 traffic is tested, not assumed). Add new required-destination classes to `examples/egress-smoke.mjs` so they stay proven.
+3. Verify with `./scripts/egress-smoke.sh`: it runs the full matrix from a sandbox pod. Add new required-destination classes to `examples/egress-smoke.mjs` so they stay proven.
 
 ## Decision points
 

@@ -15,7 +15,7 @@
 #      run to the PR branch via the medic branch guard) and post the medic
 #      brief (failing checks + logs, PR diff, verify command) on the PR.
 #
-# Bounds: one PR per tick, 20-min medic run budget (profile-medic), max 1
+# Bounds: one PR per tick, max 1
 # concurrent run, only pushes to the PR's existing branch (medic-lib.sh).
 set -eu
 
@@ -25,7 +25,6 @@ MAX_ATTEMPTS="${FACTORY_MEDIC_MAX_ATTEMPTS:-3}"
 MAX_CONCURRENT="${FACTORY_MEDIC_MAX_CONCURRENT:-1}"
 ISSUE_LABEL="factory/in-progress" # a repair is in flight under this label
 STUCK_LABEL="factory/stuck"
-# Small fixes only: the profile pins activeDeadlineSeconds=1200 (20 min).
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 . "${SCRIPT_DIR}/medic-lib.sh"

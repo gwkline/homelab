@@ -1,6 +1,6 @@
 # Factory collector (#78)
 
-Polls selected GitHub repositories for eligible issues and admits them into the factory by adding `factory/queued`. GitHub issues are the primary work generator — not shell commands embedded in CronJob configuration (the demo dispatcher, `examples/dispatch-watcher.mjs` + `deploy/dispatcher/base`, is demoted in favor of this collector).
+Polls selected GitHub repositories for eligible issues and admits them into the factory by adding `factory/queued`. GitHub issues are the primary work generator — not shell commands embedded in CronJob configuration.
 
 - **Ledger**: GitHub labels (ADR-002). The collector is a pure poller: it talks to the GitHub REST API and never touches Kubernetes or issue content.
 - **Credentials**: a short-lived, read-scoped GitHub App installation token minted at runtime by the #70 token service (`apps/factory/github-app/token-service.ts`), with the documented transitional `GH_TOKEN` fallback (see `docs/github-app.md`).
@@ -68,7 +68,7 @@ Polling works without public ingress: the collector only makes outbound HTTPS ca
 ## Tests
 
 ```sh
-sh apps/factory/collector/tests/collector.test.sh   # or: cd apps/factory/collector && npm test
+npm --prefix apps/factory/collector test
 ```
 
 The GitHub API is faked two ways: an in-memory fake **server** behind `fetch` (client tests: pagination, 304s, rate limits, retries, redaction) and a fake **client** (behavior tests: eligibility, duplicate-run guarantees, cursor rules, race narrowing). No network, no real tokens.

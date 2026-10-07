@@ -183,21 +183,7 @@ end_stage
 
 # ---------------------------------------------------------------------------
 stage workloads
-kubectl apply -k deploy/postgres/base   # pg-primary: cnpg CRDs Established in the cnpg stage above
-kubectl apply -k deploy/tailscale
-kubectl apply -k deploy/t3code/base
-kubectl apply -k deploy/hermes/base
-kubectl apply -k deploy/loop-agent/base
-kubectl apply -k deploy/homepage/base
-kubectl apply -k deploy/panel/base
-kubectl apply -k deploy/headlamp/base
-kubectl apply -k deploy/dispatcher/base
-kubectl apply -k deploy/factory/base
-kubectl apply -k deploy/work-t3code/base
-# operational CronJobs last (same order as the root): their first run
-# must not race the bring-up
-kubectl apply -k deploy/chaos/base
-kubectl apply -k deploy/node-cleanup/base
+kubectl apply -k clusters/home
 end_stage
 
 # ---------------------------------------------------------------------------
@@ -206,8 +192,6 @@ kubectl -n agents rollout status statefulset/t3code --timeout="$POD_TIMEOUT"
 kubectl -n agents rollout status statefulset/hermes --timeout="$POD_TIMEOUT"
 kubectl -n agents rollout status deploy/panel --timeout="$POD_TIMEOUT"
 kubectl -n agents rollout status deploy/homepage --timeout="$POD_TIMEOUT"
-kubectl -n sandbox get cronjob dispatch-watcher >/dev/null ||
-  fail "dispatcher cronjob dispatch-watcher missing"
 end_stage
 
 # ---------------------------------------------------------------------------
@@ -257,8 +241,7 @@ cat >&2 <<'EOF'
 
 Record in docs/rebuild-runbook.md "Drill log":
 - the RTO line(s) above plus node-bootstrap wall time if --from was not used
-- PVC decision: restored from B2 (record observed RPO = newest snapshot age,
-  docs/runbook-server-cluster.md section 11) or intentionally recreated
+- PVCs are recreated empty (nothing is backed up)
 - every manual step you had to do that the runbook does not document —
   each one becomes a runbook step or a follow-up issue before the next run
 - the pinned versions used: k3s (bootstrap.sh) and Tailscale operator chart

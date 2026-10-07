@@ -18,11 +18,11 @@ shellcheck bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/*
 
 echo '==> kustomize builds'
 # deploy/*/base: every component base; deploy/namespaces + deploy/tailscale:
-# the two non-`base` kustomizations; clusters/home + its overlays: the root
+# the two non-`base` kustomizations; clusters/home: the root
 # entry point (issue #20) — building it in CI proves the composed normal
 # set renders deterministically with no duplicate resource IDs.
 for d in deploy/*/base deploy/namespaces deploy/tailscale \
-          clusters/home clusters/home/overlays/backup clusters/home/overlays/gvisor; do
+          clusters/home; do
   kubectl kustomize "$d" >/dev/null || fail "kustomize build: $d"
 done
 

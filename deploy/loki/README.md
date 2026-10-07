@@ -59,7 +59,7 @@ Loki is ClusterIP-only and never exposed to the tailnet: Grafana fronts it, and 
 
 ## Backups
 
-Logs are **disposable telemetry and deliberately not backed up**: restic (`deploy/backup/base`) snapshots only the t3code/hermes stateful PVCs, and this stack adds no mount there. Losing the Loki PVC loses only the last 30 days of logs; dashboards and datasource config are in git, so nothing else is at risk. If you ever want log snapshots anyway, add the `data` PVC of `loki-0` to the nightly restic CronJob as another read-only mount — one entry, same pattern as the existing ones.
+Logs are **disposable telemetry and not backed up** (nothing in the cluster is). Losing the Loki PVC loses only the last 30 days of logs; dashboards and datasource config are in git, so nothing else is at risk.
 
 ## Verification
 

@@ -22,7 +22,7 @@
 #      in two passes with waits between (CRDs Established, rollout Ready,
 #      then the smoke ExternalSecret) BEFORE this root applies: every
 #      ExternalSecret composed below (github-tokens, tailscale oauth,
-#      work-t3code, backup) reconciles through it. The hand-entered
+#      work-t3code) reconciles through it. The hand-entered
 #      1Password service-account token (scripts/create-onepassword-service-account.sh
 #      -> agents, sandbox, work, tailscale) is the other pre-root manual
 #      step — secrets are never rendered into Git.
@@ -42,11 +42,8 @@
 #      creates the tailscale namespace and syncs its operator-oauth Secret
 #      from 1Password (deploy/tailscale), which the operator consumes.
 #
-# Intentionally NOT composed here (opt-in or per-component, documented in
-# the deploy/* READMEs and runbook-server-cluster.md):
-#   - backup (overlays/backup) — production backup execution is excluded
-#     until its B2 credentials exist
-#   - gvisor (overlays/gvisor) — replaces the stock loop-agent runtime
+# Intentionally NOT composed here (per-component, documented in the
+# deploy/* READMEs and runbook-server-cluster.md):
 #   - cloudbeaver, executor — applied
 #     per-component when wanted
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -83,14 +80,12 @@ resources:
   #    among themselves
   - ../../../deploy/t3code/base
   - ../../../deploy/hermes/base
-  - ../../../deploy/loop-agent/base
   - ../../../deploy/homepage/base
   - ../../../deploy/panel/base
   - ../../../deploy/headlamp/base
   - ../../../deploy/loki/base
   - ../../../deploy/victoriametrics/base
   - ../../../deploy/grafana/base
-  - ../../../deploy/dispatcher/base
   - ../../../deploy/factory/base
   - ../../../deploy/deployer
   - ../../../deploy/work-t3code/base

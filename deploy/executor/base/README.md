@@ -108,30 +108,9 @@ Most MCP clients only load servers at startup; restart the client or open a new 
 
 Executor records every tool call through the proxy (tool, connection, policy decision, run identity, timing) and exposes runs in the web console — one place to audit who called what and what the policy decided. Pod logs (`kubectl logs -n agents executor-0`) carry the server-side detail. Two caveats stated plainly: upstream does not yet guarantee a caller-identity field per MCP call in self-host logs (single-org auth today), and raw credentials are host-side by design, so they never appear in logs or run history. When adding integrations, verify log redaction on any first-party internal endpoint before pointing real credentials at it.
 
-## Backups and clean recovery (tested)
+## Backups
 
-The nightly restic backup (deploy/backup/base) snapshots the executor PVC alongside t3code and hermes. Recovery procedure — run this drill before trusting it:
-
-```sh
-# 1. snapshot now instead of waiting for 03:30:
-kubectl -n backup create job --from=cronjob/restic-backup restic-manual
-kubectl -n backup logs job/restic-manual -f          # "==> backup complete"
-
-# 2. destroy state:
-kubectl -n agents delete statefulset executor
-kubectl -n agents delete pvc executor-data-executor-0
-kubectl -n agents apply -k deploy/executor/base      # fresh empty /data
-
-# 3. restore into the fresh PVC (same credentials, any machine):
-restic restore latest --target /restore --include /mnt/executor
-kubectl -n agents delete pod executor-0              # reschedule onto restored data
-#    (or stop the StatefulSet, copy files back, start it again)
-
-# 4. verify: integration/connection list and policies intact, admin login
-#    works, the petstore read tool still answers from both MCP clients.
-```
-
-Losing the restic password loses the backups; the stored-credential encryption key lives inside `/data` itself, so a restored snapshot is self-contained.
+The executor PVC is not backed up (nothing in the cluster is). Losing it means re-creating integrations, connections, and policies; the stored-credential encryption key lives inside `/data` itself.
 
 ## Known limitations of the spike
 

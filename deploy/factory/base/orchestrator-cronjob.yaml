@@ -38,9 +38,9 @@ spec:
                 - name: FACTORY_REPO
                   value: gwkline/homelab # self-iteration target per operator
                 # The in-cluster kubernetes Service VIP is unreachable from
-                # isolated sandbox pods on the current node (same as the
-                # reconciler): point kubectl at the API server's node endpoint
-                # explicitly — allow-factory-orchestrator (below) permits it.
+                # isolated sandbox pods on the current node: point kubectl at
+                # the API server's node endpoint explicitly —
+                # allow-factory-orchestrator (below) permits it.
                 - name: KUBERNETES_SERVICE_HOST
                   value: 192.168.1.2
                 - name: KUBERNETES_SERVICE_PORT

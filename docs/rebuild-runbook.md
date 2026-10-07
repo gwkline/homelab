@@ -1,6 +1,6 @@
 # Rebuild Runbook — timed fast-recovery drill
 
-**Goal:** from a clean Ubuntu 24.04 machine (or a representative VM running the same scripts and manifests), rebuild the whole platform from Git plus documented external credentials/backups, and measure how long it actually takes.
+**Goal:** from a clean Ubuntu 24.04 machine (or a representative VM running the same scripts and manifests), rebuild the whole platform from Git plus documented external credentials, and measure how long it actually takes.
 
 **Current target: fast recovery on one physical machine — not HA.** The cluster is a single k3s server with node-bound local-path PVCs. Nothing here promises uptime through a host failure; the optimized metric is how quickly one operator can bring everything back. High availability is explicitly out of scope until fast recovery is boring (roadmap #94).
 
@@ -23,9 +23,8 @@ Everything the drill starts from must be in this list. If you reach for anything
 | 1Password service-account token (`OP_SERVICE_ACCOUNT_TOKEN`) | 1Password `homelab` vault — least-privilege SA token (issue #41); entered via env/stdin only |
 | GitHub tokens | 1Password items `github-readonly` / `github-writer`; synced by the root entry point `kubectl apply -k clusters/home` (issue #45; standalone: `deploy/github-tokens/base/README.md`) |
 | Tailscale OAuth (`TS_CLIENT_ID` / `TS_CLIENT_SECRET`) | macOS Keychain `homelab-tailscale`; tag `tag:k8s-operator` must exist on the OAuth client ([deploy/tailscale/README.md](../deploy/tailscale/README.md)) |
-| B2 restore credentials (`restic-backup` item) | 1Password `Homelab` vault: `RESTIC_REPOSITORY`, `B2_ACCOUNT_ID`, `B2_ACCOUNT_KEY`, `RESTIC_PASSWORD` ([runbook-server-cluster](runbook-server-cluster.md) §11) |
 
-No hidden state is copied from the existing cluster. The only crossers are the documented channels above plus the B2 restic repository.
+No hidden state is copied from the existing cluster. The only crossers are the documented channels above. Nothing is backed up: PVC state is recreated (section 4, step 2).
 
 ## 2. Pinned versions used by the drill
 
@@ -119,8 +118,7 @@ kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
 #     (namespace, SecretStore, operator-oauth ExternalSecret,
 #     serve-fixers), postgres (pg-primary — its cnpg CRDs were
 #     Established in 2b), and every normal workload: t3code, hermes,
-#     loop-agent, homepage, panel, headlamp, dispatcher, factory,
-#     work-t3code, then the operational CronJobs (chaos, node-cleanup)
+#     homepage, panel, headlamp, factory, deployer, work-t3code, then the operational CronJobs (chaos, node-cleanup)
 #     last so their first run cannot race the bring-up. Full inventory +
 #     dependency contract: clusters/home/README.md
 kubectl apply -k clusters/home
@@ -161,9 +159,7 @@ curl -s -o /dev/null -w "%{http_code}\n" "https://t3code-0.${TAILNET_NAME:-<tail
 
 Render the whole normal set without applying anything: `kubectl kustomize clusters/home` — the inventory (158 resources across 5 namespaces) is deterministic and contains no duplicate resource IDs (CI re-checks this in `scripts/verify.sh`).
 
-**Opt-in overlays** are intentionally excluded from the root and applied separately when wanted: `kubectl apply -k clusters/home/overlays/backup` (nightly B2 restic backup — only after the B2 credentials from section 1 exist in 1Password, since production backup execution before credentials exist is exactly what the root must not compose) and `kubectl apply -k clusters/home/overlays/gvisor` (loop-agent CronJob under gVisor instead of the stock runtime; requires runsc in the nodes' containerd config).
-
-Fetch the kubeconfig to the driver (server runbook §4), confirm `kubectl get nodes` is Ready, and export the four credentials from section 1.
+Fetch the kubeconfig to the driver (server runbook §4), confirm `kubectl get nodes` is Ready, and export the three credentials from section 1.
 
 ### Step 1 — cluster bring-up (timed, one command)
 
@@ -171,22 +167,16 @@ Fetch the kubeconfig to the driver (server runbook §4), confirm `kubectl get no
 ./scripts/recovery-drill.sh --from "$DRILL_START"
 ```
 
-The script runs and times every stage — operator (pinned chart + PROXY_TAGS workaround), namespaces/policies, image policy (policy-controller + ClusterImagePolicy, before workloads), external secrets (pinned ESO from `deploy/eso/base` + fake-provider smoke, before any ExternalSecret applies), cnpg (pinned CloudNativePG operator from `deploy/cnpg/base`, the explicit prerequisite for the `database` workloads — issue #49), secrets (1Password SA token + github-tokens sync), workloads (postgres, tailscale, t3code, hermes, loop-agent, homepage, panel, headlamp, dispatcher, factory, work-t3code, then chaos + node-cleanup last — the same set and dependency order the root Kustomization composes), pods-ready, HTTPS (serve-https + serve-refresh + curl checks for t3code-0 and panel), and the `scripts/rebuild-check.sh` smoke sweep — then prints per-stage times and the total RTO. A failed stage fails the drill; the fix must land as a runbook step or follow-up issue before the next attempt (known warnings it emits are listed in section 6).
+The script runs and times every stage — operator (pinned chart + PROXY_TAGS workaround), namespaces/policies, image policy (policy-controller + ClusterImagePolicy, before workloads), external secrets (pinned ESO from `deploy/eso/base` + fake-provider smoke, before any ExternalSecret applies), cnpg (pinned CloudNativePG operator from `deploy/cnpg/base`, the explicit prerequisite for the `database` workloads — issue #49), secrets (1Password SA token + github-tokens sync), workloads (postgres, tailscale, t3code, hermes, homepage, panel, headlamp, factory, deployer, work-t3code, then chaos + node-cleanup last — the same set and dependency order the root Kustomization composes), pods-ready, HTTPS (serve-https + serve-refresh + curl checks for t3code-0 and panel), and the `scripts/rebuild-check.sh` smoke sweep — then prints per-stage times and the total RTO. A failed stage fails the drill; the fix must land as a runbook step or follow-up issue before the next attempt (known warnings it emits are listed in section 6).
 
-### Step 2 — PVC state: restore from B2 or intentionally recreate
+### Step 2 — PVC state: recreate
 
-Decide per workload and record the choice in the drill log:
-
-- **Restore from B2** (path of record): run the scratch-restore job from [runbook-server-cluster](runbook-server-cluster.md) §11 to prove the repository restores, note the **observed RPO** = age of the newest snapshot at restore time, then copy the restored trees back into the fresh t3code/hermes PVCs before agents start writing. Git repos inside agent homes re-clone anyway; what must survive is unpushed agent state and hermes memory.
-- **Intentionally recreate**: t3code state (repos re-clone, pairing re-runs) and hermes gateway config re-entered by hand. Record it as a decision, not an accident — and as an RPO of "everything since last snapshot, discarded".
-
-Either way the drill result states which workloads' state was restored, recreated, or deliberately dropped, plus the observed RPO.
+Nothing is backed up, so every PVC starts empty: t3code state (repos re-clone, pairing re-runs) and hermes gateway config re-entered by hand. Record in the drill log which workloads' state was recreated or deliberately dropped.
 
 ### Step 3 — workload-level checks (manual by design)
 
 - t3code: pairing URL from `kubectl logs t3code-0 -n agents | head` → pair from desktop/phone (inherently interactive).
 - hermes: `kubectl exec -it hermes-0 -n agents -- hermes setup --portal` once on a fresh PVC, then `kubectl rollout restart statefulset hermes -n agents`; message it on its channels and get a sane reply.
-- dispatcher: `kubectl -n sandbox get cronjob dispatch-watcher` exists and is scheduled (legacy, demoted by #78 — superseded by the factory collector; end-to-end issue→Job proof is issue #30, not this drill).
 - panel/homepage: open both over HTTPS; links resolve.
 
 ### Step 4 — record
@@ -195,7 +185,7 @@ Fill one row in the drill log (section 5), convert every manual surprise (sectio
 
 ## 5. Drill log (actual RTO / RPO)
 
-RTO = wall-clock from the clean machine's first command (`DRILL_START`) to all section-4 checks green. Observed RPO = age of the newest B2 snapshot used for restore (or "n/a — recreated").
+RTO = wall-clock from the clean machine's first command (`DRILL_START`) to all section-4 checks green. Observed RPO is "n/a — recreated" (nothing is backed up).
 
 | Run | Date | Machine | RTO (total) | RTO (cluster phase) | Observed RPO | PVC decision | Follow-ups filed |
 | --- | --- | --- | --- | --- | --- | --- | --- |

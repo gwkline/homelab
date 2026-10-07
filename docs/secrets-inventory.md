@@ -8,7 +8,7 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 
 - One dedicated 1Password vault: **`homelab`**. No other vault is in scope for this cluster.
 - The ESO service account is limited to that vault only. Its token is the only hand-entered secret (see [bootstrap-only](#bootstrap-only-secrets)).
-- Namespace-scoped `SecretStore` `onepassword` (provider `onepasswordSDK`, vault `homelab`, auth from Secret `onepassword-service-account` key `token`) exists in `agents`, `sandbox`, and `work` (`deploy/github-tokens/base/secretstore.yaml`) and in `tailscale` (`deploy/tailscale/secretstore.yaml`). **Gap:** `backup` needs the same store but none is committed (`deploy/backup/base/externalsecret.yaml` documents it as a prerequisite).
+- Namespace-scoped `SecretStore` `onepassword` (provider `onepasswordSDK`, vault `homelab`, auth from Secret `onepassword-service-account` key `token`) exists in `agents`, `sandbox`, and `work` (`deploy/github-tokens/base/secretstore.yaml`) and in `tailscale` (`deploy/tailscale/secretstore.yaml`).
 - Naming convention: 1Password item/field names equal the ExternalSecret `remoteRef.key` / `remoteRef.property` values verbatim, and field labels equal the `secretKey` (which equals the consuming env var where `envFrom` is used). One name per value everywhere.
 
 ## Sharing classes
@@ -30,7 +30,7 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 | 1Password ref | item `github-readonly`, field `token` |
 | Delivery | ExternalSecret `deploy/github-tokens/base/github-token.yaml`, `refreshInterval: 1h`, `creationPolicy: Owner`; template trims whitespace |
 | Required permissions | Fine-grained PAT, **Contents: read-only** on every private repo listed in the workload ConfigMaps (homelab, launchpad, …) |
-| Consumers | hermes StatefulSet (`agents`, env + `/secrets/token` file), t3code StatefulSet (`agents`, optional file), panel Deployment (`agents`, file; `apps/panel/server/index.ts`), factory orchestrator/security/reviewer/reconciler CronJobs (`sandbox`, env), factory collector CronJob (`sandbox`, **transitional fallback only** — primary access is the `github-app` App installation token, see #70/#78), worker Jobs spawned by the orchestrator (`apps/factory/orchestrator/run.sh` → `apps/factory/worker/entrypoint.sh`), loop-agent CronJob (`sandbox`, optional file → `apps/shared/workspace-lib.sh`), dispatch-watcher CronJob (`sandbox`, legacy, demoted by #78), chaos-monkey CronJob (`sandbox`, optional file), panel-spawned Jobs (`apps/panel/server/jobs.ts`), helper scripts `scripts/new-job.sh`, `scripts/egress-smoke.sh` |
+| Consumers | hermes StatefulSet (`agents`, env + `/secrets/token` file), t3code StatefulSet (`agents`, optional file), panel Deployment (`agents`, file; `apps/panel/server/index.ts`), factory orchestrator/security/reviewer CronJobs (`sandbox`, env), factory collector CronJob (`sandbox`, **transitional fallback only** — primary access is the `github-app` App installation token, see #70/#78), worker Jobs spawned by the orchestrator (`apps/factory/orchestrator/run.sh` → `apps/factory/worker/entrypoint.sh`), chaos-monkey CronJob (`sandbox`, optional file), panel-spawned Jobs (`apps/panel/server/jobs.ts`), helper scripts `scripts/new-job.sh`, `scripts/egress-smoke.sh` |
 | Rotation owner | Operator updates the `token` field in 1Password; ESO converges ≤1h. Env-reader workloads need a rollout restart (file readers pick it up automatically). See `deploy/github-tokens/base/README.md` |
 | Status | **Transitional** — long-lived fine-grained PAT; superseded by a GitHub App installation token (issue #70) |
 
@@ -43,7 +43,7 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 | 1Password ref | item `github-writer`, field `token` |
 | Delivery | ExternalSecret `deploy/github-tokens/base/github-token-writer.yaml`, `refreshInterval: 1h`, `creationPolicy: Owner`. **Optional by design:** absent item ⇒ ExternalSecret stays `Ready=False`; every consumer mounts it `optional: true` |
 | Required permissions | Fine-grained PAT, **Contents + Pull requests: write** on the target repos only — never a superset of the read token's access |
-| Consumers | loop-agent CronJob (`GITHUB_WRITER_TOKEN_FILE` → `apps/shared/workspace-lib.sh` `setup_gh_cli`), panel-spawned Jobs (`apps/panel/server/jobs.ts`), `examples/dispatch-watcher.mjs`, factory publisher contract (`apps/factory/publisher/run-publisher.sh` reads `GH_TOKEN`/`GH_TOKEN_FILE`) |
+| Consumers | panel-spawned Jobs (`apps/panel/server/jobs.ts`; `GITHUB_WRITER_TOKEN_FILE` → `apps/shared/workspace-lib.sh` `setup_gh_cli`) |
 | Rotation owner | Operator updates the `token` field in 1Password (same propagation as A1) |
 | Status | **Transitional** — long-lived fine-grained PAT; superseded by a GitHub App installation token with write scopes (issue #70) |
 
@@ -95,24 +95,11 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 | Namespace | `sandbox` |
 | Secret name / key | `factory-opencode-auth` / `auth-b64` (base64 of opencode `auth.json`) |
 | 1Password ref | **Proposed** item `factory-opencode-auth`, field `auth-b64` — create it to close the gap below |
-| Delivery | **Gap: no creation path in git** — no ExternalSecret, no script, no documented command. Documented as pre-existing in `docs/factory-handoff-2026-08-27.md`; a cluster rebuild silently loses it. Migrate to ESO with a `sandbox` ExternalSecret using `remoteRef: {key: factory-opencode-auth, property: auth-b64}` |
+| Delivery | **Gap: no creation path in git** — no ExternalSecret, no script, no documented command. A cluster rebuild silently loses it. Migrate to ESO with a `sandbox` ExternalSecret using `remoteRef: {key: factory-opencode-auth, property: auth-b64}` |
 | Required permissions | Model-provider API keys inside opencode `auth.json`: OpenRouter (+ zen). Least privilege: OpenRouter key restricted to the models the factory uses |
 | Consumers | factory-orchestrator CronJob (`deploy/factory/base/orchestrator-cronjob.yaml`, env `OPENCODE_AUTH_B64`), re-injected into worker Jobs (`apps/factory/orchestrator/run.sh`), decoded by `apps/factory/worker/entrypoint.sh` to `auth.json` / `OPENROUTER_API_KEY` |
 | Rotation owner | Operator (update the vault item field; today: create a new Secret manually and restart the CronJob) |
 | Status | Per-workload (factory family only) |
-
-### B2. `backup-target` — Backblaze B2 + restic
-
-| Attribute | Value |
-| --- | --- |
-| Namespace | `backup` |
-| Secret name / keys | `backup-target` / `RESTIC_REPOSITORY`, `B2_ACCOUNT_ID`, `B2_ACCOUNT_KEY`, `RESTIC_PASSWORD` |
-| 1Password ref | item `restic-backup`, four fields named exactly like the secret keys |
-| Delivery | ExternalSecret `deploy/backup/base/externalsecret.yaml`, `refreshInterval: 1h`, `creationPolicy: Owner`, `deletionPolicy: Retain`. Emergency fallback: `scripts/create-backup-secret.sh` (prompts, never echoes) |
-| Required permissions | B2 application key pair scoped to the backup bucket (list/read/write/delete on that bucket only); `RESTIC_PASSWORD` is the repo encryption password |
-| Consumers | restic-backup CronJob (`deploy/backup/base/cronjob.yaml`, `envFrom`), one-off scratch-restore Job (`docs/runbook-server-cluster.md` §11) |
-| Rotation owner | Operator. **`RESTIC_PASSWORD` is special:** rotating it in the vault alone makes all existing snapshots unreadable — re-key the repo per runbook §11 before syncing |
-| Status | Per-workload (backup stack only) |
 
 ### B3. t3code opencode credentials (interactive, PVC-persisted)
 
@@ -135,7 +122,7 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 | Delivery | ExternalSecret `deploy/github-tokens/base/work-github-token.yaml`, `refreshInterval: 1h`, `creationPolicy: Owner`; template trims whitespace. Store (`onepassword`) in `work` requires the hand-created `onepassword-service-account` Secret (C1) in `work` |
 | Required permissions | Fine-grained PAT — **Repository access: only the operator's selected work repositories** (never "All repositories", never a personal repo), with Contents: read+write and Pull requests: read+write. Deliberately a single read+write token (operator decision 2026-10-04): the repo scoping IS the isolation boundary. The `repos` field must stay in sync with the PAT's repository list |
 | Consumers | work-t3code StatefulSet (`work`: `/secrets/token` file mount → git clone/push + gh via the entrypoint bridge; `WORKSPACE_REPOS` env from key `repos`, deliberately non-optional so the runner fails closed without the credential) |
-| Isolation guarantees | The personal items (`github-readonly`, `github-writer`) have no ExternalSecret in `work`, so they never materialize there; conversely this token cannot read any personal repo. `work` namespace egress is public-internet-only (deploy/policies/base), and work PVCs are excluded from deploy/backup/base — work code/credentials never reach personal backups |
+| Isolation guarantees | The personal items (`github-readonly`, `github-writer`) have no ExternalSecret in `work`, so they never materialize there; conversely this token cannot read any personal repo. `work` namespace egress is public-internet-only (deploy/policies/base) |
 | Rotation owner | Operator updates the item fields in 1Password; file-mount reader picks the token up automatically (≤1h 6m). Long-running pod keeps the old value in its exported `GH_TOKEN` — `kubectl -n work rollout restart statefulset work-t3code` after rotating |
 | Status | Per-workload (work runner only) |
 
@@ -188,7 +175,7 @@ Established: 2026-09-02 (issue #39). Cross-checked against every `secretKeyRef`,
 | 1Password ref | item `knowledge-api-token`, field `token` |
 | Delivery | ExternalSecret `deploy/knowledge/base/externalsecret.yaml`, `refreshInterval: 1h`, `creationPolicy: Owner` |
 | Required permissions | None (any high-entropy random string; `openssl rand -base64 32`) — it is the shared internal bearer the two knowledge services verify and the retrieval service uses to authenticate its ingest passthrough |
-| Consumers | knowledge-ingest Deployment (token file `/secrets/token`), knowledge-retrieval Deployment (token file `/secrets/token` + passthrough auth), panel Deployment (**optional** file `/secrets-knowledge/token` → `KNOWLEDGE_API_TOKEN_FILE`; without it the panel boots and the knowledge endpoints degrade). Local consumers: `apps/knowledge-mcp` (env `KNOWLEDGE_API_TOKEN`) |
+| Consumers | knowledge-ingest Deployment (token file `/secrets/token`), knowledge-retrieval Deployment (token file `/secrets/token` + passthrough auth), panel Deployment (**optional** file `/secrets-knowledge/token` → `KNOWLEDGE_API_TOKEN_FILE`; without it the panel boots and the knowledge endpoints degrade) |
 | Rotation owner | Operator updates the 1Password item, then `kubectl -n agents rollout restart deploy/knowledge-ingest deploy/knowledge-retrieval deploy/panel` |
 | Status | Per-workload (knowledge services + panel proxy) |
 
@@ -216,7 +203,7 @@ Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret w
 | Credential | Why out of scope |
 | --- | --- |
 | CI `secrets.GITHUB_TOKEN` (`.github/workflows/ci.yaml`, `cleanup-ghcr.yaml`) | Ephemeral, Actions-provided per workflow run; not cluster runtime |
-| Automounted ServiceAccount tokens (hermes, panel, dispatcher, chaos-monkey, deployer, factory-orchestrator) | Issued and rotated by Kubernetes; RBAC-scoped identity, not a stored secret |
+| Automounted ServiceAccount tokens (hermes, panel, chaos-monkey, deployer, factory-orchestrator) | Issued and rotated by Kubernetes; RBAC-scoped identity, not a stored secret |
 | `PANEL_K8S_TOKEN` (`apps/panel/server/k8s.ts`) | Dev/test override only; production uses the mounted SA token |
 | Known credentials scrubbed at runtime (`apps/hermes/run-hermes.sh` dotfile scrub) | Hygiene measure, not a secret |
 
@@ -230,9 +217,9 @@ Entered once at cluster bring-up; **never** synced by ESO (the ESO auth secret w
 
 Every runtime secret reference in the repo maps to an entry above:
 
-- `secretKeyRef` / `envFrom.secretRef`: hermes (A1), t3code (A1, optional), work-t3code (B4 repos env; B5 claude env; A1-equivalent token via optional file), panel (A1, optional file), factory orchestrator (A1 + B1), factory security/reviewer/reconciler (A1), factory collector (A5 primary + A1 transitional fallback), loop-agent (A1 + A2, optional), dispatch-watcher (A1 + A2 via examples/jobs.ts patterns, legacy), chaos-monkey (A1, optional), backup restic CronJob (B2), orchestrator-generated worker Jobs (A1, B1), knowledge-ingest + knowledge-retrieval (B7 db, B8 token file).
-- Secret volumes: hermes, t3code, panel, loop-agent, dispatcher, chaos-monkey, panel Jobs — all `github-token`/`github-token-writer` (A1/A2); work-t3code — `work-github-token` (B4); factory collector — `github-app` (A5, read-only); knowledge-ingest + knowledge-retrieval — `knowledge-api-token` (B8); panel — `knowledge-api-token` optional (B8).
-- `kubectl create secret`: `onepassword-service-account` (C1), `backup-target` emergency script (B2), `ghcr-pull` (A3/C4), `github-app` (A5).
+- `secretKeyRef` / `envFrom.secretRef`: hermes (A1), t3code (A1, optional), work-t3code (B4 repos env; B5 claude env; A1-equivalent token via optional file), panel (A1, optional file), factory orchestrator (A1 + B1), factory security/reviewer (A1), factory collector (A5 primary + A1 transitional fallback), chaos-monkey (A1, optional), orchestrator-generated worker Jobs (A1, B1), knowledge-ingest + knowledge-retrieval (B7 db, B8 token file).
+- Secret volumes: hermes, t3code, panel, chaos-monkey, panel Jobs — all `github-token`/`github-token-writer` (A1/A2); work-t3code — `work-github-token` (B4); factory collector — `github-app` (A5, read-only); knowledge-ingest + knowledge-retrieval — `knowledge-api-token` (B8); panel — `knowledge-api-token` optional (B8).
+- `kubectl create secret`: `onepassword-service-account` (C1), `ghcr-pull` (A3/C4), `github-app` (A5).
 - Non-Secret credential flows: Tailscale OAuth (C2), K3s token (C3), t3code `auth.json` (B3).
 
 To re-verify after changes:

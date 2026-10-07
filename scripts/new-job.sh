@@ -5,12 +5,12 @@
 #   ./new-job.sh [--print] <name> '<command>'
 #
 # Examples:
-#   ./new-job.sh smoke-test 'node /data/repos/homelab/examples/loop-hello.mjs'
+#   ./new-job.sh smoke-test 'echo hello'
 #   ./new-job.sh pr-check 'git -C /data/repos/launchpad log --oneline -5'
 #
 # --print writes the manifest to stdout instead of applying.
 #
-# No dind sidecar: ad-hoc jobs get Chromium and node but not nested Docker.
+# Ad-hoc jobs get Chromium and node; there is no Docker.
 # Follow logs with:
 #   kubectl logs job/<name> -n sandbox -f
 set -euo pipefail
