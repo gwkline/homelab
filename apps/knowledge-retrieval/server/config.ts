@@ -10,7 +10,13 @@ export interface RetrievalConfig {
   defaultTopK: number;
   defaultNamespace: string;
   defaultMode: RetrievalMode;
+  /**
+   * Request deadline, also the pool's `statement_timeout`, so the database
+   * cancels the queries of a request that already answered 504.
+   */
   requestTimeoutMs: number;
+  /** Postgres pool size. */
+  poolMax: number;
   rrfK: number;
   channelWindowFactor: number;
   logQueries: boolean;
@@ -34,6 +40,7 @@ export const CONFIG_DEFAULTS = {
   logQueries: false,
   maxQueryLength: 2000,
   maxTopK: 50,
+  poolMax: 10,
   port: 3000,
   requestTimeoutMs: 5000,
   rrfK: 60,
@@ -154,6 +161,7 @@ export const configFromEnv = (
       env.KNOWLEDGE_LOG_QUERIES === "1" || env.KNOWLEDGE_LOG_QUERIES === "true",
     maxQueryLength,
     maxTopK,
+    poolMax: positiveInt(env, "KNOWLEDGE_PG_POOL_MAX", CONFIG_DEFAULTS.poolMax),
     port,
     requestTimeoutMs: positiveInt(
       env,
@@ -182,6 +190,7 @@ export const baseConfig = (
   logQueries: CONFIG_DEFAULTS.logQueries,
   maxQueryLength: CONFIG_DEFAULTS.maxQueryLength,
   maxTopK: CONFIG_DEFAULTS.maxTopK,
+  poolMax: CONFIG_DEFAULTS.poolMax,
   port: CONFIG_DEFAULTS.port,
   requestTimeoutMs: CONFIG_DEFAULTS.requestTimeoutMs,
   rrfK: CONFIG_DEFAULTS.rrfK,

@@ -32,3 +32,5 @@ curl -sS -H "authorization: Bearer $TOKEN" \
 ## Notes
 
 No embedding model is configured yet. Ingest stores placeholder vectors tagged `fake/384`, and retrieval serves every search as BM25 (the response's `mode` says `bm25`). To turn on vector and hybrid search, set `KNOWLEDGE_EMBEDDING_PROVIDER=openai` and `KNOWLEDGE_EMBEDDING_BASE_URL` on both services, then re-embed. Until the re-embed, `knowledge_embedding_model_mismatch_chunks` on retrieval's `/metrics` counts the vectors the channel ignores.
+
+Both services go NotReady (`/readyz`) while Postgres is unreachable and reconnect on their own. Pool size and statement timeouts are set by `KNOWLEDGE_INGEST_PG_POOL_MAX`, `KNOWLEDGE_INGEST_STATEMENT_TIMEOUT_MS`, `KNOWLEDGE_PG_POOL_MAX`, and `KNOWLEDGE_TIMEOUT_MS` (retrieval's request deadline doubles as its statement timeout). Finished ingest jobs drop their document text, and after `KNOWLEDGE_INGEST_JOB_RETENTION_DAYS` (14) they are deleted, except each source's latest sync and failure.
