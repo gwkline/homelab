@@ -23,6 +23,12 @@ Ingress is default-deny in `agents`, `sandbox`, `work`, `database`, the operator
 | CNPG instances | DNS, Kubernetes API, peers on 5432 | `allow-instance-egress` in `deploy/postgres/base/netpol.yaml`, `pg-primary-kube-api` in `deploy/policies/base/kube-api-egress.yaml` |
 | Factory loops and workers | kube-dns, then TCP 443 to the public internet minus private ranges, one policy per `factory.gwkline.io/profile` label. The orchestrator adds the API server node endpoint and knowledge retrieval | `allow-factory-*` beside each component in `deploy/factory/base/` |
 
+## Enforcement and the start-up window
+
+k3s's embedded kube-router installs a pod's firewall chain after the CNI has wired the pod. So a new pod's first ~0.5 s of traffic is not filtered: a probe in `sandbox` connected everywhere at t=0 and was blocked from t=0.5 s on (#324). After that every policy holds. A malicious image could open one connection at PID 1 start, before its policy applies. Factory workers clone and only then start the agent, seconds later, so prompt injection can't reach the window.
+
+`egress-canary` (`deploy/policies/base/egress-canary.yaml`) checks enforcement every 30 minutes in `sandbox` and `work`. Its pod is selected only by `default-deny-egress`, since the public-only policies exclude `app.kubernetes.io/name=egress-canary`. After 5 s it tries `1.1.1.1:80`, the API VIP `10.43.0.1:443` and the LAN gateway `192.168.1.1:80`, and the Job fails if any of them connects. A failed `egress-canary-*` Job means egress policy is not enforced in that namespace.
+
 ## Required destinations
 
 A sandbox pod must reach DNS, GitHub (git, codeload, API), a package registry, and a model API. `./scripts/egress-smoke.sh` runs `examples/egress-smoke.mjs` in a real sandbox pod and proves those open and every private target closed.
