@@ -8,8 +8,15 @@ export interface IngestConfig {
   databaseUrl: string | null;
   /** Apply pending schema migrations at startup; the only place DDL runs. */
   applySchemaOnBoot: boolean;
+  pool: PoolConfig;
   workerEnabled: boolean;
   worker: WorkerConfig;
+}
+
+export interface PoolConfig {
+  max: number;
+  /** The server cancels any statement running longer than this. */
+  statementTimeoutMs: number;
 }
 
 export interface WorkerConfig {
@@ -20,18 +27,25 @@ export interface WorkerConfig {
   maxAttempts: number;
   retryBaseMs: number;
   retryMaxMs: number;
+  /** Finished jobs older than this are deleted. */
+  jobRetentionDays: number;
+  pruneIntervalMs: number;
 }
 
 export const CONFIG_DEFAULTS = {
   applySchemaOnBoot: true,
   claimBatchSize: 10,
   heartbeatIntervalMs: 15_000,
+  jobRetentionDays: 14,
   leaseSeconds: 60,
   maxAttempts: 5,
   pollIntervalMs: 1000,
+  poolMax: 5,
   port: 3100,
+  pruneIntervalMs: 3_600_000,
   retryBaseMs: 1000,
   retryMaxMs: 60_000,
+  statementTimeoutMs: 30_000,
   workerEnabled: true,
 } as const;
 
@@ -114,6 +128,11 @@ export const configFromEnv = (
       "KNOWLEDGE_INGEST_HEARTBEAT_MS",
       CONFIG_DEFAULTS.heartbeatIntervalMs
     ),
+    jobRetentionDays: positiveInt(
+      env,
+      "KNOWLEDGE_INGEST_JOB_RETENTION_DAYS",
+      CONFIG_DEFAULTS.jobRetentionDays
+    ),
     leaseSeconds: positiveInt(
       env,
       "KNOWLEDGE_INGEST_LEASE_SECONDS",
@@ -125,6 +144,7 @@ export const configFromEnv = (
       "KNOWLEDGE_INGEST_POLL_MS",
       CONFIG_DEFAULTS.pollIntervalMs
     ),
+    pruneIntervalMs: CONFIG_DEFAULTS.pruneIntervalMs,
     retryBaseMs,
     retryMaxMs,
   };
@@ -133,6 +153,18 @@ export const configFromEnv = (
       env.KNOWLEDGE_INGEST_APPLY_SCHEMA !== "0" &&
       env.KNOWLEDGE_INGEST_APPLY_SCHEMA !== "false",
     databaseUrl: env.KNOWLEDGE_INGEST_DATABASE_URL?.trim() || null,
+    pool: {
+      max: positiveInt(
+        env,
+        "KNOWLEDGE_INGEST_PG_POOL_MAX",
+        CONFIG_DEFAULTS.poolMax
+      ),
+      statementTimeoutMs: positiveInt(
+        env,
+        "KNOWLEDGE_INGEST_STATEMENT_TIMEOUT_MS",
+        CONFIG_DEFAULTS.statementTimeoutMs
+      ),
+    },
     port: positiveInt(env, "PORT", CONFIG_DEFAULTS.port),
     token,
     worker,
@@ -149,14 +181,20 @@ export const baseConfig = (
 ): IngestConfig => ({
   applySchemaOnBoot: CONFIG_DEFAULTS.applySchemaOnBoot,
   databaseUrl: null,
+  pool: {
+    max: CONFIG_DEFAULTS.poolMax,
+    statementTimeoutMs: CONFIG_DEFAULTS.statementTimeoutMs,
+  },
   port: CONFIG_DEFAULTS.port,
   token,
   worker: {
     claimBatchSize: CONFIG_DEFAULTS.claimBatchSize,
     heartbeatIntervalMs: CONFIG_DEFAULTS.heartbeatIntervalMs,
+    jobRetentionDays: CONFIG_DEFAULTS.jobRetentionDays,
     leaseSeconds: CONFIG_DEFAULTS.leaseSeconds,
     maxAttempts: CONFIG_DEFAULTS.maxAttempts,
     pollIntervalMs: CONFIG_DEFAULTS.pollIntervalMs,
+    pruneIntervalMs: CONFIG_DEFAULTS.pruneIntervalMs,
     retryBaseMs: CONFIG_DEFAULTS.retryBaseMs,
     retryMaxMs: CONFIG_DEFAULTS.retryMaxMs,
   },

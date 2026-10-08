@@ -10,3 +10,7 @@ labels:
 resources:
   - priorityclasses.yaml
   - networkpolicy.yaml
+  - kube-api-egress.yaml
+
+components:
+  - ../../../clusters/home/node

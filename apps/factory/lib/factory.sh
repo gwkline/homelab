@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 # Factory shell library, sourced by every factory shell component
 # (orchestrator, reclaimer, reviewer, sweeper, medic) so each rule has one
 # definition: the gh wrapper and its retries, check classification, the

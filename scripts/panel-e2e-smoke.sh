@@ -1,23 +1,23 @@
 #!/bin/sh
 # Panel e2e against a real Kubernetes API (docs/panel-e2e.md). Runs the panel
-# as its production ServiceAccount and RBAC in a disposable kind cluster (or
-# the current context), then drives /api/state, /api/cronjobs and /api/jobs
-# through a port-forward.
+# as its production ServiceAccount and RBAC in the kind cluster panel-e2e
+# (created if missing), then drives /api/state, /api/cluster, /api/cronjobs
+# and /api/jobs through a port-forward.
+#
+# kubectl only ever sees a private kubeconfig exported from kind, and nothing
+# runs until its context is kind-panel-e2e: the caller's current context is
+# never read or changed.
 #
 # Usage:
 #   ./scripts/panel-e2e-smoke.sh
-#   PANEL_E2E_KEEP=1  ./scripts/panel-e2e-smoke.sh   # keep fixtures + cluster
-#   PANEL_E2E_REUSE=1 ./scripts/panel-e2e-smoke.sh   # use current kubectl context
+#   PANEL_E2E_KEEP=1 ./scripts/panel-e2e-smoke.sh   # keep fixtures + cluster
 set -eu
 
 NS_SANDBOX=sandbox
 NS_AGENTS=agents
 PANEL_POD=panel-e2e
-# Not panel-auth: a reused cluster may hold the real one.
 AUTH_SECRET=panel-e2e-auth
 SEED_JOB=panel-e2e-seed
-# E2e-only fixture names: they must never collide with production objects in
-# a reused cluster (the cleanup below deletes the seed fixtures).
 SEED_CRONJOB=panel-e2e-seed-cronjob
 PF_PORT="${PANEL_E2E_PORT:-3933}"
 PANEL_IMG="${PANEL_E2E_PANEL_IMAGE:-panel-e2e:local}"
@@ -30,27 +30,39 @@ AS_PANEL="system:serviceaccount:${NS_AGENTS}:panel"
 cd "$(dirname "$0")/.."
 
 KIND_CLUSTER=panel-e2e
+KIND_CONTEXT="kind-${KIND_CLUSTER}"
 KIND_CREATED=""
+# Set once kubectl is proven to point at the kind cluster. Cleanup and
+# diagnostics run no kubectl before that.
+ON_KIND=""
 PF_PID=""
+# Empty until kind writes it, so a stray kubectl call fails rather than
+# reaching whatever cluster the caller's kubeconfig points at.
+KUBE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/panel-e2e-kube.XXXXXX")"
+KUBECONFIG="${KUBE_DIR}/config"
+export KUBECONFIG
 
 fail() {
   echo "FAIL: $1" >&2
   exit 1
 }
 
-# can <verb> <resource> <expected yes|no> [namespace] — one impersonated RBAC
-# probe against the production grants in deploy/panel/base/rbac.yaml.
+# can <verb> <resource> <expected yes|no> [namespace, or * for all] — one
+# impersonated RBAC probe as the panel's ServiceAccount.
 can() {
   can_ns="${4:-$NS_SANDBOX}"
-  can_got="$(kubectl auth can-i "$1" "$2" -n "$can_ns" --as="$AS_PANEL" 2>&1 || true)"
+  if [ "$can_ns" = "*" ]; then
+    can_got="$(kubectl auth can-i "$1" "$2" --all-namespaces --as="$AS_PANEL" 2>&1 || true)"
+  else
+    can_got="$(kubectl auth can-i "$1" "$2" -n "$can_ns" --as="$AS_PANEL" 2>&1 || true)"
+  fi
   printf '  can-i %-8s %-13s (%s) -> %s (expect %s)\n' "$1" "$2" "$can_ns" "$can_got" "$3"
   [ "$can_got" = "$3" ] || CAN_FAIL=1
 }
 
-# Parity with deploy/panel/base/rbac.yaml: everything the production Role
-# grants must be granted here, and the deliberate denials (no CronJob
-# create/delete, no Job watch, no pod/log reads, no secrets anywhere)
-# must stay denied.
+# What the routes need from deploy/panel/base/rbac.yaml and
+# cluster-reader.yaml is granted, and the deliberate denials (no CronJob
+# create, no Job watch, no single-object node reads, no secrets) hold.
 rbac_checks() {
   CAN_FAIL=0
   can create jobs yes
@@ -65,6 +77,9 @@ rbac_checks() {
   can get services yes "$NS_AGENTS"
   can get ingresses.networking.k8s.io/panel yes "$NS_AGENTS"
   can list ingresses.networking.k8s.io no "$NS_AGENTS"
+  can list nodes yes "*"
+  can list pods yes "*"
+  can get nodes no "*"
   [ "$CAN_FAIL" -eq 0 ]
 }
 
@@ -86,146 +101,67 @@ cleanup() {
   if [ -n "$PF_PID" ]; then
     kill "$PF_PID" 2>/dev/null || true
   fi
-  if [ "$rc" -ne 0 ]; then
+  if [ -n "$ON_KIND" ] && [ "$rc" -ne 0 ]; then
     dump_diagnostics
   fi
   if [ "${PANEL_E2E_KEEP:-0}" = "1" ]; then
-    echo "==> PANEL_E2E_KEEP=1 — kept fixtures in ${NS_SANDBOX} and the cluster"
-  else
-    # Delete only what this run created: the panel pod and its credentials
-    # (the kind cluster teardown below removes them wholesale, but
-    # PANEL_E2E_REUSE=1 against a real cluster must not leave them behind)
-    # and the seeded fixtures — nothing cluster-wide.
+    echo "==> PANEL_E2E_KEEP=1 — kept fixtures and kind cluster ${KIND_CLUSTER}"
+    echo "    KUBECONFIG=${KUBECONFIG} kubectl get pods -A"
+    return
+  fi
+  if [ -n "$ON_KIND" ]; then
+    # In a cluster this run found running, delete only what it created.
     kubectl delete pod "$PANEL_POD" -n "$NS_AGENTS" --ignore-not-found >/dev/null 2>&1 || true
     kubectl delete secret "$AUTH_SECRET" -n "$NS_AGENTS" --ignore-not-found >/dev/null 2>&1 || true
     kubectl delete job "$SEED_JOB" -n "$NS_SANDBOX" --ignore-not-found >/dev/null 2>&1 || true
     kubectl delete cronjob "$SEED_CRONJOB" -n "$NS_SANDBOX" --ignore-not-found >/dev/null 2>&1 || true
   fi
   if [ -n "$KIND_CREATED" ]; then
-    echo "==> deleting disposable kind cluster ${KIND_CLUSTER}"
+    echo "==> deleting kind cluster ${KIND_CLUSTER}"
     kind delete cluster --name "$KIND_CLUSTER" >/dev/null 2>&1 || true
-    if [ -n "${KUBECONFIG:-}" ]; then
-      rm -f "$KUBECONFIG"
-    fi
   fi
+  rm -rf "$KUBE_DIR"
 }
 trap cleanup EXIT INT TERM
 
 echo "==> [1/7] preconditions"
-command -v kubectl >/dev/null 2>&1 || fail "kubectl not found"
-command -v node >/dev/null 2>&1 || fail "node not found (drives the e2e suite)"
-command -v curl >/dev/null 2>&1 || fail "curl not found"
+for tool in docker kind kubectl node curl; do
+  command -v "$tool" >/dev/null 2>&1 || fail "$tool not found"
+done
 [ -f "$RUNNER_DOCKERFILE" ] || fail "$RUNNER_DOCKERFILE missing"
 
-if [ "${PANEL_E2E_REUSE:-0}" = "1" ]; then
-  kubectl get namespace kube-system >/dev/null 2>&1 ||
-    fail "PANEL_E2E_REUSE=1 but kubectl cannot reach a cluster"
-  echo "  reusing current kubectl context"
-else
-  command -v docker >/dev/null 2>&1 || fail "docker not found (or set PANEL_E2E_REUSE=1)"
-  command -v kind >/dev/null 2>&1 || fail "kind not found (or set PANEL_E2E_REUSE=1)"
-fi
-
 echo "==> [2/7] building images (panel backend + fixture runner)"
-if [ "${PANEL_E2E_REUSE:-0}" != "1" ]; then
-  docker build -f apps/panel/Dockerfile -t "$PANEL_IMG" . ||
-    fail "panel image build failed"
-  docker build -f "$RUNNER_DOCKERFILE" -t "$RUNNER_IMG" "$RUNNER_DIR" ||
-    fail "runner image build failed"
-else
-  echo "  PANEL_E2E_REUSE=1: skipping builds, expecting pullable images"
-  echo "  panel=$PANEL_IMG runner=$RUNNER_IMG"
-fi
+docker build -f apps/panel/Dockerfile -t "$PANEL_IMG" . ||
+  fail "panel image build failed"
+docker build -f "$RUNNER_DOCKERFILE" -t "$RUNNER_IMG" "$RUNNER_DIR" ||
+  fail "runner image build failed"
 
-echo "==> [3/7] disposable cluster (kind/${KIND_CLUSTER})"
-if [ "${PANEL_E2E_REUSE:-0}" != "1" ]; then
-  if kind get clusters 2>/dev/null | grep -qx "$KIND_CLUSTER"; then
-    echo "  reusing existing kind cluster ${KIND_CLUSTER}"
-  else
-    export KUBECONFIG="${TMPDIR:-/tmp}/panel-e2e-kubeconfig"
-    kind delete cluster --name "$KIND_CLUSTER" >/dev/null 2>&1 || true
-    kind create cluster --name "$KIND_CLUSTER" --wait 180s >/dev/null 2>&1 ||
-      fail "kind create cluster failed"
-    KIND_CREATED=1
-  fi
-  kind load docker-image "$PANEL_IMG" "$RUNNER_IMG" --name "$KIND_CLUSTER" ||
-    fail "kind load docker-image failed"
+echo "==> [3/7] kind cluster ${KIND_CLUSTER}"
+if kind get clusters 2>/dev/null | grep -qx "$KIND_CLUSTER"; then
+  echo "  reusing existing kind cluster ${KIND_CLUSTER}"
 else
-  echo "  PANEL_E2E_REUSE=1: images must already be pullable in the cluster"
+  kind create cluster --name "$KIND_CLUSTER" --wait 180s >/dev/null 2>&1 ||
+    fail "kind create cluster failed"
+  KIND_CREATED=1
 fi
+kind export kubeconfig --name "$KIND_CLUSTER" --kubeconfig "$KUBECONFIG" >/dev/null 2>&1 ||
+  fail "kind export kubeconfig failed"
+context="$(kubectl config current-context 2>/dev/null || true)"
+[ "$context" = "$KIND_CONTEXT" ] ||
+  fail "kubectl context is '${context}', not ${KIND_CONTEXT}; refusing to run"
+ON_KIND=1
+echo "  ok: kubectl pinned to ${KIND_CONTEXT} (${KUBECONFIG})"
+kind load docker-image "$PANEL_IMG" "$RUNNER_IMG" --name "$KIND_CLUSTER" ||
+  fail "kind load docker-image failed"
 
-echo "==> [4/7] namespaces, production-shaped RBAC, seeded sandbox fixtures"
+echo "==> [4/7] namespaces, the panel's RBAC from deploy/panel/base, seeded sandbox fixtures"
 kubectl create namespace "$NS_AGENTS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl create namespace "$NS_SANDBOX" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-# Exact mirror of deploy/panel/base/rbac.yaml: the panel
-# ServiceAccount, the sandbox panel-sandbox-runs Role (create/list/delete
-# Jobs, get/list/patch CronJobs), and the agents panel-agents-viewer Role
-# (get Services, get the panel Ingress).
-kubectl apply -f - >/dev/null <<EOF
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: panel
-  namespace: ${NS_AGENTS}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: panel-sandbox-runs
-  namespace: ${NS_SANDBOX}
-rules:
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["create", "list", "delete"]
-  - apiGroups: ["batch"]
-    resources: ["cronjobs"]
-    verbs: ["get", "list", "patch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: panel-sandbox-runs
-  namespace: ${NS_SANDBOX}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: panel-sandbox-runs
-subjects:
-  - kind: ServiceAccount
-    name: panel
-    namespace: ${NS_AGENTS}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: panel-agents-viewer
-  namespace: ${NS_AGENTS}
-rules:
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses"]
-    resourceNames: ["panel"]
-    verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: panel-agents-viewer
-  namespace: ${NS_AGENTS}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: panel-agents-viewer
-subjects:
-  - kind: ServiceAccount
-    name: panel
-    namespace: ${NS_AGENTS}
-EOF
+# The shipped manifests, so the probes below test what production runs.
+kubectl apply -f deploy/panel/base/rbac.yaml -f deploy/panel/base/cluster-reader.yaml >/dev/null
 
 if rbac_checks; then
-  echo "  ok: panel RBAC matches deploy/panel/base/rbac.yaml (secrets denied)"
+  echo "  ok: panel RBAC from deploy/panel/base grants what the routes need (secrets denied)"
 else
   fail "panel RBAC probes failed (see output above)"
 fi
@@ -373,5 +309,6 @@ kubectl get jobs,cronjobs -n "$NS_SANDBOX" -o wide
 echo "PASS: panel proven end to end through the real Kubernetes API"
 echo "  - panel pod ran as ServiceAccount panel with the mounted cluster CA (in-cluster loadConfig path)"
 echo "  - GET /api/state returned seeded Job ${SEED_JOB} + CronJob ${SEED_CRONJOB}; RBAC probes matched deploy/panel/base"
+echo "  - GET /api/cluster listed nodes and pods cluster-wide"
 echo "  - PATCH /api/cronjobs and DELETE /api/jobs changed the live objects with a bearer token, and refused without one"
 echo "  - POST /api/jobs is gone: 404, nothing created"

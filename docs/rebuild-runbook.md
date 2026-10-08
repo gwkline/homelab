@@ -42,6 +42,8 @@ git clone https://github.com/gwkline/homelab.git && cd homelab
 
 Fetch the kubeconfig to the driver ([runbook-server-cluster.md](runbook-server-cluster.md) step 4) and confirm `kubectl get nodes` is Ready. Join agent nodes now or later.
 
+The server must come back on the address in `clusters/home/node/node.yaml` (its DHCP reservation). Otherwise update that file before the core set, or the API allowances in the NetworkPolicies point at the old address: `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes` shows the live one. `scripts/rebuild-check.sh` (3.8) compares them.
+
 ### 3.2 External Secrets Operator
 
 Server-side apply (two CRDs exceed the client-side annotation limit):
@@ -49,7 +51,7 @@ Server-side apply (two CRDs exceed the client-side annotation limit):
 ```sh
 kubectl apply --server-side -k deploy/eso/base
 kubectl wait --for=condition=Established \
-  crd/externalsecrets.external-secrets.io crd/secretstores.external-secrets.io
+  crd/externalsecrets.external-secrets.io crd/clustersecretstores.external-secrets.io
 kubectl -n external-secrets rollout status deploy/external-secrets-webhook
 kubectl -n external-secrets rollout status deploy/external-secrets
 ```
@@ -58,10 +60,10 @@ kubectl -n external-secrets rollout status deploy/external-secrets
 
 ```sh
 kubectl apply -k deploy/namespaces
-./scripts/create-onepassword-service-account.sh   # agents, sandbox, work, tailscale
+./scripts/create-onepassword-service-account.sh   # external-secrets only; the ClusterSecretStore reads it
 ```
 
-Postgres owner-role Secrets in `database` (generate fresh passwords, then set the `knowledge-db` 1Password item's password to match): see [deploy/postgres/README.md](../deploy/postgres/README.md#prerequisites).
+That is the only hand-entered secret. Everything else, including the Postgres owner-role passwords (items `knowledge-db`, `factory-db`), syncs from 1Password with the core set ([secrets-inventory.md](secrets-inventory.md)).
 
 ### 3.4 Image admission
 
@@ -99,7 +101,14 @@ helm repo add tailscale https://pkgs.tailscale.com/helmcharts
 helm upgrade --install tailscale-operator tailscale/tailscale-operator \
   --version 1.102.3 -n tailscale --create-namespace \
   -f deploy/tailscale/values.yaml
-kubectl get ingress -A   # t3code-0, work-t3code-0, panel get <host>.<tailnet>.ts.net
+kubectl apply -f deploy/tailscale/proxyclass.yaml   # default ProxyClass; proxies wait for it
+kubectl get ingress -A   # every UI gets <host>.<tailnet>.ts.net
+```
+
+Every operator namespace now exists, so apply their default-deny ingress policies (webhook ports stay open to the API server):
+
+```sh
+kubectl apply -k deploy/operator-policies/base
 ```
 
 ### 3.8 Verify
@@ -115,21 +124,21 @@ Apply as needed; each README lists its prerequisites:
 ```sh
 kubectl apply -k deploy/victoriametrics/base
 kubectl apply -k deploy/loki/base
-kubectl apply -k deploy/grafana/base      # needs Secret grafana-admin
+kubectl apply -k deploy/grafana/base      # needs 1Password grafana-admin, grafana-ntfy
 kubectl apply -k deploy/executor/base     # optional Secret executor-admin
 kubectl apply -k deploy/knowledge/base    # needs 1Password knowledge-db / knowledge-api-token
 ```
 
 Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart && scripts/pg-smoke.sh verify`.
 
-### 3.10 Hand-created secrets and recreated state
+### 3.10 Recreated state
 
 | Item | Action |
 | --- | --- |
-| `factory-opencode-auth`, `github-app`, `executor-client` | create per [secrets-inventory.md](secrets-inventory.md#created-by-hand) |
 | t3code | pairing URL from `kubectl logs t3code-0 -n agents \| head`; pair from desktop/phone; repos re-clone |
 | hermes | `kubectl exec -it hermes-0 -n agents -- hermes setup --portal`, then `kubectl rollout restart statefulset hermes -n agents`; message it and get a reply |
 | CLI logins (Claude, Codex) | log in again inside hermes/t3code (PVC homes start empty) |
+| homepage tailnet links | `kubectl -n agents create configmap homepage-env --from-literal=tailnet-name=<tailnet>.ts.net` ([deploy/tailscale/README.md](../deploy/tailscale/README.md#tailnet-dns-suffix)) |
 | panel, homepage | open both over HTTPS; links resolve |
 
 ## 4. Timed drill
@@ -138,7 +147,7 @@ Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart &&
 ./scripts/recovery-drill.sh --from "$DRILL_START"   # prompts for the 1Password token unless OP_SERVICE_ACCOUNT_TOKEN is set
 ```
 
-Runs and times: ESO → namespaces + 1Password token → image policy → CNPG → core set → Tailscale operator → pods ready → tailnet HTTPS → `rebuild-check.sh`, then prints per-stage times and total RTO. Any failed stage fails the drill. The postgres owner Secrets (3.3) must already exist or postgres will not come up.
+Runs and times: ESO → namespaces + 1Password token → image policy → CNPG → core set → Tailscale operator → pods ready → tailnet HTTPS → `rebuild-check.sh`, then prints per-stage times and total RTO. Any failed stage fails the drill.
 
 ## 5. Drill log
 
@@ -152,4 +161,4 @@ No completed runs yet. After two clean runs, set **target RTO = median × 1.5, r
 
 ## 6. Manual interventions
 
-Every undocumented step during a drill becomes a step in this runbook or a tracked issue before the next run. Known manual steps: hermes portal setup and t3code pairing (3.10), Postgres owner Secrets (3.3), and `factory-opencode-auth` (no ExternalSecret yet).
+Every undocumented step during a drill becomes a step in this runbook or a tracked issue before the next run. Known manual steps: the 1Password token (3.3), and hermes portal setup and t3code pairing (3.10).

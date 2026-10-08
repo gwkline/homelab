@@ -71,7 +71,7 @@ end_stage() {
 stage eso
 kubectl apply --server-side -k deploy/eso/base
 kubectl wait --for=condition=Established \
-  crd/externalsecrets.external-secrets.io crd/secretstores.external-secrets.io \
+  crd/externalsecrets.external-secrets.io crd/clustersecretstores.external-secrets.io \
   --timeout=180s
 kubectl -n external-secrets rollout status deploy/external-secrets-webhook --timeout="$POD_TIMEOUT"
 kubectl -n external-secrets rollout status deploy/external-secrets --timeout="$POD_TIMEOUT"
@@ -81,8 +81,6 @@ end_stage
 stage secrets
 kubectl apply -k deploy/namespaces
 ./scripts/create-onepassword-service-account.sh
-kubectl -n database get secret pg-primary-knowledge-owner >/dev/null 2>&1 ||
-  echo "WARN: postgres owner Secrets missing (deploy/postgres/README.md) — pg-primary will not bootstrap" >&2
 end_stage
 
 # ---------------------------------------------------------------------------
@@ -120,6 +118,8 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
   --version "$TS_CHART_VERSION" \
   -f deploy/tailscale/values.yaml
 kubectl -n tailscale rollout status deploy/operator --timeout="$PROXY_TIMEOUT"
+# values.yaml makes this the default; no proxy starts until it exists.
+kubectl apply -f deploy/tailscale/proxyclass.yaml
 end_stage
 
 # ---------------------------------------------------------------------------

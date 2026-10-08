@@ -1,0 +1,40 @@
+name: ghcr-retention
+
+# Prunes old image versions from GHCR (scripts/ghcr-retention.sh). Scheduled
+# runs only list what they would delete until the repository variable
+# GHCR_RETENTION_DELETE is "true"; a manual run deletes when asked to.
+on:
+  schedule:
+    - cron: "0 12 * * 1"
+  workflow_dispatch:
+    inputs:
+      delete:
+        description: Delete the versions the plan lists
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: ghcr-retention
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Prune
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DELETE: ${{ (github.event_name == 'workflow_dispatch' && inputs.delete) || (github.event_name == 'schedule' && vars.GHCR_RETENTION_DELETE == 'true') }}
+        run: |
+          if [ "${DELETE}" = true ]; then
+            ./scripts/ghcr-retention.sh --delete
+          else
+            ./scripts/ghcr-retention.sh
+          fi

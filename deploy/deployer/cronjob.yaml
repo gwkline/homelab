@@ -12,7 +12,8 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      activeDeadlineSeconds: 240
+      # Inside the 5-minute schedule, with room for the 150s rollout wait.
+      activeDeadlineSeconds: 280
       backoffLimit: 0
       ttlSecondsAfterFinished: 3600
       template:

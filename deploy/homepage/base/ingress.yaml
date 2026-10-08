@@ -1,0 +1,17 @@
+# https://homepage.<tailnet>.ts.net (TLS terminated by the Tailscale Ingress).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: homepage
+  namespace: agents
+  annotations:
+    tailscale.com/tags: tag:k8s-operator
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: homepage
+      port:
+        number: 80
+  tls:
+    - hosts: [homepage]

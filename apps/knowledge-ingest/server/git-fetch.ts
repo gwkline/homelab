@@ -61,14 +61,18 @@ export const readGitHubBlob = async (
   const repositoryUrl = normalizeUrl(request);
   const repository = await openGitRepository({ repositoryUrl });
   const commitSha = await repository.resolveCommit(request.ref);
-  const tree = await repository.listBlobs(commitSha);
-  const entry = tree.find((candidate) => candidate.path === request.path);
-  if (entry === undefined) {
+  const entry = await repository.findBlob(commitSha, request.path);
+  if (entry === null) {
     throw new Error(
       `git-fetch: path ${JSON.stringify(request.path)} not found at ${request.ref}`
     );
   }
   const maxBlobBytes = request.maxBlobBytes ?? DEFAULT_MAX_BLOB_BYTES;
+  if (entry.size !== null && entry.size > maxBlobBytes) {
+    throw new Error(
+      `git-fetch: ${request.path} is not ingestable text (too-large)`
+    );
+  }
   const assessment = assessBlob(
     request.path,
     await repository.readBlob(entry.blobHash),

@@ -3,28 +3,121 @@
 # `check` job (ultracite, oxfmt, typecheck, npm test), shell fixture tests,
 # or the panel e2e.
 #
-# Usage: ./scripts/verify.sh   (needs bash, shellcheck, kubectl, git)
+# Usage: ./scripts/verify.sh
+# Needs bash, git, shellcheck, kubectl, jq, openssl and gitleaks. actionlint,
+# zizmor and hadolint are skipped when absent, except in CI, which installs
+# every tool at a pinned version with scripts/install-ci-tools.sh.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
-echo '==> shellcheck'
-# Fail on errors; print warnings without failing.
-if ! shellcheck -S error bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/factory/**/run-reviewer.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh deploy/deployer/*.sh >/dev/null 2>&1; then
-  shellcheck -S error bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/factory/**/run-reviewer.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh deploy/deployer/*.sh 2>&1 | head -n 80
-  fail 'shell script lint (error)'
+# optional_tool <name>: true when installed; outside CI a missing tool skips
+# its check.
+optional_tool() {
+  command -v "$1" >/dev/null 2>&1 && return 0
+  [[ -z "${CI:-}" ]] || fail "$1 not installed (scripts/install-ci-tools.sh)"
+  echo "  SKIP: $1 not installed"
+  return 1
+}
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+echo "==> shellcheck ($(git ls-files '*.sh' | wc -l | tr -d ' ') scripts)"
+# Every tracked script. Sourced libraries without a shebang declare
+# `# shellcheck shell=sh`.
+git ls-files -z '*.sh' | xargs -0 shellcheck -S warning || fail 'shell script lint'
+
+echo '==> hadolint (Dockerfiles)'
+if optional_tool hadolint; then
+  git ls-files -z '*Dockerfile' | xargs -0 hadolint --config .hadolint.yaml || fail 'Dockerfile lint'
 fi
-shellcheck bootstrap/*.sh apps/shared/*.sh apps/factory/**/run.sh apps/factory/**/entrypoint.sh apps/factory/**/run-reviewer.sh apps/*/run-*.sh apps/*/init-*.sh scripts/*.sh deploy/deployer/*.sh 2>&1 | head -n 100 || true
+
+echo '==> actionlint (workflows)'
+if optional_tool actionlint; then
+  actionlint || fail 'workflow lint'
+fi
+
+echo '==> zizmor (workflow security)'
+if optional_tool zizmor; then
+  zizmor --offline --quiet .github/workflows || fail 'workflow security lint'
+fi
 
 echo '==> kustomize builds'
 # Every base, the non-base kustomizations, and the root (proves the core set
-# renders with no duplicate resource IDs).
+# renders with no duplicate resource IDs). Renders are kept for the reference
+# checks below.
+mkdir -p "$work/render"
 for d in deploy/*/base deploy/namespaces deploy/tailscale \
           clusters/home; do
-  kubectl kustomize "$d" >/dev/null || fail "kustomize build: $d"
+  kubectl kustomize "$d" >"$work/render/${d//\//_}.yaml" || fail "kustomize build: $d"
 done
+
+echo '==> rendered references'
+# All renders as one JSON array. `kubectl label --local` is an offline
+# YAML-to-JSON converter here; the label it adds is never inspected.
+for f in "$work/render"/*.yaml; do
+  KUBECONFIG=/dev/null kubectl label --local -f "$f" verify=render -o json
+done | jq -s . >"$work/rendered.json"
+owner="$(git remote get-url origin | sed -E 's#.*[:/]([^/]+)/[^/]+(\.git)?$#\1#')"
+# rendered_check <jq filter>: prints one line per problem the filter emits.
+rendered_check() {
+  jq -r --arg homelab "ghcr.io/${owner}/homelab/" '
+    def pod_template:
+      if .kind == "CronJob" then .spec.jobTemplate.spec.template
+      elif .kind == "Pod" then .
+      elif (.kind | IN("Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job")) then .spec.template
+      else empty end;
+    def ns: .metadata.namespace // "default";
+    def ref: "\(.kind)/\(.metadata.name) (\(ns))";
+    [ '"$1"' ] | unique | .[] | "  \(.)"' "$work/rendered.json"
+}
+sa_problems="$(rendered_check '
+  [.[] | select(.kind == "ServiceAccount") | "\(ns)/\(.metadata.name)"] as $sas
+  | .[] | ref as $ref | ns as $ns
+  | pod_template | .spec.serviceAccountName // empty
+  | select(IN($sas[]; "\($ns)/\(.)") | not)
+  | "\($ref): ServiceAccount \(.) is not in any rendered manifest"')"
+if [[ -n "$sa_problems" ]]; then
+  echo "$sa_problems"
+  fail 'pod template references a missing ServiceAccount'
+fi
+profile_problems="$(rendered_check '
+  [.[] | select(.kind == "NetworkPolicy") | ns as $ns | .spec.podSelector
+    | (.matchLabels["factory.gwkline.io/profile"] // empty),
+      (.matchExpressions[]? | select(.key == "factory.gwkline.io/profile" and .operator == "In") | .values[])
+    | "\($ns)/\(.)"] as $selected
+  | .[] | ref as $ref | ns as $ns
+  | pod_template | .metadata.labels["factory.gwkline.io/profile"] // empty
+  | select(IN($selected[]; "\($ns)/\(.)") | not)
+  | "\($ref): no NetworkPolicy selects factory.gwkline.io/profile=\(.)"')"
+if [[ -n "$profile_problems" ]]; then
+  echo "$profile_problems"
+  fail 'factory profile without its own NetworkPolicy'
+fi
+# Admission does not verify third-party images, so the digest is their only
+# integrity pin (docs/adr/adr-004-cosign-admission-verification.md).
+digest_problems="$(rendered_check '
+  .[] | select(.kind != "CustomResourceDefinition") | ref as $ref
+  | .. | objects | .image?
+  | if type == "string" then . elif type == "object" then .reference // empty else empty end
+  | select(startswith($homelab) | not)
+  | select(contains("@sha256:") | not)
+  | "\($ref): \(.) is not pinned by digest"')"
+if [[ -n "$digest_problems" ]]; then
+  echo "$digest_problems"
+  fail 'third-party image without a digest'
+fi
+
+echo '==> node IP replacement'
+# deploy/policies/base/kube-api-egress.yaml carries a 127.0.0.1 placeholder
+# that clusters/home/node replaces; a leftover means a policy lost its label or
+# its [ClusterIP, node] rule shape.
+if grep -n 'cidr: 127\.0\.0\.1/32' "$work/render/clusters_home.yaml"; then
+  fail 'node IP placeholder left in the rendered NetworkPolicies'
+fi
 
 echo '==> factory CronJob schedule collision lint'
 # Two factory CronJobs whose schedules expand to the same minute/hour pattern
@@ -194,21 +287,39 @@ if grep -rnE 'cidr:' deploy/ | awk '
   fail 'vendor IP range in deploy/ (use public-minus-private egress)'
 fi
 
-echo '==> secret patterns (working tree)'
-# Tracked + untracked files only; history is not scanned. Excluded files hold
-# redaction/scan patterns or synthetic fixtures by design.
-pattern='(github_pat_|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|tskey-auth-)'
-secret_exclusions=':!scripts/verify.sh :!deploy/loki/base/alloy.yaml :!apps/shared/skills-lib.sh :!apps/factory/github-app/tests/token-service.test.ts :!apps/knowledge/tests/git-source.test.ts :!apps/factory/collector/tests/collector.test.ts :!deploy/loki/README.md'
-# shellcheck disable=SC2086 # pathspecs are a word list
-if git grep --untracked -nIE "$pattern" -- $secret_exclusions 2>/dev/null | grep .; then
-  fail 'secret-looking string in working tree'
-fi
+echo '==> gitleaks rules catch the credential formats this repo handles'
+# One synthetic token per rule, named by rule ID and built at run time so no
+# tracked file carries one.
+rand() { openssl rand -base64 600 | tr -dc 'A-Za-z0-9' | cut -c "1-$1"; }
+mkdir -p "$work/canary"
+printf 'ops_eyJ%s\n' "$(rand 300)" >"$work/canary/1password-service-account-token"
+printf 'ghs_%s\n' "$(rand 36)" >"$work/canary/github-app-token"
+printf 'sk-or-v1-%s\n' "$(openssl rand -hex 32)" >"$work/canary/openrouter-api-key"
+printf 'sk-ant-oat01-%sAA\n' "$(rand 93)" >"$work/canary/anthropic-oauth-token"
+printf 'tskey-client-k%sCNTRL-%s\n' "$(rand 12)" "$(rand 33)" >"$work/canary/tailscale-key"
+for f in "$work/canary"/*; do
+  rule="$(basename "$f")"
+  rc=0
+  gitleaks dir --config .gitleaks.toml --enable-rule "$rule" --no-banner --log-level error \
+    --exit-code 42 "$f" >/dev/null || rc=$?
+  [[ "$rc" == 42 ]] || fail "gitleaks rule $rule does not flag its format (exit $rc)"
+done
+
+echo '==> secret scan (gitleaks, working tree)'
+# Tracked and untracked-but-not-ignored files, copied out so node_modules and
+# other ignored output stay out of the scan. CI also scans mainline history.
+repo="$PWD"
+mkdir -p "$work/tree"
+git ls-files -z --cached --others --exclude-standard \
+  | while IFS= read -r -d '' f; do if [[ -f "$f" ]]; then printf '%s\0' "$f"; fi; done \
+  | tar --null -T - -cf - | tar -xf - -C "$work/tree"
+(cd "$work/tree" && gitleaks dir --config "$repo/.gitleaks.toml" --no-banner --no-color --redact -v --log-level warn .) \
+  || fail 'secret-looking string in working tree'
 
 echo '==> personal-skills fixture contract'
 sh scripts/check-personal-skills.sh >/dev/null || fail 'personal-skills contract (run scripts/check-personal-skills.sh)'
 
 echo '==> homelab image references match the published namespace'
-owner="$(git remote get-url origin | sed -E 's#.*[:/]([^/]+)/[^/]+(\.git)?$#\1#')"
 while IFS=: read -r file line; do
   [[ "$line" == *"ghcr.io/${owner}/homelab/"* ]] || fail "foreign image ref in ${file}: ${line}"
 done < <(grep -rnE 'image: ghcr\.io/[^/]+/homelab/' deploy/ apps/ examples/ scripts/ || true)

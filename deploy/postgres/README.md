@@ -5,18 +5,9 @@ CNPG-managed PostgreSQL 18 shared by factory and knowledge, with pgvector and `p
 ## Prerequisites
 
 - CNPG operator ([deploy/cnpg](../cnpg/README.md)) and Kubernetes ImageVolume support (k8s 1.35+, containerd 2.1+).
-- Owner-role Secrets, created once out of band (the operator generates the rest):
+- 1Password items `knowledge-db` and `factory-db` (vault `homelab`), each with `username` (`knowledge_owner`, `factory_owner`) and a generated `password`. ExternalSecrets in `base/owner-secrets.yaml` sync them into the owner-role Secrets `pg-primary-<app>-owner` (basic-auth); the operator generates everything else. `knowledge-db` is also what the knowledge services connect with, so the role and its clients share one source.
 
-  ```sh
-  for app in factory knowledge; do
-    kubectl -n database create secret generic pg-primary-$app-owner \
-      --type=kubernetes.io/basic-auth \
-      --from-literal=username=${app}_owner \
-      --from-literal=password="$(openssl rand -base64 24)"
-  done
-  ```
-
-  To rotate, recreate the Secret; the operator updates the role password on its next reconcile.
+  To rotate, edit the password in 1Password. Within the hour ESO updates the Secret and the operator updates the role password. Restart the knowledge Deployments so they reconnect with the new value.
 
 ## Apply
 
@@ -29,7 +20,7 @@ Part of `clusters/home`. Standalone: `kubectl apply -k deploy/postgres/base`, th
 ## Isolation
 
 - Databases `factory` and `knowledge`, each owned by a non-superuser login role (`<app>_owner`) with no cross-grants. Superuser access is disabled; extensions are installed declaratively via the `Database` resources.
-- The `database` namespace is default-deny. Allowed in: the CNPG operator (8000/9187) and SQL clients from `agents`/`sandbox` (5432).
+- The `database` namespace is default-deny. Allowed in: the CNPG operator (8000/9187) and the SQL clients named in `allow-sql-clients` (5432): cloudbeaver, knowledge-ingest and knowledge-retrieval in `agents`.
 - Connect at `pg-primary-rw.database.svc:5432` over TLS. For `verify-full`, the CA is in Secret `pg-primary-ca`.
 
 ## Scaling

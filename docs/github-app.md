@@ -16,14 +16,9 @@ Short-lived GitHub App installation tokens, scoped to selected repositories and 
 | `app-id`          | numeric App ID                                     |
 | `installation-id` | from the install URL `/installations/<id>`         |
 | `private-key`     | full `.pem` (PKCS#1/PKCS#8; `\n` escapes accepted) |
-| `webhook-secret`  | optional, empty today                              |
+| `webhook-secret`  | optional, empty today; not synced                  |
 
-Values reach the cluster only through `scripts/create-github-app-secret.sh`, which creates Secret `github-app` from env or prompts:
-
-```sh
-GITHUB_APP_ID=… GITHUB_APP_INSTALLATION_ID=… GITHUB_APP_PRIVATE_KEY="$(op read 'op://…/private-key')" \
-  scripts/create-github-app-secret.sh sandbox
-```
+ExternalSecret `sandbox/github-app` (`deploy/github-tokens/base/github-app.yaml`) syncs it into Secret `github-app` (`app-id`, `installation-id`, `private-key`) hourly. Rotating the key is a 1Password edit; the collector reads the mounted file on its next run.
 
 ## Permissions
 

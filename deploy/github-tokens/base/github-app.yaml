@@ -1,0 +1,34 @@
+# GitHub App credentials for minting factory installation tokens
+# (docs/github-app.md). 1Password item factory-github-app: app-id,
+# installation-id, private-key. A key stored on one line with \n escapes is
+# expanded to a real PEM.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: github-app
+  namespace: sandbox
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: onepassword
+  target:
+    name: github-app
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        app-id: "{{ .appId | trim }}"
+        installation-id: "{{ .installationId | trim }}"
+        private-key: |
+          {{ .privateKey | replace "\\n" "\n" | trim }}
+  data:
+    - secretKey: appId
+      remoteRef:
+        key: factory-github-app/app-id
+    - secretKey: installationId
+      remoteRef:
+        key: factory-github-app/installation-id
+    - secretKey: privateKey
+      remoteRef:
+        key: factory-github-app/private-key

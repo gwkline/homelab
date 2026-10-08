@@ -13,5 +13,5 @@ resources:
   - deployment-knowledge-ingest.yaml
   - deployment-knowledge-retrieval.yaml
   - service-knowledge-ingest.yaml
-  - service-knowledge-retrieval.yaml
+  - ingress-knowledge.yaml
   - netpol-knowledge.yaml

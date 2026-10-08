@@ -1,17 +1,12 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+
+import { startPanel } from "./helpers.ts";
 
 const root = path.join(import.meta.dirname, "..");
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -206,15 +201,6 @@ test("historyFromStore lists weeks ascending", async () => {
 
 test("GET /api/factory/stats/rollup aggregates all repos and persists weekly history", async () => {
   const { weekStart } = await stats;
-  const stage = mkdtempSync(path.join(tmpdir(), "panel-rollup-"));
-  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
-  for (const f of ["index.js", "jobs.js", "k8s.js"]) {
-    copyFileSync(path.join(root, "dist", f), path.join(stage, f));
-  }
-  copyFileSync(
-    path.join(root, "web", "dist", "index.html"),
-    path.join(stage, "web", "dist", "index.html")
-  );
 
   const now = new Date();
   const mondayMs = Date.parse(`${weekStart(now)}T00:00:00Z`);
@@ -222,7 +208,10 @@ test("GET /api/factory/stats/rollup aggregates all repos and persists weekly his
     new Date(mondayMs - weeksAgo * WEEK_MS + hour * 3_600_000).toISOString();
   // A 40-week-old snapshot proves trends outlive the GitHub-derived window.
   const oldWeek = weekStart(mondayMs - 40 * WEEK_MS);
-  const statsFile = path.join(stage, "factory-stats.json");
+  const statsFile = path.join(
+    mkdtempSync(path.join(tmpdir(), "panel-stats-")),
+    "factory-stats.json"
+  );
   writeFileSync(
     statsFile,
     JSON.stringify({
@@ -300,33 +289,13 @@ test("GET /api/factory/stats/rollup aggregates all repos and persists weekly his
   await new Promise<void>((r) => gh.listen(0, "127.0.0.1", r));
   const ghPort = (gh.address() as AddressInfo).port;
 
-  const port = 3971;
-  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
-    env: {
-      ...process.env,
-      FACTORY_STATS_PATH: statsFile,
-      GH_API_BASE: `http://127.0.0.1:${ghPort}`,
-      GH_TOKEN: "test-token",
-      PANEL_K8S_BASE: "http://127.0.0.1:1",
-      PANEL_ROOT: stage,
-      PORT: String(port),
-    },
-    stdio: "pipe",
+  const panel = await startPanel({
+    FACTORY_STATS_PATH: statsFile,
+    GH_API_BASE: `http://127.0.0.1:${ghPort}`,
+    GH_TOKEN: "test-token",
   });
-  child.stderr.on("data", (d) => process.stderr.write(d));
   try {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(
-        () => reject(new Error("server did not start")),
-        5000
-      );
-      child.stdout.on(
-        "data",
-        (d) =>
-          d.toString().includes("listening") && (clearTimeout(t), resolve())
-      );
-    });
-    const base = `http://127.0.0.1:${port}`;
+    const { base } = panel;
 
     // Per-repo stats endpoint guards the allowlist.
     const badRepo = await fetch(`${base}/api/factory/stats?repo=evil/repo`);
@@ -396,7 +365,7 @@ test("GET /api/factory/stats/rollup aggregates all repos and persists weekly his
     const j2 = (await again.json()) as { history: unknown[] };
     assert.equal(j2.history.length, 2);
   } finally {
-    child.kill();
+    panel.stop();
     gh.close();
   }
 });

@@ -31,17 +31,17 @@ Every UI is reachable only on the tailnet, through the Tailscale operator.
 
 CI builds an image only when its inputs change: the image's directory plus whatever its Dockerfile copies. A weekly run rebuilds everything. Each build is signed with cosign and published to `ghcr.io/gwkline/homelab/<app>` as `latest` and `sha-<commit>`.
 
-Manifests reference `:latest`. Every five minutes `deploy/deployer` clones `main`, resolves each `:latest` to its current digest, and applies the homelab workloads. A merge reaches the cluster within one pass of its image build. To roll back, use `kubectl rollout undo` or revert the commit.
+Manifests reference `:latest`. Every five minutes `deploy/deployer` takes the newest `main` commit whose CI is green and pins each `:latest` to the signed build of that commit's inputs. It then dry-runs the homelab workloads through admission, applies them server-side, and waits for them to roll out ([deploy/deployer/README.md](deploy/deployer/README.md)). A merge reaches the cluster within one pass of its CI going green. To roll back, revert the commit. `kubectl rollout undo` holds only while the deployer is suspended.
 
 Third-party images and Dockerfile bases are pinned tag+digest. Downloaded tools are pinned to a version and checksum-verified.
 
 ## Secrets
 
-Long-lived credentials live in 1Password, and External Secrets syncs them into the cluster (`deploy/eso`, `deploy/github-tokens`). The one hand-entered secret is the 1Password service-account token at bootstrap (`scripts/create-onepassword-service-account.sh`). A credential rotated in 1Password propagates within about an hour. [docs/secrets-inventory.md](docs/secrets-inventory.md) lists every credential and who owns it.
+Long-lived credentials live in 1Password, and External Secrets syncs them into the cluster (`deploy/eso`, `deploy/github-tokens`). One ClusterSecretStore reads the vault; the one hand-entered secret is its 1Password service-account token, which lives only in the `external-secrets` namespace (`scripts/create-onepassword-service-account.sh`). A credential rotated in 1Password propagates within about an hour. [docs/secrets-inventory.md](docs/secrets-inventory.md) lists every credential and who owns it.
 
 ## Security model
 
-- **Pod Security:** `agents`, `work` and `database` enforce the `restricted` level. `sandbox` enforces `baseline` and warns on `restricted` until the factory worker Job complies. Outside `kube-system`, only the Tailscale LoadBalancer proxies run privileged, and no pod gets a Docker socket.
+- **Pod Security:** `agents`, `work` and `database` enforce the `restricted` level. `sandbox` enforces `baseline` and warns on `restricted` until the factory worker Job complies. Nothing outside `kube-system` runs privileged, and no pod gets a Docker socket.
 - **Network policy:**
   - Ingress is default-deny, and only Tailscale proxies reach the UIs.
   - Egress from `sandbox` and `work` is public-internet only: no Kubernetes API, LAN, tailnet or cloud metadata ([docs/egress-policy.md](docs/egress-policy.md)).

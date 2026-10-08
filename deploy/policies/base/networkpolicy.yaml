@@ -1,7 +1,7 @@
 # Default-deny ingress in agents, sandbox, and work; workloads declare their
-# own exposure beside their manifests. Egress: sandbox and work get DNS plus
-# the public internet only (docs/egress-policy.md); agents stays open because
-# its workloads need the Kubernetes API.
+# own exposure beside their manifests. Egress (docs/egress-policy.md): sandbox
+# and work get DNS plus the public internet only; agents gets DNS, the pod and
+# service CIDRs and the public internet, but no LAN, tailnet or link-local.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -10,6 +10,56 @@ metadata:
 spec:
   podSelector: {}
   policyTypes: [Ingress]
+---
+# Every agents pod without its own, narrower egress policy. Policies are
+# additive, so a workload with a narrower one is listed here to stay out of
+# this baseline: add it to the list when you give a workload an egress policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agents-egress-default
+  namespace: agents
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: NotIn
+        values:
+          - cloudbeaver
+          - executor
+          - grafana
+          - headlamp
+          - hermes
+          - knowledge-ingest
+          - knowledge-retrieval
+          - t3code
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # In-cluster pods and Services. Postgres and Loki admit clients by label.
+    - to:
+        - ipBlock:
+            cidr: 10.42.0.0/16
+        - ipBlock:
+            cidr: 10.43.0.0/16
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16 # node/LAN
+              - 169.254.0.0/16 # link-local metadata
+              - 100.64.0.0/10 # tailnet
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

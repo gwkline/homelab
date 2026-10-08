@@ -201,4 +201,9 @@ export interface IngestStore {
   ) => Promise<boolean>;
   /** Readiness probe; must throw (fast) when the backing store is unusable. */
   ping: () => Promise<void>;
+  /**
+   * Delete finished jobs older than `retentionDays`, keeping each source's
+   * latest succeeded and dead job. Returns the number deleted.
+   */
+  pruneFinished: (retentionDays: number) => Promise<number>;
 }
