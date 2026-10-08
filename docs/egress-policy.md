@@ -21,7 +21,7 @@ Ingress is default-deny in `agents`, `sandbox`, `work`, `database`, the operator
 | hermes, t3code | DNS, Kubernetes API, Executor, knowledge retrieval, public internet (any port) | `deploy/hermes/base/netpol.yaml`, `deploy/t3code/base/netpol.yaml`, `hermes-kube-api`/`t3code-kube-api` in `deploy/policies/base/kube-api-egress.yaml` |
 | Grafana, CloudBeaver, knowledge, Executor | Their own allowlists | beside each workload |
 | CNPG instances | DNS, Kubernetes API, peers on 5432 | `allow-instance-egress` in `deploy/postgres/base/netpol.yaml`, `pg-primary-kube-api` in `deploy/policies/base/kube-api-egress.yaml` |
-| Factory loops and workers | kube-dns, then TCP 443 to the public internet minus private ranges, one policy per `factory.gwkline.io/profile` label. The orchestrator adds the API server node endpoint and knowledge retrieval | `allow-factory-*` beside each component in `deploy/factory/base/` |
+| Factory loops and workers | kube-dns, then TCP 443 to the public internet minus private ranges, one policy per `factory.gwkline.io/profile` label. The orchestrator adds knowledge retrieval, and `factory-orchestrator-kube-api` adds the API server | `allow-factory-*` beside each component in `deploy/factory/base/`; the API allowance in `deploy/policies/base/kube-api-egress.yaml` |
 
 ## Enforcement and the start-up window
 

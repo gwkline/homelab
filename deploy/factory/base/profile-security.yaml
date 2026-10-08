@@ -15,6 +15,7 @@ data:
       "activeDeadlineSeconds": 3600,
       "backoffLimit": 0,
       "ttlSecondsAfterFinished": 86400,
+      "priorityClassName": "homelab-batch",
       "resources": {
         "requests": { "cpu": "500m", "memory": "512Mi", "ephemeral-storage": "1Gi" },
         "limits": { "cpu": "2", "memory": "4Gi", "ephemeral-storage": "8Gi" }

@@ -58,9 +58,11 @@ spec:
                 - { name: task, mountPath: /task }
                 - { name: work, mountPath: /work }
                 - { name: out, mountPath: /out }
+          # work matches the security profile's workSizeLimit; home holds
+          # trivy's vulnerability database and semgrep's rule cache.
           volumes:
-            - { name: clone-tmp, emptyDir: {} }
-            - { name: home, emptyDir: {} }
-            - { name: task, emptyDir: {} }
-            - { name: work, emptyDir: {} }
-            - { name: out, emptyDir: {} }
+            - { name: clone-tmp, emptyDir: { sizeLimit: 256Mi } }
+            - { name: home, emptyDir: { sizeLimit: 4Gi } }
+            - { name: task, emptyDir: { sizeLimit: 64Mi } }
+            - { name: work, emptyDir: { sizeLimit: 4Gi } }
+            - { name: out, emptyDir: { sizeLimit: 64Mi } }

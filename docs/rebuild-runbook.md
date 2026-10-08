@@ -46,9 +46,10 @@ The server must come back on the address in `clusters/home/node/node.yaml` (its 
 
 ### 3.2 External Secrets Operator
 
-Server-side apply (two CRDs exceed the client-side annotation limit):
+Server-side apply (two CRDs exceed the client-side annotation limit). Its pods are `homelab-platform` priority, so that PriorityClass goes first:
 
 ```sh
+kubectl apply -f deploy/policies/base/priorityclasses.yaml
 kubectl apply --server-side -k deploy/eso/base
 kubectl wait --for=condition=Established \
   crd/externalsecrets.external-secrets.io crd/clustersecretstores.external-secrets.io
