@@ -10,7 +10,8 @@
  * Secret detection (name patterns plus a private-key content sniff) applies
  * in every mode: credentials must never reach the corpus by opt-out. Tokens
  * are passed per invocation via `GIT_CONFIG_*` env vars, never argv, logs,
- * `.git/config`, or the URL. Access is read-only.
+ * `.git/config`, or the URL, and git only sends them to github.com. Access
+ * is read-only.
  */
 
 import { execFile } from "node:child_process";
@@ -1360,6 +1361,9 @@ export const syncGitSource = async (
   };
 };
 
+/** The token is a GitHub PAT; git only attaches it to URLs under this one. */
+export const GIT_TOKEN_URL = "https://github.com/";
+
 const gitAuthConfig = (token: string): NodeJS.ProcessEnv => {
   const authorization = Buffer.from(
     `x-access-token:${token}`,
@@ -1367,19 +1371,34 @@ const gitAuthConfig = (token: string): NodeJS.ProcessEnv => {
   ).toString("base64");
   return {
     GIT_CONFIG_COUNT: "1",
-    GIT_CONFIG_KEY_0: "http.extraheader",
+    GIT_CONFIG_KEY_0: `http.${GIT_TOKEN_URL}.extraheader`,
     GIT_CONFIG_VALUE_0: `Authorization: Basic ${authorization}`,
   };
 };
 
+/** The single git transport a repository URL needs. */
+export const gitTransport = (repositoryUrl: string): string => {
+  const normalized = normalizeRepositoryUrl(repositoryUrl);
+  if (path.isAbsolute(normalized) || normalized.startsWith("file://")) {
+    return "file";
+  }
+  return new URL(normalized).protocol.replace(/:$/u, "");
+};
+
 /**
  * The token rides in `GIT_CONFIG_*` env vars, never argv or a config file.
+ * `GIT_ALLOW_PROTOCOL` admits only the repository's own transport, so
+ * submodules and remote helpers can't reach local files or other schemes.
  * Prompts are disabled so bad credentials fail fast instead of hanging.
  */
-export const gitProcessEnv = (token: string | null): NodeJS.ProcessEnv => {
+export const gitProcessEnv = (
+  token: string | null,
+  transport = "https"
+): NodeJS.ProcessEnv => {
   const auth = token === null ? {} : gitAuthConfig(token);
   return {
     ...process.env,
+    GIT_ALLOW_PROTOCOL: transport,
     GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -oBatchMode=yes",
     GIT_TERMINAL_PROMPT: "0",
     ...auth,
@@ -1483,7 +1502,7 @@ export const openGitRepository = async (
   );
   const token =
     options.token ?? (await resolveGitSourceTokenFromEnv(process.env));
-  const env = gitProcessEnv(token);
+  const env = gitProcessEnv(token, gitTransport(repositoryUrl));
   const localRoot =
     repositoryUrl.startsWith("/") || repositoryUrl.startsWith("file://");
   let cloned = false;
