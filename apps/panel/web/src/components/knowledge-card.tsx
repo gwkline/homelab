@@ -5,35 +5,36 @@ import {
   RefreshCw,
   Search,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
+import type { KnowledgeSearchHit } from "../../../server/knowledge";
 import {
   EXCERPT_MAX,
   ago,
   citationUrl,
-  getJson,
   postJson,
   sourceBadge,
   sourceLabel,
 } from "../lib/knowledge";
-import type { SearchHit, SourceRow, SyncJob } from "../lib/knowledge";
+import { useKnowledgeSources } from "../lib/use-knowledge-sources";
 import { cn } from "../lib/utils";
 import { Badge, Button, Card, CardHeader, Checkbox, Input, Select } from "./ui";
-
-type Phase = "error" | "loading" | "ready" | "unconfigured";
 
 export const KnowledgeCard = ({
   onOpenExplorer,
 }: {
   onOpenExplorer?: () => void;
 } = {}) => {
-  const [phase, setPhase] = useState<Phase>("loading");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [sources, setSources] = useState<SourceRow[]>([]);
-
-  const [syncBusy, setSyncBusy] = useState<string | null>(null);
-  const [job, setJob] = useState<SyncJob | null>(null);
-  const [jobMsg, setJobMsg] = useState<string | null>(null);
+  const {
+    errorMsg,
+    job,
+    jobMsg,
+    loadSources,
+    phase,
+    sources,
+    syncBusy,
+    triggerSync,
+  } = useKnowledgeSources();
 
   const [query, setQuery] = useState("");
   const [namespace, setNamespace] = useState("");
@@ -42,93 +43,11 @@ export const KnowledgeCard = ({
   const [includeSuperseded, setIncludeSuperseded] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [results, setResults] = useState<SearchHit[] | null>(null);
+  const [results, setResults] = useState<KnowledgeSearchHit[] | null>(null);
   const [lastSearchParams, setLastSearchParams] = useState<Record<
     string,
     unknown
   > | null>(null);
-
-  const loadSources = useCallback(async () => {
-    const { body, ok } = await getJson("/api/knowledge/sources");
-    if (body.configured === false) {
-      setPhase("unconfigured");
-      return;
-    }
-    if (!ok) {
-      setPhase("error");
-      setErrorMsg(String(body.error ?? "knowledge API unreachable"));
-      return;
-    }
-    setSources((body.sources ?? []) as SourceRow[]);
-    setPhase("ready");
-  }, []);
-
-  useEffect(() => {
-    loadSources();
-    const id = setInterval(loadSources, 15_000);
-    return () => clearInterval(id);
-  }, [loadSources]);
-
-  // Poll the sync job every 2s until it reaches a terminal state.
-  useEffect(() => {
-    if (job === null || job.status === "succeeded" || job.status === "failed") {
-      return;
-    }
-    const t = setTimeout(async () => {
-      const { body, ok } = await getJson(
-        `/api/knowledge/sync/${encodeURIComponent(job.jobId)}`
-      );
-      if (!ok) {
-        setJobMsg(
-          `job progress unavailable: ${String(body.error ?? "unknown")}`
-        );
-        return;
-      }
-      const next = body as unknown as SyncJob;
-      if (next.status === "succeeded") {
-        setJobMsg(
-          `sync succeeded · ${next.documentsIngested ?? "?"} docs · ${next.chunksIngested ?? "?"} chunks`
-        );
-        setJob(null);
-        loadSources();
-      } else if (next.status === "failed") {
-        setJobMsg(`sync failed: ${next.error ?? "unknown error"}`);
-        setJob(null);
-        loadSources();
-      } else {
-        setJob(next);
-      }
-    }, 2000);
-    return () => clearTimeout(t);
-  }, [job, loadSources]);
-
-  const triggerSync = async (sourceId: string) => {
-    setSyncBusy(sourceId);
-    setJobMsg(null);
-    try {
-      const { body, ok } = await postJson("/api/knowledge/sync", { sourceId });
-      if (!ok) {
-        setJobMsg(String(body.error ?? "failed to queue sync"));
-        return;
-      }
-      setJob({
-        attempts: null,
-        chunksIngested: null,
-        documentsIngested: null,
-        error: null,
-        finishedAt: null,
-        jobId: String(body.jobId ?? ""),
-        sourceId,
-        startedAt: null,
-        status: String(body.status ?? "queued"),
-      });
-      setJobMsg(`sync queued (${String(body.jobId)}) — watching job…`);
-    } catch (error) {
-      setJobMsg(String(error));
-    } finally {
-      setSyncBusy(null);
-    }
-  };
 
   const runSearch = useCallback(async (params: Record<string, unknown>) => {
     setSearching(true);
@@ -140,7 +59,7 @@ export const KnowledgeCard = ({
         setSearchError(String(body.error ?? "search failed"));
         return;
       }
-      setResults((body.results ?? []) as SearchHit[]);
+      setResults((body.results ?? []) as KnowledgeSearchHit[]);
     } catch (error) {
       setSearchError(String(error));
     } finally {
