@@ -60,8 +60,8 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: loop
-          image: ghcr.io/gwkline/homelab/loop-agent:latest
+        - name: smoke
+          image: ghcr.io/gwkline/homelab/ops:latest
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -79,7 +79,7 @@ spec:
               value: "${LAN_TARGET}"
             - name: EGRESS_SMOKE_LAN_PORT
               value: "${LAN_PORT}"
-            - name: LOOP_COMMAND
+            - name: JOB_COMMAND
               value: |
                 test -d /data/repos/homelab/.git \\
                   || { echo "SMOKE FAIL: repo clone failed" >&2; exit 1; }

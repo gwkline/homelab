@@ -24,4 +24,7 @@ RUN chmod +x /usr/local/bin/run-hermes /usr/local/bin/check-skills-sync
 ENV DATA_DIR=/data \
     HERMES_HOME=/data/hermes
 
+# The pod's runAsUser, not upstream's hermes user (10000): the PVC is owned
+# by fsGroup 1000.
+USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/run-hermes"]

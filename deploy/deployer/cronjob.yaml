@@ -29,7 +29,7 @@ spec:
             seccompProfile: { type: RuntimeDefault }
           containers:
             - name: deployer
-              image: ghcr.io/gwkline/homelab/loop-agent:latest
+              image: ghcr.io/gwkline/homelab/ops:latest
               command: ["sh", "/opt/deployer/deploy.sh"]
               resources:
                 requests: { cpu: 50m, memory: 64Mi }

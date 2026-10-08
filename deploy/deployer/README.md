@@ -1,6 +1,6 @@
 # deployer
 
-Continuous delivery for this repo's workloads. A CronJob in `agents` runs [deploy.sh](deploy.sh) every 5 minutes. The script is mounted from the `deployer-script` ConfigMap, which kustomize generates from this directory.
+Continuous delivery for this repo's workloads. A CronJob in `agents` runs [deploy.sh](deploy.sh) every 5 minutes on the `ops` image ([images/ops](../../images/ops/Dockerfile)). The script is mounted from the `deployer-script` ConfigMap, which kustomize generates from this directory.
 
 ## Each pass
 

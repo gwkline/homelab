@@ -1,5 +1,5 @@
 #!/bin/sh
-# Launch a one-off loop job in `sandbox` without hand-writing YAML. The repo is
+# Launch a one-off Job in `sandbox` without hand-writing YAML. The repo is
 # cloned and the command runs inside it, so `npm test` means the repo's tests.
 #
 # Usage:
@@ -14,7 +14,8 @@
 # --print writes the manifest to stdout instead of applying.
 # --repo  clones that GitHub repo instead of gwkline/homelab.
 #
-# Ad-hoc jobs get Chromium and node; there is no Docker.
+# Jobs run the ops image (images/ops): sh, git, curl, jq, node and npm. There
+# is no compiler, browser or Docker.
 # Follow logs with:
 #   kubectl logs job/<name> -n sandbox -f
 set -eu
@@ -53,7 +54,7 @@ yaml_quote() {
     { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t") }
     { printf "%s%s", (NR > 1 ? "\\n" : ""), $0 }'
 }
-LOOP_COMMAND=$(yaml_quote "cd ${REPO_DIR} || exit 1
+JOB_COMMAND=$(yaml_quote "cd ${REPO_DIR} || exit 1
 ${COMMAND}")
 
 MANIFEST=$(cat <<EOF
@@ -64,14 +65,14 @@ metadata:
   namespace: sandbox
   labels:
     app.kubernetes.io/part-of: homelab
-    app: loop-agent
+    app: new-job
 spec:
   backoffLimit: 1
   ttlSecondsAfterFinished: 86400
   template:
     metadata:
       labels:
-        app: loop-agent
+        app: new-job
     spec:
       automountServiceAccountToken: false
       restartPolicy: Never
@@ -80,8 +81,8 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: loop
-          image: ghcr.io/gwkline/homelab/loop-agent:latest
+        - name: job
+          image: ghcr.io/gwkline/homelab/ops:latest
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -93,8 +94,8 @@ spec:
               value: /secrets/token
             - name: WORKSPACE_REPOS
               value: https://github.com/${REPO}.git
-            - name: LOOP_COMMAND
-              value: "${LOOP_COMMAND}"
+            - name: JOB_COMMAND
+              value: "${JOB_COMMAND}"
             - name: HOME
               value: /tmp
           volumeMounts:
