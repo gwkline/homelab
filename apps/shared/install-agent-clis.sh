@@ -1,11 +1,15 @@
 #!/bin/sh
-# Installs the coding-agent CLIs shared by apps/t3code and apps/factory/worker.
-# codex and claude-code float on their latest dist-tags: the model APIs reject
-# clients that fall behind, so a recorded pin turns into an outage. Callers
-# declare ARG CACHEBUST before this layer so every CI build re-resolves them.
+# Installs the coding-agent CLIs shared by apps/t3code and apps/factory/worker,
+# each at an exact version, so two builds of one commit install the same
+# CLIs. The model APIs reject clients that fall too far behind, so Renovate
+# bumps the npm pins weekly ("agent CLIs" group in renovate.json).
 # The --version checks fail the build if npm skipped a platform binary.
 set -eu
 
+# renovate: datasource=npm depName=@openai/codex
+CODEX_VERSION=0.161.0
+# renovate: datasource=npm depName=@anthropic-ai/claude-code
+CLAUDE_CODE_VERSION=2.1.293
 # renovate: datasource=npm depName=opencode-ai
 OPENCODE_VERSION=1.18.23
 # Cursor publishes no checksum file: the per-arch digests were recorded with
@@ -15,8 +19,8 @@ CURSOR_AGENT_SHA256_X64=bfff4bf6f4e9dd30c1d0ef0a70b6077b074015dd2948e4c50685d53a
 CURSOR_AGENT_SHA256_ARM64=ea13f92e295f523a99ce8d8f57d6894d21e5d1e2d030ffad718ccd5955ca2eed
 
 npm install -g \
-  "@openai/codex@latest" \
-  "@anthropic-ai/claude-code@latest" \
+  "@openai/codex@${CODEX_VERSION}" \
+  "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
   "opencode-ai@${OPENCODE_VERSION}"
 
 case "$(uname -m)" in

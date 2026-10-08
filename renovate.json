@@ -45,12 +45,13 @@
       "automerge": false
     },
     {
-      "description": "Agent CLIs recorded in Dockerfiles/install scripts: weekly, non-major automerge",
+      "description": "Agent CLIs recorded in Dockerfiles/install scripts: weekly, non-major automerge once a release is 3 days old",
       "groupName": "agent CLIs",
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["npm"],
       "matchUpdateTypes": ["minor", "patch"],
       "automerge": true,
+      "minimumReleaseAge": "3 days",
       "schedule": ["after 6am and before 9am on monday"]
     },
     {
@@ -58,6 +59,13 @@
       "matchDepNames": ["opencode-ai"],
       "matchCurrentVersion": "/^0\\.0\\.0-beta-/",
       "allowedVersions": "/^0\\.0\\.0-beta-/"
+    },
+    {
+      "description": "t3 follows its nightly channel, which runs ahead of the latest dist-tag",
+      "matchDepNames": ["t3"],
+      "allowedVersions": "/-nightly\\./",
+      "ignoreUnstable": false,
+      "respectLatest": false
     },
     {
       "description": "npm: grouped non-major updates",
