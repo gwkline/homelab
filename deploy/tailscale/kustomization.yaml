@@ -10,5 +10,4 @@ labels:
 
 resources:
   - namespace.yaml
-  - secretstore.yaml
   - operator-oauth.yaml

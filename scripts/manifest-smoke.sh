@@ -167,9 +167,9 @@ kubectl apply --server-side --field-manager=manifest-smoke -f "$crds_file" >/dev
   fail "vendored CRD apply failed (see kubectl error above)"
 kubectl apply --server-side --field-manager=manifest-smoke -f "$WORKDIR/apply.yaml" >/dev/null ||
   fail "manifest apply failed (see kubectl error above)"
-echo "SKIP: ESO controller — only its vendored CRDs are installed, so ExternalSecret/SecretStore specs are schema-validated; the controller and the 1Password sync stay external (no token Secrets exist)"
+echo "SKIP: ESO controller — only its vendored CRDs are installed, so ExternalSecret/ClusterSecretStore specs are schema-validated; the controller and the 1Password sync stay external (no token Secret exists)"
 echo "SKIP: CNPG operator — only its vendored CRDs are installed; postgres pods need the operator and storage, so the Cluster is not waited on"
-echo "SKIP: tailscale operator — helm-installed in production against the tailnet; only its rendered Namespace/SecretStore/ExternalSecret are submitted (LoadBalancer Services stay pending)"
+echo "SKIP: tailscale operator — helm-installed in production against the tailnet; only its rendered Namespace/ExternalSecret are submitted (LoadBalancer Services stay pending)"
 
 echo "==> [5/7] runtime RBAC integrity (roleRef targets + referenced ServiceAccounts)"
 graph="$WORKDIR/rbac-graph.tsv"

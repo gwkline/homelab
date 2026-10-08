@@ -71,7 +71,7 @@ end_stage() {
 stage eso
 kubectl apply --server-side -k deploy/eso/base
 kubectl wait --for=condition=Established \
-  crd/externalsecrets.external-secrets.io crd/secretstores.external-secrets.io \
+  crd/externalsecrets.external-secrets.io crd/clustersecretstores.external-secrets.io \
   --timeout=180s
 kubectl -n external-secrets rollout status deploy/external-secrets-webhook --timeout="$POD_TIMEOUT"
 kubectl -n external-secrets rollout status deploy/external-secrets --timeout="$POD_TIMEOUT"

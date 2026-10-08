@@ -37,7 +37,7 @@ Third-party images and Dockerfile bases are pinned tag+digest. Downloaded tools 
 
 ## Secrets
 
-Long-lived credentials live in 1Password, and External Secrets syncs them into the cluster (`deploy/eso`, `deploy/github-tokens`). The one hand-entered secret is the 1Password service-account token at bootstrap (`scripts/create-onepassword-service-account.sh`). A credential rotated in 1Password propagates within about an hour. [docs/secrets-inventory.md](docs/secrets-inventory.md) lists every credential and who owns it.
+Long-lived credentials live in 1Password, and External Secrets syncs them into the cluster (`deploy/eso`, `deploy/github-tokens`). One ClusterSecretStore reads the vault; the one hand-entered secret is its 1Password service-account token, which lives only in the `external-secrets` namespace (`scripts/create-onepassword-service-account.sh`). A credential rotated in 1Password propagates within about an hour. [docs/secrets-inventory.md](docs/secrets-inventory.md) lists every credential and who owns it.
 
 ## Security model
 
