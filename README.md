@@ -19,7 +19,7 @@ Platform:
 
 - **panel**: this repo's control panel. It queues and shows factory runs, explores the knowledge base, and links to every dev tool.
 - **homepage**, **headlamp** (read-only Kubernetes UI), **cloudbeaver** (SQL client) and **grafana**: tailnet UIs.
-- **postgres**: a CloudNativePG cluster holding factory and knowledge state.
+- **postgres**: a CloudNativePG cluster holding the knowledge base.
 - **loki** and **victoriametrics**: 30 days of logs and metrics, read by Grafana.
 - **deployer**: continuous delivery for this repo's images (see below).
 

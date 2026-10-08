@@ -4,8 +4,7 @@ namespace: agents
 
 labels:
   - pairs:
-      app.kubernetes.io/part-of: homelab
-      app.kubernetes.io/managed-by: kustomize
+      app.kubernetes.io/name: knowledge
     includeSelectors: false
 
 resources:
@@ -15,3 +14,6 @@ resources:
   - service-knowledge-ingest.yaml
   - ingress-knowledge.yaml
   - netpol-knowledge.yaml
+
+components:
+  - ../../components/labels

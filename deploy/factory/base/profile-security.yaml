@@ -5,7 +5,6 @@ metadata:
   name: factory-profile-security
   namespace: sandbox
   labels:
-    app.kubernetes.io/part-of: homelab
     factory.gwkline.io/profile: security
 data:
   profile.json: |

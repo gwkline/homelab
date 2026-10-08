@@ -4,33 +4,22 @@ metadata:
   name: factory-sweeper
   namespace: sandbox
   labels:
-    app.kubernetes.io/part-of: homelab
     factory.gwkline.io/component: sweeper
 spec:
   # Turns stale ci-red factory PRs into fix issues, pings green PRs older than
   # 7d, warns on base drift. Never closes or merges.
   schedule: "48 * * * *"
-  concurrencyPolicy: Forbid
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      ttlSecondsAfterFinished: 86400
       activeDeadlineSeconds: 900
-      backoffLimit: 0
       template:
         metadata:
           labels:
             # Reviewer label on purpose: inherits allow-factory-reviewer egress.
             factory.gwkline.io/profile: reviewer
         spec:
-          restartPolicy: Never
           serviceAccountName: factory-reviewer
           automountServiceAccountToken: false
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 1000
-            seccompProfile: { type: RuntimeDefault }
           containers:
             - name: sweeper
               image: ghcr.io/gwkline/homelab/factory/reviewer:latest
@@ -49,11 +38,5 @@ spec:
               resources:
                 requests: { cpu: 100m, memory: 128Mi }
                 limits: { cpu: 500m, memory: 512Mi }
-              securityContext:
-                allowPrivilegeEscalation: false
-                capabilities: { drop: ["ALL"] }
-                readOnlyRootFilesystem: true
               volumeMounts:
                 - { name: tmp, mountPath: /tmp }
-          volumes:
-            - { name: tmp, emptyDir: {} }

@@ -24,7 +24,6 @@ Every runtime credential, where it comes from, and who consumes it. No secret va
 | `work-depot-token` (`token`) | work | `work-depot-token` → `token` | work-t3code (`DEPOT_TOKEN`) | Optional |
 | `knowledge-db` (`username`, `password`, `databaseUrl`) | agents | `knowledge-db` → `username`, `password` | knowledge-ingest, knowledge-retrieval | Same item as `pg-primary-knowledge-owner` |
 | `pg-primary-knowledge-owner` (basic-auth) | database | `knowledge-db` → `username`, `password` | CNPG managed role `knowledge_owner` | CNPG applies a changed password to the role; restart the knowledge Deployments after rotating |
-| `pg-primary-factory-owner` (basic-auth) | database | `factory-db` → `username`, `password` | CNPG managed role `factory_owner` | No client connects as this role yet |
 | `knowledge-api-token` (`token`) | agents, sandbox | `knowledge-api-token` → `token` | knowledge services, panel (optional), factory orchestrator | Admin bearer: every knowledge route, including ingest (`openssl rand -base64 32`) |
 | `knowledge-search-token` (`token`) | agents | `knowledge-search-token` → `token` | knowledge-retrieval (optional) | Read-only bearer, `/v1/search` only; 403 on ingest routes (`openssl rand -base64 32`). Restart knowledge-retrieval after creating or rotating |
 | `panel-auth` (`users`, `tokens`) | agents | `panel-auth` → `users`, `tokens` | panel (optional; read-only without it) | `name=credential` pairs: Tailscale logins allowed to act through the UI, and one bearer token per machine caller. The name is recorded as "requested by" |

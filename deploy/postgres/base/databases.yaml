@@ -3,22 +3,6 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
-  name: pg-primary-factory
-  namespace: database
-spec:
-  name: factory
-  owner: factory_owner
-  cluster:
-    name: pg-primary
-  extensions:
-    - name: vector
-      # Keep in lockstep with the pgvector image in cluster-image-catalog.yaml.
-      version: "0.8.6"
-    - name: pg_textsearch
----
-apiVersion: postgresql.cnpg.io/v1
-kind: Database
-metadata:
   name: pg-primary-knowledge
   namespace: database
 spec:

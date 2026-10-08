@@ -3,10 +3,10 @@
 # that commit, pins each homelab image to the signed build of its inputs, dry
 # runs the result through admission, applies it server-side, and waits for the
 # workloads to roll out. The deployer CronJob runs this every 5 minutes;
-# README.md has the rules.
+# ../README.md has the rules.
 set -eu
 
-# shellcheck source=deploy/deployer/lib.sh
+# shellcheck source=deploy/deployer/base/lib.sh
 . "$(dirname "$0")/lib.sh"
 
 repo=gwkline/homelab
@@ -108,7 +108,7 @@ case "$rc" in
 esac
 
 # Every workload the deployer manages must be rolled out and ready, changed in
-# this pass or not; otherwise the Job fails (README.md: Alerts).
+# this pass or not; otherwise the Job fails (../README.md: Alerts).
 rc=0
 pids=
 workloads <"$rendered" >"$work/workloads"

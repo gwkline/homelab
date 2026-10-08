@@ -1,6 +1,6 @@
 # Egress policy
 
-The normative network posture that `deploy/policies/base/networkpolicy.yaml` and `examples/egress-smoke.mjs` implement.
+The normative network posture that `deploy/policies/base/networkpolicy.yaml` and `scripts/egress-smoke.mjs` implement.
 
 ## Posture
 
@@ -31,13 +31,13 @@ k3s's embedded kube-router installs a pod's firewall chain after the CNI has wir
 
 ## Required destinations
 
-A sandbox pod must reach DNS, GitHub (git, codeload, API), a package registry, and a model API. `./scripts/egress-smoke.sh` runs this working tree's `examples/egress-smoke.mjs` in real pods in `sandbox` and `work` and proves those open and every private target closed, including the API server on the node's LAN address.
+A sandbox pod must reach DNS, GitHub (git, codeload, API), a package registry, and a model API. `./scripts/egress-smoke.sh` runs this working tree's `scripts/egress-smoke.mjs` in real pods in `sandbox` and `work` and proves those open and every private target closed, including the API server on the node's LAN address.
 
 ## Adding an exception
 
 1. Put the allowance beside the workload's manifests, not in `deploy/policies/base`, so one `kubectl apply -k` brings up everything the workload needs.
 2. Scope it with `podSelector` + `namespaceSelector` + ports. Never `ipBlock: 0.0.0.0/0`.
-3. Run `./scripts/egress-smoke.sh`; add new required-destination classes to `examples/egress-smoke.mjs`.
+3. Run `./scripts/egress-smoke.sh`; add new required-destination classes to `scripts/egress-smoke.mjs`.
 
 ## Decisions
 

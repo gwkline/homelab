@@ -3,8 +3,7 @@ kind: Kustomization
 
 labels:
   - pairs:
-      app.kubernetes.io/part-of: homelab
-      app.kubernetes.io/managed-by: kustomize
+      app.kubernetes.io/name: work-t3code
     includeSelectors: false
 
 resources:
@@ -14,3 +13,6 @@ resources:
   - netpol.yaml
   - service.yaml
   - statefulset.yaml
+
+components:
+  - ../../components/labels

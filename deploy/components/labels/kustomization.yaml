@@ -1,0 +1,13 @@
+# The labels every homelab object carries. Each base includes this rather than
+# the root setting them: the deployer renders its target bases on their own,
+# and several bases are applied outside clusters/home, so a root-only label
+# would come and go with how an object was last applied.
+# scripts/rebuild-check.sh finds orphans by app.kubernetes.io/part-of.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: homelab
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false

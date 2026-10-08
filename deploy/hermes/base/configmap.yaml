@@ -3,9 +3,6 @@ kind: ConfigMap
 metadata:
   name: hermes-workspaces
   namespace: agents
-  labels:
-    app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/part-of: homelab
 data:
   # Cloned on start, one URL per line.
   repos: |

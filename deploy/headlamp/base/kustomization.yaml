@@ -4,8 +4,7 @@ namespace: agents
 
 labels:
   - pairs:
-      app.kubernetes.io/part-of: homelab
-      app.kubernetes.io/managed-by: kustomize
+      app.kubernetes.io/name: headlamp
     includeSelectors: false
 
 resources:
@@ -14,3 +13,6 @@ resources:
   - service.yaml
   - ingress.yaml
   - netpol.yaml
+
+components:
+  - ../../components/labels

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Proves the egress policy from real pods in sandbox and work: each Job clones
-# this repo (positive), then runs this working tree's examples/egress-smoke.mjs
+# this repo (positive), then runs this working tree's scripts/egress-smoke.mjs
 # (DNS/GitHub/registries/model API open; Kubernetes API, kubelet, metadata,
 # tailnet, panel and LAN closed). Fails as soon as either Job fails.
 #
@@ -34,7 +34,7 @@ trap cleanup EXIT INT TERM
 
 for ns in $NAMESPACES; do
   kubectl delete job "$NAME" -n "$ns" --ignore-not-found --cascade=foreground --wait=true >/dev/null
-  kubectl create configmap "$NAME" -n "$ns" --from-file=egress-smoke.mjs=examples/egress-smoke.mjs \
+  kubectl create configmap "$NAME" -n "$ns" --from-file=egress-smoke.mjs=scripts/egress-smoke.mjs \
     --dry-run=client -o yaml | kubectl apply --server-side --field-manager=egress-smoke -f - >/dev/null
   kubectl apply -f - >/dev/null <<EOF
 apiVersion: batch/v1

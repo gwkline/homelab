@@ -4,8 +4,6 @@ kind: PersistentVolumeClaim
 metadata:
   name: t3state-work-t3code-0
   namespace: work
-  labels:
-    app.kubernetes.io/part-of: homelab
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:

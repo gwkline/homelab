@@ -3,8 +3,7 @@ kind: Kustomization
 
 labels:
   - pairs:
-      app.kubernetes.io/part-of: homelab
-      app.kubernetes.io/managed-by: kustomize
+      app.kubernetes.io/name: postgres
     includeSelectors: false
 
 resources:
@@ -13,4 +12,6 @@ resources:
   - owner-secrets.yaml
   - databases.yaml
   - netpol.yaml
-  - pdb.yaml
+
+components:
+  - ../../components/labels

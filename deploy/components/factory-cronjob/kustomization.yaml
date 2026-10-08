@@ -1,0 +1,49 @@
+# What every factory CronJob shares, so no CronJob can drift from it. One run
+# at a time; a start missed by more than 5 minutes is skipped, not run late; a
+# failed run is not retried and stays visible for a day. Pods run as uid 1000,
+# unprivileged, on a read-only root filesystem, with an emptyDir `tmp` volume
+# that each container mounts at /tmp. These patches overwrite whatever a
+# CronJob sets for the same fields; schedule, deadline, resources, mounts and
+# env stay in each CronJob.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - target:
+      group: batch
+      kind: CronJob
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: factory-cronjob
+      spec:
+        concurrencyPolicy: Forbid
+        startingDeadlineSeconds: 300
+        successfulJobsHistoryLimit: 3
+        failedJobsHistoryLimit: 3
+        jobTemplate:
+          spec:
+            backoffLimit: 0
+            ttlSecondsAfterFinished: 86400
+            template:
+              spec:
+                restartPolicy: Never
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 1000
+                  seccompProfile: { type: RuntimeDefault }
+                volumes:
+                  - { name: tmp, emptyDir: {} }
+  # Every factory CronJob runs one container; the security scan's clone
+  # initContainer sets its own securityContext.
+  - target:
+      group: batch
+      kind: CronJob
+    patch: |-
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/containers/0/securityContext
+        value:
+          allowPrivilegeEscalation: false
+          capabilities: { drop: [ALL] }
+          readOnlyRootFilesystem: true

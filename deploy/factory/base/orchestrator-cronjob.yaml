@@ -4,31 +4,20 @@ metadata:
   name: factory-orchestrator
   namespace: sandbox
   labels:
-    app.kubernetes.io/part-of: homelab
     factory.gwkline.io/component: orchestrator
 spec:
-  # One issue per tick; Forbid skips overlapping ticks.
-  concurrencyPolicy: Forbid
+  # One issue per tick.
   schedule: "*/10 * * * *"
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      ttlSecondsAfterFinished: 86400
       activeDeadlineSeconds: 3900 # 65 min: covers 3600s worker + publish overhead
-      backoffLimit: 0 # a failed tick stays failed — visible
       template:
         metadata:
           labels:
             factory.gwkline.io/component: orchestrator
         spec:
-          restartPolicy: Never
           serviceAccountName: factory-orchestrator
           automountServiceAccountToken: true # needs k8s API to spawn worker Jobs
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 1000
-            seccompProfile: { type: RuntimeDefault }
           containers:
             - name: orchestrator
               image: ghcr.io/gwkline/homelab/factory/orchestrator:latest
@@ -57,10 +46,6 @@ spec:
               resources:
                 requests: { cpu: 100m, memory: 128Mi }
                 limits: { cpu: 500m, memory: 512Mi }
-              securityContext:
-                allowPrivilegeEscalation: false
-                capabilities: { drop: ["ALL"] }
-                readOnlyRootFilesystem: true
               volumeMounts:
                 - { name: tmp, mountPath: /tmp }
                 - { name: home, mountPath: /home/nonroot }
@@ -68,7 +53,6 @@ spec:
                   mountPath: /secrets-knowledge
                   readOnly: true
           volumes:
-            - { name: tmp, emptyDir: {} }
             - { name: home, emptyDir: {} }
             - name: knowledge-token-for-briefs
               secret:
@@ -126,8 +110,6 @@ kind: NetworkPolicy
 metadata:
   name: allow-factory-orchestrator
   namespace: sandbox
-  labels:
-    app.kubernetes.io/part-of: homelab
 spec:
   podSelector:
     matchLabels:

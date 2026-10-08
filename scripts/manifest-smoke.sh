@@ -33,8 +33,8 @@ KIND_CLUSTER="${SMOKE_KIND_CLUSTER:-manifest-smoke}"
 WAIT_DEPLOY="${SMOKE_WAIT_DEPLOY:-kube-state-metrics,homepage,headlamp}"
 DEPLOY_WAIT="${SMOKE_DEPLOY_WAIT:-300s}"
 JOB_WAIT="${SMOKE_JOB_WAIT:-180s}"
-# Namespaces the rendered set creates or lands in (deploy/namespaces,
-# deploy/tailscale/namespace.yaml); objects anywhere else are out of scope.
+# Namespaces the rendered set creates or lands in (deploy/namespaces/base,
+# deploy/tailscale/base/namespace.yaml); objects anywhere else are out of scope.
 MANAGED_NS="agents sandbox work database tailscale"
 
 KUBECONFIG_PATH="${TMPDIR:-/tmp}/manifest-smoke-kubeconfig"

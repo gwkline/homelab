@@ -33,7 +33,7 @@ export default {
         "apps/knowledge/src/schema.ts",
         "apps/knowledge-ingest/server/worker.ts",
         "apps/panel/server/k8s.ts",
-        "examples/egress-smoke.mjs",
+        "scripts/egress-smoke.mjs",
       ],
       rules: {
         "no-await-in-loop": "off",

@@ -3,9 +3,6 @@ kind: ConfigMap
 metadata:
   name: hermes-skills-sync
   namespace: agents
-  labels:
-    app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/part-of: homelab
 data:
   # gwkline/.dotfiles commit to sync skills from; bump by PR.
   ref: |

@@ -45,13 +45,22 @@ if optional_tool zizmor; then
   zizmor --offline --quiet .github/workflows || fail 'workflow security lint'
 fi
 
+echo '==> kustomize layout'
+# One base per component at deploy/<component>/base (CONTRIBUTING.md), plus
+# shared Components in deploy/components. Every base takes the common labels
+# from deploy/components/labels.
+while IFS= read -r k; do
+  [[ "$k" =~ ^deploy/components/[^/]+/kustomization\.yaml$ ]] && continue
+  [[ "$k" =~ ^deploy/[^/]+/base/kustomization\.yaml$ ]] ||
+    fail "kustomization outside deploy/<component>/base: $k"
+  grep -qx '  - ../../components/labels' "$k" || fail "$k does not include deploy/components/labels"
+done < <(git ls-files -- 'deploy/*kustomization.yaml')
+
 echo '==> kustomize builds'
-# Every base, the non-base kustomizations, and the root (proves the core set
-# renders with no duplicate resource IDs). Renders are kept for the reference
-# checks below.
+# Every base and the root (proves the core set renders with no duplicate
+# resource IDs). Renders are kept for the reference checks below.
 mkdir -p "$work/render"
-for d in deploy/*/base deploy/namespaces deploy/tailscale \
-          clusters/home; do
+for d in deploy/*/base clusters/home; do
   kubectl kustomize "$d" >"$work/render/${d//\//_}.yaml" || fail "kustomize build: $d"
 done
 

@@ -6,15 +6,11 @@ kind: ServiceAccount
 metadata:
   name: t3code-readonly
   namespace: agents
-  labels:
-    app.kubernetes.io/part-of: homelab
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: t3code-cluster-reader
-  labels:
-    app.kubernetes.io/part-of: homelab
 rules:
   - apiGroups: [""]
     resources:
@@ -42,8 +38,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: t3code-cluster-reader
-  labels:
-    app.kubernetes.io/part-of: homelab
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole

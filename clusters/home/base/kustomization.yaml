@@ -6,11 +6,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - ../../../deploy/namespaces
+  - ../../../deploy/namespaces/base
   - ../../../deploy/policies/base
   - ../../../deploy/image-policy/base
   - ../../../deploy/github-tokens/base
-  - ../../../deploy/tailscale
+  - ../../../deploy/tailscale/base
   - ../../../deploy/postgres/base
   - ../../../deploy/cloudbeaver/base
   - ../../../deploy/t3code/base
@@ -22,5 +22,5 @@ resources:
   - ../../../deploy/victoriametrics/base
   - ../../../deploy/grafana/base
   - ../../../deploy/factory/base
-  - ../../../deploy/deployer
+  - ../../../deploy/deployer/base
   - ../../../deploy/work-t3code/base

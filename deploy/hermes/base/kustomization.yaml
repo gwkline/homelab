@@ -3,8 +3,7 @@ kind: Kustomization
 
 labels:
   - pairs:
-      app.kubernetes.io/part-of: homelab
-      app.kubernetes.io/managed-by: kustomize
+      app.kubernetes.io/name: hermes
     includeSelectors: false
 
 resources:
@@ -17,3 +16,6 @@ resources:
   - statefulset.yaml
   - service.yaml
   - netpol.yaml
+
+components:
+  - ../../components/labels
