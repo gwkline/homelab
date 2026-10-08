@@ -36,7 +36,11 @@ Input, mounted read-only at `/task/brief.json` (schema: `apps/factory/worker/bri
 }
 ```
 
-Output: `/out/report.json`, `/out/patch.diff`, and the log stream. Exit 0 plus a valid `report.json` is success; anything else is a failed attempt (one automatic retry).
+Output: `/out/report.json`, `/out/patch.diff`, and the log stream.
+
+- Exit 0 plus a valid `report.json` is success.
+- Exit 78, from the clone step or the worker, means the run **cannot be attempted**: a required input is missing (the private skills, the model key, a valid brief) or the setup is wrong. The worker logs `CANNOT ATTEMPT: <reason>` and reports `tests: cannot-attempt`. The orchestrator parks the issue on `factory/stuck` with that reason and does not retry.
+- Anything else is a failed attempt (one automatic retry).
 
 The patch is the diff from the clone's base commit, agent commits included. Agent CLI and package-manager state (`.opencode/`, `.cursor/`, `.claude/`, `.codex/`, `.local/`, `.cache/`, `*.db`, `*.sqlite*`) is written to `.git/info/exclude` before the agent runs. A patch that still adds such a path, or exceeds `WORKER_PATCH_MAX_BYTES` (512 KiB), is rejected: report `tests: rejected`, no patch artifact, exit 65.
 

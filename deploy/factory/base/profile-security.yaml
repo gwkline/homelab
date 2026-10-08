@@ -20,7 +20,8 @@ data:
         "requests": { "cpu": "500m", "memory": "512Mi", "ephemeral-storage": "1Gi" },
         "limits": { "cpu": "2", "memory": "4Gi", "ephemeral-storage": "8Gi" }
       },
-      "workSizeLimit": "4Gi"
+      "workSizeLimit": "4Gi",
+      "capabilities": ["git", "scanners", "public-https"]
     }
 ---
 # Same egress as code-pr (allow-factory-worker).
