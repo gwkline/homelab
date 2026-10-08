@@ -94,7 +94,7 @@ medic_queued_marker() { # $1 = head sha
 medic_count_marker() { # $1 = repo, $2 = PR number, $3 = marker text
   gh api --paginate --slurp "repos/${1:?repo}/issues/${2:?pr}/comments" 2>/dev/null |
     jq -r --arg m "${3:?marker}" \
-      '[.. | objects | select(.body | contains($m))] | length'
+      '[.. | objects | select(.body? | strings | contains($m))] | length'
 }
 
 #   $1 = repo, $2 = PR number, $3 = head sha
