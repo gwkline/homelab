@@ -1,31 +1,54 @@
-#!/usr/bin/env bash
-# Proves the sandbox egress policy from a real sandbox pod: clones this repo
-# (positive), then runs examples/egress-smoke.mjs — DNS/GitHub/registries/
-# model API open; Kubernetes API, kubelet, metadata, tailnet, panel and LAN
-# closed.
+#!/bin/sh
+# Proves the egress policy from real pods in sandbox and work: each Job clones
+# this repo (positive), then runs this working tree's examples/egress-smoke.mjs
+# (DNS/GitHub/registries/model API open; Kubernetes API, kubelet, metadata,
+# tailnet, panel and LAN closed). Fails as soon as either Job fails.
 #
-# Usage: ./scripts/egress-smoke.sh   (EGRESS_SMOKE_LAN_TARGET=<ip> to override)
-set -euo pipefail
+# Usage: ./scripts/egress-smoke.sh
+#   EGRESS_SMOKE_LAN_TARGET=<ip> EGRESS_SMOKE_LAN_PORT=<port> override the LAN
+#   probe, which defaults to the API server on the node's LAN address: a port
+#   that is always listening, so only the policy can make it unreachable.
+set -eu
 
-NAME="egress-smoke"
-NS="sandbox"
-LAN_TARGET="${EGRESS_SMOKE_LAN_TARGET:-192.168.1.1}"
+cd "$(dirname "$0")/.." || exit 1
 
-kubectl delete job "$NAME" -n "$NS" --ignore-not-found >/dev/null
+NAME=egress-smoke
+NAMESPACES="sandbox work"
+# Jobs normally finish in under a minute; the deadline bounds a hung probe.
+DEADLINE=120
 
-kubectl apply -f - <<EOF
+LAN_TARGET="${EGRESS_SMOKE_LAN_TARGET:-$(kubectl get nodes \
+  -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')}"
+LAN_PORT="${EGRESS_SMOKE_LAN_PORT:-6443}"
+[ -n "$LAN_TARGET" ] || {
+  echo "FAIL: no node InternalIP; set EGRESS_SMOKE_LAN_TARGET" >&2
+  exit 1
+}
+
+cleanup() {
+  for ns in $NAMESPACES; do
+    kubectl delete configmap "$NAME" -n "$ns" --ignore-not-found >/dev/null 2>&1 || true
+  done
+}
+trap cleanup EXIT INT TERM
+
+for ns in $NAMESPACES; do
+  kubectl delete job "$NAME" -n "$ns" --ignore-not-found --cascade=foreground --wait=true >/dev/null
+  kubectl create configmap "$NAME" -n "$ns" --from-file=egress-smoke.mjs=examples/egress-smoke.mjs \
+    --dry-run=client -o yaml | kubectl apply --server-side --field-manager=egress-smoke -f - >/dev/null
+  kubectl apply -f - >/dev/null <<EOF
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: ${NAME}
-  namespace: ${NS}
+  namespace: ${ns}
   labels:
     app.kubernetes.io/part-of: homelab
     app: egress-smoke
 spec:
   backoffLimit: 0
   ttlSecondsAfterFinished: 3600
-  activeDeadlineSeconds: 600
+  activeDeadlineSeconds: ${DEADLINE}
   template:
     metadata:
       labels:
@@ -54,14 +77,19 @@ spec:
               value: /tmp
             - name: EGRESS_SMOKE_LAN_TARGET
               value: "${LAN_TARGET}"
+            - name: EGRESS_SMOKE_LAN_PORT
+              value: "${LAN_PORT}"
             - name: LOOP_COMMAND
               value: |
-                test -f /data/repos/homelab/examples/egress-smoke.mjs \
+                test -d /data/repos/homelab/.git \\
                   || { echo "SMOKE FAIL: repo clone failed" >&2; exit 1; }
-                node /data/repos/homelab/examples/egress-smoke.mjs
+                node /smoke/egress-smoke.mjs
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: smoke
+              mountPath: /smoke
+              readOnly: true
             - name: github-token
               mountPath: /secrets
               readOnly: true
@@ -72,16 +100,67 @@ spec:
         - name: data
           emptyDir:
             sizeLimit: 1Gi
+        - name: smoke
+          configMap:
+            name: ${NAME}
         - name: github-token
           secret:
             secretName: github-token
             optional: true
 EOF
+  echo "==> started job/${NAME} in ${ns} (LAN probe ${LAN_TARGET}:${LAN_PORT})"
+done
 
-status=pass
-kubectl wait --for=condition=complete "job/${NAME}" -n "$NS" --timeout=600s >/dev/null 2>&1 || status=fail
-kubectl logs "job/${NAME}" -n "$NS" --tail=-1 || true
-if [[ "$status" == fail ]]; then
-  kubectl describe job "$NAME" -n "$NS" | tail -n 20 >&2 || true
+# state <ns>: Complete, Failed, or Running. A pod stuck before it can start
+# (image pull, config error) counts as Failed rather than waiting it out.
+state() {
+  conds=$(kubectl get job "$NAME" -n "$1" \
+    -o jsonpath='{range .status.conditions[?(@.status=="True")]}{.type}{" "}{end}' 2>/dev/null) || conds=''
+  case " $conds" in
+    *" Complete "* | *" SuccessCriteriaMet "*) echo Complete; return ;;
+    *" Failed "* | *" FailureTarget "*) echo Failed; return ;;
+  esac
+  waiting=$(kubectl get pods -n "$1" -l "batch.kubernetes.io/job-name=${NAME}" \
+    -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}' 2>/dev/null) || waiting=''
+  case "$waiting" in
+    *ErrImagePull* | *ImagePullBackOff* | *CreateContainerConfigError* | *InvalidImageName*) echo Failed ;;
+    *) echo Running ;;
+  esac
+}
+
+failed=''
+pending="$NAMESPACES"
+start=$(date +%s)
+while [ -n "$pending" ]; do
+  still=''
+  for ns in $pending; do
+    case "$(state "$ns")" in
+      Complete) echo "==> ${ns}: passed" ;;
+      Failed)
+        echo "==> ${ns}: FAILED" >&2
+        failed="$failed $ns"
+        ;;
+      *) still="$still $ns" ;;
+    esac
+  done
+  pending=$still
+  [ -n "$failed" ] && break
+  if [ -n "$pending" ] && [ $(($(date +%s) - start)) -gt $((DEADLINE + 15)) ]; then
+    echo "==> timed out waiting for:$pending" >&2
+    failed="$failed $pending"
+    break
+  fi
+  [ -z "$pending" ] || sleep 2
+done
+
+for ns in $NAMESPACES; do
+  echo "----- ${ns} -----"
+  kubectl logs "job/${NAME}" -n "$ns" --tail=-1 2>/dev/null || true
+done
+if [ -n "$failed" ]; then
+  for ns in $failed; do
+    kubectl describe job "$NAME" -n "$ns" | tail -n 20 >&2 || true
+  done
   exit 1
 fi
+echo "PASS: egress policy holds in: $NAMESPACES"
