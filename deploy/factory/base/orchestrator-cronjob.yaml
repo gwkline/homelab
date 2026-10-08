@@ -24,12 +24,6 @@ spec:
               env:
                 - name: FACTORY_REPO
                   value: gwkline/homelab
-                # The Service VIP is unreachable from sandbox pods; use the
-                # node endpoint, which allow-factory-orchestrator permits.
-                - name: KUBERNETES_SERVICE_HOST
-                  value: 192.168.1.2
-                - name: KUBERNETES_SERVICE_PORT
-                  value: "6443"
                 - name: KNOWLEDGE_SEARCH_URL
                   # Fail-open: a retrieval outage never fails a run.
                   value: http://knowledge-retrieval-http.agents.svc.cluster.local:3000/v1/search
@@ -53,7 +47,7 @@ spec:
                   mountPath: /secrets-knowledge
                   readOnly: true
           volumes:
-            - { name: home, emptyDir: {} }
+            - { name: home, emptyDir: { sizeLimit: 256Mi } }
             - name: knowledge-token-for-briefs
               secret:
                 secretName: knowledge-api-token
@@ -103,8 +97,8 @@ subjects:
   - { kind: ServiceAccount, name: factory-orchestrator, namespace: sandbox }
 ---
 # Covers both orchestrator CronJobs and panel-spawned runs (the panel clones
-# this pod template). Orchestrators need the API server, which the sandbox
-# public-only policy blocks.
+# this pod template). The API server allowance, which carries the node IP, is
+# factory-orchestrator-kube-api in deploy/policies/base/kube-api-egress.yaml.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -115,8 +109,6 @@ spec:
     matchLabels:
       factory.gwkline.io/component: orchestrator
   policyTypes: [Ingress, Egress]
-  # Policy matches after DNAT, so the API server is allowed at its node
-  # endpoint; a Service VIP rule would never match.
   egress:
     - to:
         - namespaceSelector:
@@ -136,9 +128,6 @@ spec:
               - 169.254.0.0/16 # link-local metadata
               - 100.64.0.0/10 # tailnet
       ports: [{ protocol: TCP, port: 443 }]
-    - to: # API server node endpoint
-        - ipBlock: { cidr: 192.168.1.2/32 }
-      ports: [{ protocol: TCP, port: 6443 }]
     - to: # knowledge retrieval
         - namespaceSelector:
             matchLabels:

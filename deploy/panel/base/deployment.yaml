@@ -13,6 +13,7 @@ spec:
       labels:
         app: panel
     spec:
+      priorityClassName: homelab-platform
       serviceAccountName: panel
       automountServiceAccountToken: true
       securityContext:

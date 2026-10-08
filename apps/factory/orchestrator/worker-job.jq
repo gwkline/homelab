@@ -1,7 +1,7 @@
 # Worker Job for one Run, rendered from its RunProfile ConfigMap
 # (deploy/factory/base/profile-*.yaml). The profile owns the image, service
-# account, resources, work-volume size and Job lifetime; the orchestrator
-# supplies only the run's inputs:
+# account, resources, priority class, work-volume size and Job lifetime; the
+# orchestrator supplies only the run's inputs:
 #
 #   jq -n --argjson profile <profile.json> --arg job <name> --arg issue <n> \
 #     --arg repo <owner/name> --arg brief_b64 <b64> --arg worker_cmd <cmd> \
@@ -29,6 +29,7 @@ def restricted: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
       metadata: {labels: {"factory.gwkline.io/profile": $profile.name}},
       spec: {
         restartPolicy: "Never",
+        priorityClassName: $profile.priorityClassName,
         serviceAccountName: $profile.serviceAccount,
         automountServiceAccountToken: false,
         securityContext: {

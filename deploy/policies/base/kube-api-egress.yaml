@@ -121,3 +121,27 @@ spec:
       ports:
         - { protocol: TCP, port: 443 }
         - { protocol: TCP, port: 6443 }
+---
+# Factory orchestrators spawn and watch worker Jobs. Both orchestrator
+# CronJobs and the panel's runs (a copy of their pod template) carry the label.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: factory-orchestrator-kube-api
+  namespace: sandbox
+  labels:
+    homelab.gwkline.io/kube-api-egress: "true"
+spec:
+  podSelector:
+    matchLabels:
+      factory.gwkline.io/component: orchestrator
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.43.0.1/32
+        - ipBlock:
+            cidr: 127.0.0.1/32
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }

@@ -40,7 +40,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: npx ultracite check
+      # ultracite, then knip on the panel (package.json `lint`).
+      - run: npm run lint
       - run: npx oxfmt --check .
       - run: npm run typecheck
       - name: ESM only
