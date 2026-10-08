@@ -76,6 +76,7 @@ COPY apps/t3code/init-workspace.sh /usr/local/bin/init-workspace
 RUN chmod +x /usr/local/bin/init-workspace
 
 ENV DATA_DIR=/data
+USER node
 EXPOSE 3773
 
 ENTRYPOINT ["/usr/local/bin/init-workspace"]

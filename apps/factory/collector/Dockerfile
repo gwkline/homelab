@@ -8,4 +8,5 @@ COPY apps/factory/collector/package.json apps/factory/collector/tsconfig.json ap
 COPY apps/factory/github-app/token-service.ts /app/apps/factory/github-app/token-service.ts
 COPY apps/factory/lib/labels.json /app/apps/factory/lib/labels.json
 ENV NODE_ENV=production
+USER node
 ENTRYPOINT ["node", "--experimental-strip-types", "/app/apps/factory/collector/run-collector.ts"]

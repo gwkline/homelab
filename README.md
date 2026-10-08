@@ -81,6 +81,6 @@ bootstrap/   node setup (k3s, tailscale)
 clusters/    clusters/home: the root kustomization
 deploy/      one kustomize base per component
 docs/        runbooks and ADRs
-images/      third-party images we rebuild (pg_textsearch)
+images/      images not tied to one app: ops (deployer, one-off Jobs), pg-textsearch
 scripts/     operator helpers and checks
 ```

@@ -14,5 +14,6 @@ ENV NODE_ENV=production \
     PORT=3000
 COPY --from=build /src/apps/panel/dist ./dist
 COPY --from=build /src/apps/panel/web/dist ./web/dist
+USER node
 EXPOSE 3000
 CMD ["node", "dist/index.js"]

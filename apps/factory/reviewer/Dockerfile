@@ -18,4 +18,6 @@ COPY apps/factory/reviewer/run-sweeper.sh /reviewer/run-sweeper.sh
 COPY apps/factory/medic/medic-lib.sh /reviewer/medic-lib.sh
 COPY apps/factory/medic/run-medic.sh /reviewer/run-medic.sh
 RUN chmod +x /reviewer/run-reviewer.sh /reviewer/run-sweeper.sh /reviewer/run-medic.sh
+# The pods' runAsUser; the slim base has no user to name.
+USER 1000:1000
 ENTRYPOINT ["/reviewer/run-reviewer.sh"]

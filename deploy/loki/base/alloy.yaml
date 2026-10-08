@@ -17,7 +17,7 @@ data:
     }
 
     // Target labels become Loki stream labels. ONLY bounded, identifier-ish
-    // values are promoted here. Pod env (LOOP_COMMAND command text, issue
+    // values are promoted here. Pod env (JOB_COMMAND command text, issue
     // bodies, tokens) is never read, so it can never become a label —
     // cardinality stays bounded, see deploy/loki/README.md.
     discovery.relabel "pods" {

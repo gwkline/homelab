@@ -1,9 +1,10 @@
 # hadolint config for scripts/verify.sh.
 failure-threshold: warning
 ignored:
-  # apt packages float with the digest-pinned base image; Debian drops
-  # superseded versions, so `pkg=version` pins break rebuilds.
+  # apt and apk packages float with the digest-pinned base image; Debian and
+  # Alpine drop superseded versions, so `pkg=version` pins break rebuilds.
   - DL3008
+  - DL3018
   # `cd` inside a RUN only affects that RUN.
   - DL3003
   # `USER node` is the base image's uid 1000; pod specs set runAsUser.
