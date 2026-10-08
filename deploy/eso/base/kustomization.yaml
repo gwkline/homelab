@@ -18,6 +18,21 @@ patches:
       - op: add
         path: /spec/template/spec/priorityClassName
         value: homelab-platform
+  # The 1Password SDK provider is memory-heavy: a controller restart
+  # reconciles every ExternalSecret at once and peaks above the bundle's
+  # 256Mi limit (OOMKilled in a loop on 2026-10-08).
+  - target:
+      group: apps
+      kind: Deployment
+      namespace: external-secrets
+      name: external-secrets
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 768Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 128Mi
 
 components:
   - ../../components/labels
