@@ -79,8 +79,8 @@ const tcpSpecs = [
   },
   {
     expect: "open",
-    host: "api.openrouter.ai",
-    name: "api.openrouter.ai:443 (model API)",
+    host: "openrouter.ai",
+    name: "openrouter.ai:443 (model API)",
     port: 443,
   },
   // --- negative: cluster + private-network targets -------------------------
