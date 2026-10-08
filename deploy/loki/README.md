@@ -37,7 +37,7 @@ curl -s 'http://localhost:3100/loki/api/v1/query_range' --get \
 
 ## Notes
 
-- If the PVC fills, Loki refuses writes rather than growing. Lower `retention_period` or enlarge the PVC.
+- The 10Gi PVC is not a limit: local-path doesn't enforce sizes, so Loki's chunks share the node disk with everything else. The budget is retention times ingest rate. `ingestion_rate_mb: 1` caps a log flood at about 7 GB/day of compressed chunks ([ADR-005 D3](../../docs/adr/adr-005-metrics-logging-stack.md#d3-retention-and-disk-budget)). If a flood persists, find the noisy workload (`sum by (workload) (bytes_over_time({namespace=~".+"}[1h]))`) or lower `retention_period`.
 - Delivery is at least once: an Alloy restart may re-read lines the kubelet still holds. Logs from pods deleted during a collector outage are lost.
 - Node and journald logs that don't run as pods are out of scope; collecting them would need a privileged DaemonSet.
 - Logs are not backed up.

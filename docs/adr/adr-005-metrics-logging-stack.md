@@ -12,7 +12,6 @@ Steady requests already committed before this stack: t3code 1 CPU / 2Gi, hermes 
 
 ```sh
 kubectl top nodes && kubectl top pods -A --sort-by=memory
-kubectl get pvc -A
 ```
 
 ## D2. Candidates
@@ -27,12 +26,18 @@ Planning figures for ~50k active series and ~15 concurrent pods.
 | Loki + Promtail | — | — | Rejected: Promtail is deprecated upstream |
 | [Loki](https://grafana.com/docs/loki/latest/) single binary + [Grafana Alloy](https://grafana.com/docs/alloy/latest/) | 2 small pods | ≤ 1 GB | **Chosen**: Alloy reads pod logs through the API — no hostPath, baseline-PSA-safe |
 
-## D3. Retention
+## D3. Retention and disk budget
 
-| Data                  | Retention                          | Ceiling  |
-| --------------------- | ---------------------------------- | -------- |
-| Metrics (30 s scrape) | `-retentionPeriod=30d`             | 15Gi PVC |
-| Logs                  | compactor `retention_period: 720h` | 10Gi PVC |
+PVC sizes are not ceilings. local-path doesn't enforce them, the StorageClass has `allowVolumeExpansion: false`, and `kubelet_volume_stats_capacity_bytes` reports the whole node filesystem for every claim. Every claim shares the node's root disk with images, container layers and logs, and the requests add up to more than the disk. What bounds each component is its own guard. The kubelet's eviction threshold is `nodefs.available<10%` (`bootstrap/k3s-config.yaml`), and every guard has to trip before it.
+
+| Data | Retention | Measured | Budget | Guard |
+| --- | --- | --- | --- | --- |
+| Metrics (30 s scrape) | `-retentionPeriod=30d` | ~75 MB per 18 h (`vm_data_size_bytes`), so ~3 GB per 30 d | 5 GB | `-storage.minFreeDiskSpaceBytes=15GB`: read-only while the node has < 15 GB free, above the 10% eviction line on disks up to ~150 GB |
+| Logs | compactor `retention_period: 720h` | 187 MB of chunks in 35 d (`loki_ingester_chunk_stored_bytes_total`) | 10 GB | `ingestion_rate_mb: 1` / burst 4: a sustained flood writes at most ~7 GB/day, so it reaches the budget in about a day and a half |
+
+The other claims on the node have no guard and are budgeted by use. Postgres has 20Gi, hermes 20Gi, t3code and work-t3code 20Gi + 5Gi each, cloudbeaver 1Gi and panel-stats 1Gi. Measure real use on the node with `sudo du -sh /var/lib/rancher/k3s/storage/*`.
+
+Priorities decide what the kubelet evicts under disk or memory pressure. Postgres, Loki and VictoriaMetrics run as `homelab-platform`; factory Jobs are meant to run as `homelab-batch` (`deploy/policies/base/priorityclasses.yaml`). Every long-running pod declares ephemeral-storage requests and limits, and every emptyDir has a `sizeLimit`, so one pod's scratch space cannot fill the node.
 
 30 days outlives every Job TTL in the repo (factory 1 h, ad-hoc 24 h, panel jobs 7 d).
 
@@ -42,7 +47,7 @@ Alloy (one replica, `loki.source.kubernetes`) streams container logs within seco
 
 ## D5. Access
 
-- Only Grafana is exposed: a Tailscale LoadBalancer Service with hostname + tags annotations, ingress from the `tailscale` namespace only.
+- Only Grafana is exposed, on the tailnet through the Tailscale operator (`deploy/tailscale/README.md`); its NetworkPolicy admits only the `tailscale` namespace.
 - VictoriaMetrics, kube-state-metrics, Loki, and Alloy are ClusterIP behind default-deny NetworkPolicies. Their APIs have no auth by design — the netpol plus the tailnet is the boundary; do not expose them.
 - Grafana: anonymous read-only Viewer (tailnet identity is the gate) plus one admin login from Secret `grafana-admin`.
 

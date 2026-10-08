@@ -8,8 +8,10 @@ labels:
     includeSelectors: false
 
 resources:
+  - priorityclasses.yaml
   - networkpolicy.yaml
   - kube-api-egress.yaml
+  - egress-canary.yaml
 
 components:
   - ../../../clusters/home/node
