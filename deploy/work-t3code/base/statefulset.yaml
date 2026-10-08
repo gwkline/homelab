@@ -69,8 +69,10 @@ spec:
             requests:
               cpu: "1"
               memory: 2Gi
+              ephemeral-storage: 1Gi
             limits:
               memory: 6Gi
+              ephemeral-storage: 8Gi
           startupProbe:
             httpGet:
               path: /
