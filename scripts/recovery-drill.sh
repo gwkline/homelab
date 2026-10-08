@@ -120,6 +120,8 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
 kubectl -n tailscale rollout status deploy/operator --timeout="$PROXY_TIMEOUT"
 # values.yaml makes this the default; no proxy starts until it exists.
 kubectl apply -f deploy/tailscale/proxyclass.yaml
+# Every operator namespace exists now: default-deny their ingress (3.7).
+kubectl apply -k deploy/operator-policies/base
 end_stage
 
 # ---------------------------------------------------------------------------
@@ -150,8 +152,21 @@ done
 end_stage
 
 # ---------------------------------------------------------------------------
+# rebuild-check wants a recent deployer success; the first run lands within
+# five minutes of the core set.
+stage deployer
+_tries=0
+until [ -n "$(kubectl -n agents get cronjob deployer -o jsonpath='{.status.lastSuccessfulTime}' 2>/dev/null)" ]; do
+  _tries=$((_tries + 1))
+  [ "$_tries" -lt 48 ] || fail "deployer has not succeeded within 12 minutes: kubectl -n agents get pods -l app=deployer"
+  sleep 15
+done
+end_stage
+
+# ---------------------------------------------------------------------------
+# Cluster phase only: the hermes gateway needs the manual portal login (3.10).
 stage smoke
-./scripts/rebuild-check.sh
+./scripts/rebuild-check.sh --phase cluster
 end_stage
 
 # ---------------------------------------------------------------------------
