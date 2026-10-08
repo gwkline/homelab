@@ -19,7 +19,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: knowledge-ingest
-          image: ghcr.io/gwkline/homelab/knowledge-ingest:latest
+          image: ghcr.io/gwkline/homelab/knowledge:latest
+          command: ["node", "dist/ingest.js"]
           env:
             - name: KNOWLEDGE_INGEST_DATABASE_URL
               valueFrom:

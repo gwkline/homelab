@@ -19,7 +19,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: knowledge-retrieval
-          image: ghcr.io/gwkline/homelab/knowledge-retrieval:latest
+          image: ghcr.io/gwkline/homelab/knowledge:latest
+          command: ["node", "dist/retrieval.js"]
           env:
             - name: KNOWLEDGE_RETRIEVAL_DATABASE_URL
               valueFrom:

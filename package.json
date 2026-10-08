@@ -5,8 +5,6 @@
   "workspaces": [
     "apps/panel",
     "apps/knowledge",
-    "apps/knowledge-ingest",
-    "apps/knowledge-retrieval",
     "apps/factory/collector",
     "apps/factory/github-app"
   ],

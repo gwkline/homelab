@@ -90,7 +90,7 @@ jobs:
       - name: Knowledge suites against Postgres
         env:
           DATABASE_URL: postgresql://postgres:knowledge@localhost:5432/knowledge
-        run: npm test -w apps/knowledge -w apps/knowledge-ingest -w apps/knowledge-retrieval
+        run: npm test -w apps/knowledge
 
   validate:
     runs-on: ubuntu-latest

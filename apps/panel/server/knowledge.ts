@@ -5,7 +5,7 @@
 //   GET  /v1/sources                 → { sources: SourceStatus[] }
 //   POST /v1/sources/:sourceId/sync  → 202 { jobId }
 //   GET  /v1/sync-jobs/:jobId        → SyncJob
-//   POST /v1/search                  → retrieval contract (apps/knowledge-retrieval/server/contract.ts)
+//   POST /v1/search                  → retrieval contract (apps/knowledge/server/retrieval/contract.ts)
 import { readFileSync } from "node:fs";
 
 import { log } from "./log.js";
