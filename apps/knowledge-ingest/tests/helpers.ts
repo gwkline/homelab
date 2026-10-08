@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 
+import type { LogFields, LogLevel, Logger } from "../../knowledge/src/log.ts";
 import { createApp } from "../server/app.ts";
 import { baseConfig } from "../server/config.ts";
 import type { WorkerConfig } from "../server/config.ts";
-import type { LogFields, LogLevel, Logger } from "../server/log.ts";
 import { createMemoryIngestStore } from "../server/memory-store.ts";
 import type { IngestRequestInput, IngestStore } from "../server/store.ts";
 

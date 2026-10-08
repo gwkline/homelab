@@ -26,6 +26,7 @@ import {
 import { migrateKnowledgeSchema } from "../src/schema.ts";
 import { fakePool } from "./fake-pool.ts";
 import type { FakePool } from "./fake-pool.ts";
+import { insertChunkFixtures } from "./live-fixtures.ts";
 
 interface RecordedClient {
   calls: FakePool["calls"];
@@ -583,38 +584,37 @@ test(
         namespace,
       ]);
 
-      const insert = `INSERT INTO chunks
-  (chunk_id, document_id, version_id, namespace, text, anchors, embedding, embedding_model)
-VALUES ($1, $2, 'v1', $3, $4, $5::jsonb, $6::vector, $7)`;
-      const fixtureValues = FIXTURE.map(({ embedding, id }) => [
-        id,
-        `doc-${id}`,
-        namespace,
-        `${id} text`,
-        JSON.stringify([{ end: 4, start: 0, type: "offset" }]),
-        toPgvectorLiteral(padToDimensions(embedding, EMBEDDING_DIMENSIONS)),
-        EMBEDDING_MODEL,
+      await insertChunkFixtures(client, [
+        ...FIXTURE.map(({ embedding, id }) => ({
+          chunkId: id,
+          documentId: `doc-${id}`,
+          embedding: toPgvectorLiteral(
+            padToDimensions(embedding, EMBEDDING_DIMENSIONS)
+          ),
+          embeddingModel: EMBEDDING_MODEL,
+          namespace,
+          text: `${id} text`,
+        })),
+        // Another model generation and a missing embedding must never
+        // surface in results (model migration / missing embedding).
+        {
+          chunkId: "fix-other-model",
+          documentId: "doc-other",
+          embedding: toPgvectorLiteral(
+            padToDimensions(FIXTURE_QUERY, EMBEDDING_DIMENSIONS)
+          ),
+          embeddingModel: "other-model-v0",
+          namespace,
+          text: "other model text",
+        },
+        {
+          chunkId: "fix-null",
+          documentId: "doc-null",
+          embeddingModel: EMBEDDING_MODEL,
+          namespace,
+          text: "null text",
+        },
       ]);
-      // A chunk from another model generation and an un-embedded chunk must
-      // never surface in results (model migration / missing embedding).
-      fixtureValues.push([
-        "fix-other-model",
-        "doc-other",
-        namespace,
-        "other model text",
-        JSON.stringify([{ end: 4, start: 0, type: "offset" }]),
-        toPgvectorLiteral(padToDimensions(FIXTURE_QUERY, EMBEDDING_DIMENSIONS)),
-        "other-model-v0",
-      ]);
-      await Promise.all(
-        fixtureValues.map((values) => client.query(insert, values))
-      );
-      await client.query(
-        `INSERT INTO chunks
-  (chunk_id, document_id, version_id, namespace, text, anchors, embedding, embedding_model)
-VALUES ('fix-null', 'doc-null', 'v1', $1, 'null text', '[]'::jsonb, NULL, $2)`,
-        [namespace, EMBEDDING_MODEL]
-      );
 
       const paddedQuery = padToDimensions(FIXTURE_QUERY, EMBEDDING_DIMENSIONS);
       const exact = await searchPgvectorExact(client, paddedQuery, {

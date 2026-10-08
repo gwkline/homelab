@@ -214,11 +214,11 @@ export const ENQUEUE_JOB_SQL = `WITH ins AS (
             attempts, max_attempts, priority, error, result, payload,
             enqueued_at, started_at, finished_at
 )
-SELECT i.*, TRUE AS duplicate FROM ins i
+SELECT i.*, FALSE AS duplicate FROM ins i
 UNION ALL
 SELECT j.id, j.kind, j.status, j.source_id, j.namespace, j.idempotency_key,
        j.attempts, j.max_attempts, j.priority, j.error, j.result, j.payload,
-       j.enqueued_at, j.started_at, j.finished_at, FALSE AS duplicate
+       j.enqueued_at, j.started_at, j.finished_at, TRUE AS duplicate
 FROM ${INGEST_TABLE} j
 WHERE j.idempotency_key = $3
   AND NOT EXISTS (SELECT 1 FROM ins)`;

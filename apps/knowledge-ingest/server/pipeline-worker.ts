@@ -16,10 +16,10 @@ import { chunkDocumentVersion } from "../../knowledge/src/chunk.ts";
 import type { ChunkFormat } from "../../knowledge/src/chunk.ts";
 import { classifyContent } from "../../knowledge/src/git-source.ts";
 import type { GitSyncReport } from "../../knowledge/src/git-source.ts";
+import type { Logger } from "../../knowledge/src/log.ts";
 import { readGitHubBlob } from "./git-fetch.ts";
 import { syncGitSourceDocuments } from "./git-sync.ts";
 import type { GitManifestStore } from "./git-sync.ts";
-import type { Logger } from "./log.ts";
 import {
   DEFAULT_SOURCE_URL_PREFIXES,
   isAllowedSourceUrl,

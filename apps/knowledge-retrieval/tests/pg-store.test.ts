@@ -216,10 +216,10 @@ test("sourceId filters and superseded status map through the join", async () => 
   const candidate = result.bm25[0] as NonNullable<(typeof result.bm25)[0]>;
   assert.equal(candidate.chunk.version.status, "superseded");
   const bm25Text = pool.queries[0]?.text;
-  assert.doesNotMatch(
+  assert.match(
     bm25Text ?? "",
-    /valid_to/u,
-    "includeSuperseded drops the active-only predicate"
+    /AND "valid_to" IS NULL/u,
+    "BM25 cannot score superseded chunks, so it stays on live ones"
   );
   const join = pool.queries.find((q) => q.text.includes("JOIN document"));
   assert.deepEqual(join?.params?.[1], ["doc-1"], "sourceIds reach the join");

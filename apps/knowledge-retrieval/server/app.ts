@@ -1,8 +1,17 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { createMiddleware } from "hono/factory";
 
+import { fuseReciprocalRank } from "../../knowledge/src/fusion.ts";
+import type { ChannelRanking } from "../../knowledge/src/fusion.ts";
+import {
+  bearerTokenMatches,
+  requestIdMiddleware,
+  requestLogMiddleware,
+} from "../../knowledge/src/http.ts";
+import type { RequestEnv } from "../../knowledge/src/http.ts";
+import type { Logger } from "../../knowledge/src/log.ts";
 import type { RetrievalConfig } from "./config.ts";
 import {
   buildContract,
@@ -10,19 +19,12 @@ import {
   errorSchema,
   searchResponseSchema,
 } from "./contract.ts";
-import type { Logger } from "./log.ts";
 import { renderMetrics } from "./metrics.ts";
-import { reciprocalRankFusion } from "./rank.ts";
-import type { FusedCandidate } from "./rank.ts";
 import type {
   EmbeddingReport,
   RankedCandidate,
   RetrievalStore,
 } from "./store.ts";
-
-interface AppEnv {
-  Variables: { requestId: string };
-}
 
 /** The search token may only search; everything else needs the admin token. */
 const SEARCH_SCOPE_ROUTES = new Set(["/v1/search"]);
@@ -54,18 +56,6 @@ export const withTimeout = async <T>(
   }
 };
 
-const tokenFingerprint = (token: string): Buffer =>
-  createHash("sha256").update(token).digest();
-
-const bearerTokenMatches = (header: string, expected: string): boolean => {
-  const match = /^Bearer\s+(?<token>.+)$/u.exec(header);
-  const token = match?.groups?.["token"];
-  if (!token) {
-    return false;
-  }
-  return timingSafeEqual(tokenFingerprint(token), tokenFingerprint(expected));
-};
-
 const roundScore = (value: number): number => Number(value.toFixed(6));
 
 const READY_TIMEOUT_MS = 2000;
@@ -78,10 +68,10 @@ export interface AppDeps {
   logger: Logger;
 }
 
-export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
+export const createApp = (deps: AppDeps): OpenAPIHono<RequestEnv> => {
   const { config, store, logger } = deps;
   const contract = buildContract(config);
-  const app = new OpenAPIHono<AppEnv>({
+  const app = new OpenAPIHono<RequestEnv>({
     defaultHook: (result, c) => {
       if (!result.success) {
         logger.warn("request validation failed", {
@@ -101,40 +91,15 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
     },
   });
 
-  app.use(
-    "*",
-    createMiddleware<AppEnv>(async (c, next) => {
-      const header = c.req.header("x-request-id") ?? "";
-      c.set(
-        "requestId",
-        /^[\w.-]{8,128}$/u.test(header) ? header : `req_${randomUUID()}`
-      );
-      return await next();
-    })
-  );
-
-  app.use(
-    "*",
-    createMiddleware<AppEnv>(async (c, next) => {
-      const startedAt = performance.now();
-      // eslint-disable-next-line node/callback-return -- hono middleware intentionally logs after next() resolves
-      await next();
-      logger.info("request", {
-        durationMs: Math.round((performance.now() - startedAt) * 1000) / 1000,
-        method: c.req.method,
-        path: c.req.path,
-        requestId: c.get("requestId"),
-        status: c.res.status,
-      });
-    })
-  );
+  app.use("*", requestIdMiddleware());
+  app.use("*", requestLogMiddleware(logger));
 
   // Network policy limits reachability; this constant-time bearer check is
   // the application-layer gate. Scope is deny-by-default: the search token
   // reaches only the routes listed for it.
   app.use(
     "/v1/*",
-    createMiddleware<AppEnv>(async (c, next) => {
+    createMiddleware<RequestEnv>(async (c, next) => {
       const header = c.req.header("authorization") ?? "";
       if (bearerTokenMatches(header, config.token)) {
         return await next();
@@ -255,35 +220,44 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
         config.requestTimeoutMs
       );
 
-      let fused: FusedCandidate<RankedCandidate>[];
-      if (mode === "bm25") {
-        fused = reciprocalRankFusion(
-          [{ items: channels.bm25, key: "bm25" }],
-          getId,
-          config.rrfK
-        );
-      } else if (mode === "vector") {
-        fused = reciprocalRankFusion(
-          [{ items: channels.vector, key: "vector" }],
-          getId,
-          config.rrfK
-        );
-      } else {
-        fused = reciprocalRankFusion(
-          [
-            { items: channels.bm25, key: "bm25" },
-            { items: channels.vector, key: "vector" },
-          ],
-          getId,
-          config.rrfK
-        );
+      const rankings: ChannelRanking[] = [];
+      if (mode !== "vector") {
+        rankings.push({
+          candidates: channels.bm25.map(getId),
+          channel: "bm25",
+        });
       }
+      if (mode !== "bm25") {
+        rankings.push({
+          candidates: channels.vector.map(getId),
+          channel: "vector",
+        });
+      }
+      const chunks = new Map(
+        [...channels.bm25, ...channels.vector].map((candidate) => [
+          getId(candidate),
+          candidate.chunk,
+        ])
+      );
+      const fused = fuseReciprocalRank(rankings, { k: config.rrfK }).flatMap(
+        (candidate) => {
+          const chunk = chunks.get(candidate.chunkId);
+          return chunk === undefined ? [] : [{ ...candidate, chunk }];
+        }
+      );
+      // Each channel's share of the fused score.
+      const channelScore = (
+        rank: number | undefined
+      ): { rank: number; score: number } | null =>
+        rank === undefined
+          ? null
+          : { rank, score: roundScore(1 / (config.rrfK + rank)) };
 
       const payload = searchResponseSchema.parse({
         mode,
         namespace,
         results: fused.slice(0, topK).map((fusedCandidate, index) => {
-          const { chunk } = fusedCandidate.item;
+          const { chunk } = fusedCandidate;
           return {
             anchors: chunk.anchors,
             chunkId: chunk.chunkId,
@@ -291,18 +265,12 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
             namespace: chunk.namespace,
             provenance: chunk.provenance,
             scores: {
-              bm25: fusedCandidate.bm25 && {
-                rank: fusedCandidate.bm25.rank,
-                score: roundScore(fusedCandidate.bm25.score),
-              },
+              bm25: channelScore(fusedCandidate.ranks["bm25"]),
               fused: {
                 rank: index + 1,
-                score: roundScore(fusedCandidate.fusedScore),
+                score: roundScore(fusedCandidate.score),
               },
-              vector: fusedCandidate.vector && {
-                rank: fusedCandidate.vector.rank,
-                score: roundScore(fusedCandidate.vector.score),
-              },
+              vector: channelScore(fusedCandidate.ranks["vector"]),
             },
             source: chunk.source,
             tags: chunk.tags,
