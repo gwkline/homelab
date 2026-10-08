@@ -87,11 +87,7 @@ test("concurrent transactions and pool queries never share a connection", async 
   assert.equal(releases.length, 2);
 });
 
-const KNOWLEDGE_SOURCE_DIRS = [
-  "knowledge/src",
-  "knowledge-ingest/server",
-  "knowledge-retrieval/server",
-];
+const KNOWLEDGE_SOURCE_DIRS = ["knowledge/src", "knowledge/server"];
 
 const sourceFiles = (dir: string): string[] =>
   readdirSync(dir, { recursive: true, withFileTypes: true })

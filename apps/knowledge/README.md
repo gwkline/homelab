@@ -2,15 +2,17 @@
 
 Hybrid retrieval library for the homelab knowledge base: ingest sources into Postgres, rank chunks with BM25 and pgvector, and fuse the two rankings into one deterministic list of cited chunks. It ends at ranked chunks; there is no answer generation.
 
-Two services build on it (see `deploy/knowledge/README.md`):
+The two services live here too, built into one image (`Dockerfile`) with one bundle per entrypoint; each Deployment picks its own (see `deploy/knowledge/README.md`):
 
-- **`apps/knowledge-ingest`** runs the durable queue: `source_sync` jobs call `src/git-source.ts`, and `document-version` jobs call `processDocumentVersion`.
-- **`apps/knowledge-retrieval`** serves `POST /v1/search` using the channel queries here and RRF fusion. Without `DATABASE_URL` it falls back to an in-memory store.
+- **`server/ingest.ts`** (`server/ingest/`) runs the durable queue: `source_sync` jobs call `src/git-source.ts`, and `document-version` jobs call `processDocumentVersion`.
+- **`server/retrieval.ts`** (`server/retrieval/`) serves `POST /v1/search` using the channel queries here and RRF fusion. Without `DATABASE_URL` it falls back to an in-memory store.
+
+Shared HTTP, auth, logging and store errors are in `src/`. The bundles inline everything except `pg`, the one runtime dependency in `package.json`.
 
 ## Run
 
 ```sh
-npm test -w apps/knowledge       # offline unit tests
+npm test -w apps/knowledge       # builds both bundles, then every suite (offline)
 npm run typecheck -w apps/knowledge
 npm run eval -w apps/knowledge   # retrieval eval; --json, --subset, --out run.json
 ```
@@ -21,7 +23,7 @@ The live-database tests are skipped unless `DATABASE_URL` points at a Postgres w
 docker build -t knowledge-pg apps/knowledge/tests/postgres   # amd64; add --platform linux/amd64 elsewhere
 docker run -d --rm -p 5432:5432 -e POSTGRES_PASSWORD=knowledge -e POSTGRES_DB=knowledge knowledge-pg
 DATABASE_URL=postgresql://postgres:knowledge@localhost:5432/knowledge \
-  npm test -w apps/knowledge -w apps/knowledge-ingest -w apps/knowledge-retrieval
+  npm test -w apps/knowledge
 ```
 
 `tests/embed-smoke.test.ts` calls a real embedding provider only when `KNOWLEDGE_EMBEDDING_SMOKE_URL` is set.
@@ -55,7 +57,7 @@ DATABASE_URL=postgresql://postgres:knowledge@localhost:5432/knowledge \
 
 ## Evaluation
 
-`eval/` compares BM25-only, vector-only, and fused retrieval over a small committed corpus (`eval/corpus.ts`) and hand-labeled channel fixtures (`eval/fixtures.ts`). Channel rankings come from eval-local scorers (`eval/rank.ts`), not from `src/`, so a broken retriever shows up as a metric drop. Fusion is the real `src/fusion.ts`. The production path is gated separately: `apps/knowledge-retrieval/tests/eval-production.test.ts` ingests the same corpus with `processDocumentVersion` and scores `/v1/search` against Postgres.
+`eval/` compares BM25-only, vector-only, and fused retrieval over a small committed corpus (`eval/corpus.ts`) and hand-labeled channel fixtures (`eval/fixtures.ts`). Channel rankings come from eval-local scorers (`eval/rank.ts`), not from `src/`, so a broken retriever shows up as a metric drop. Fusion is the real `src/fusion.ts`. The production path is gated separately: `tests/retrieval/eval-production.test.ts` ingests the same corpus with `processDocumentVersion` and scores `/v1/search` against Postgres.
 
 The metrics are Recall@5, MRR@5, precision, citation accuracy, no-answer correctness, and latency. Every run records git SHA, schema version, embedding model, chunker version, and retrieval config.
 

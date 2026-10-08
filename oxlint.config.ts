@@ -31,7 +31,7 @@ export default {
         "apps/knowledge/src/git-source.ts",
         "apps/knowledge/src/ingest.ts",
         "apps/knowledge/src/schema.ts",
-        "apps/knowledge-ingest/server/worker.ts",
+        "apps/knowledge/server/ingest/worker.ts",
         "apps/panel/server/k8s.ts",
         "scripts/egress-smoke.mjs",
       ],

@@ -60,7 +60,7 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(("127.0.0.1", int(os.environ["STUB_PORT"])), Handler).serve_forever()
 PYEOF
 
-# Result shape mirrors apps/knowledge-retrieval contract.ts (subset used).
+# Result shape mirrors apps/knowledge/server/retrieval/contract.ts (subset used).
 result() { # $1=chunk-id $2=score $3=source-id $4=text
   printf '{"anchors": [{"type": "heading", "value": "H"}], "chunkId": "%s", "documentId": "doc-%s", "namespace": "stub-docs", "provenance": {"ingestedAt": "2026-09-01T00:00:00Z", "ingestionEventId": "ing-1"}, "scores": {"bm25": {"rank": 1, "score": -3.2}, "fused": {"rank": 1, "score": %s}, "vector": null}, "source": {"kind": "file", "path": "%s", "sourceId": "%s", "url": null}, "tags": [], "text": "%s", "title": "T %s", "version": {"commit": "c1", "createdAt": "2026-09-01T00:00:00Z", "status": "current", "versionId": "v1"}}' "$1" "$1" "$2" "$3" "$3" "$4" "$1"
 }

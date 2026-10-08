@@ -264,11 +264,8 @@ test("the schema version reads 0 before the ledger exists, then its newest id", 
 const KNOWLEDGE_DIRS = [
   "knowledge/src",
   "knowledge/eval",
+  "knowledge/server",
   "knowledge/tests",
-  "knowledge-ingest/server",
-  "knowledge-ingest/tests",
-  "knowledge-retrieval/server",
-  "knowledge-retrieval/tests",
 ];
 
 test("every table is defined once, in schema.ts", () => {

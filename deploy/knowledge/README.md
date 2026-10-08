@@ -1,6 +1,6 @@
 # Knowledge
 
-Two services in `agents` over the `knowledge` database ([deploy/postgres](../postgres/README.md)):
+Two Deployments in `agents` over the `knowledge` database ([deploy/postgres](../postgres/README.md)), both running the `knowledge` image ([apps/knowledge](../../apps/knowledge/README.md)) with their own entrypoint:
 
 - `knowledge-ingest`: queue API (`/v1/ingest`, `/v1/sources`, `/v1/sync-jobs`) and a worker that fetches git sources or URLs, then chunks, embeds, and upserts. Cluster-internal only.
 - `knowledge-retrieval`: `POST /v1/search` (BM25 + vector, RRF fusion, cited chunks), plus a passthrough to ingest so clients need one base URL. Exposed at `https://knowledge.<tailnet>`.
