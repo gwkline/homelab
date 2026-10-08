@@ -1,5 +1,10 @@
 import { readFileSync } from "node:fs";
 
+import {
+  DEFAULT_SOURCE_URL_PREFIXES,
+  sourceUrlPrefixesFromEnv,
+} from "./source-url.ts";
+
 export interface IngestConfig {
   port: number;
   /** Secret-backed bearer token (required; the service fails closed). */
@@ -9,6 +14,8 @@ export interface IngestConfig {
   /** Apply pending schema migrations at startup; the only place DDL runs. */
   applySchemaOnBoot: boolean;
   pool: PoolConfig;
+  /** Source URLs must start with one of these https prefixes. */
+  sourceUrlPrefixes: string[];
   workerEnabled: boolean;
   worker: WorkerConfig;
 }
@@ -166,6 +173,7 @@ export const configFromEnv = (
       ),
     },
     port: positiveInt(env, "PORT", CONFIG_DEFAULTS.port),
+    sourceUrlPrefixes: sourceUrlPrefixesFromEnv(env),
     token,
     worker,
     workerEnabled:
@@ -186,6 +194,7 @@ export const baseConfig = (
     statementTimeoutMs: CONFIG_DEFAULTS.statementTimeoutMs,
   },
   port: CONFIG_DEFAULTS.port,
+  sourceUrlPrefixes: [...DEFAULT_SOURCE_URL_PREFIXES],
   token,
   worker: {
     claimBatchSize: CONFIG_DEFAULTS.claimBatchSize,

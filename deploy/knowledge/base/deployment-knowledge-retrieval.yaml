@@ -28,6 +28,9 @@ spec:
                   key: databaseUrl
             - name: KNOWLEDGE_RETRIEVAL_TOKEN_FILE
               value: /secrets/token
+            # Read-only token: /v1/search only. Absent until provisioned.
+            - name: KNOWLEDGE_RETRIEVAL_SEARCH_TOKEN_FILE
+              value: /secrets-search/token
             - name: KNOWLEDGE_INGEST_BASE_URL
               value: http://knowledge-ingest.agents.svc.cluster.local:3100
             - name: KNOWLEDGE_INGEST_TOKEN_FILE
@@ -51,6 +54,9 @@ spec:
             - name: knowledge-token
               mountPath: /secrets
               readOnly: true
+            - name: knowledge-search-token
+              mountPath: /secrets-search
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /healthz
@@ -69,6 +75,13 @@ spec:
         - name: knowledge-token
           secret:
             secretName: knowledge-api-token
+            items:
+              - key: token
+                path: token
+        - name: knowledge-search-token
+          secret:
+            secretName: knowledge-search-token
+            optional: true
             items:
               - key: token
                 path: token

@@ -21,6 +21,7 @@ import {
   GIT_SOURCE_TOKEN_ENV,
   GIT_SOURCE_TOKEN_FILE_ENV,
   gitProcessEnv,
+  gitTransport,
   isBinaryExtension,
   isDefaultExcluded,
   looksSecretNamed,
@@ -264,7 +265,11 @@ test("config validation: urls, refs, namespace, patterns, token", () => {
 test("token is carried in env-scoped git config, never in argv or plain env", () => {
   const withToken = gitProcessEnv("ghp_super-secret-token-123456");
   assert.equal(withToken.GIT_TERMINAL_PROMPT, "0");
-  assert.equal(withToken.GIT_CONFIG_KEY_0, "http.extraheader");
+  assert.equal(withToken.GIT_ALLOW_PROTOCOL, "https");
+  assert.equal(
+    withToken.GIT_CONFIG_KEY_0,
+    "http.https://github.com/.extraheader"
+  );
   assert.match(withToken.GIT_CONFIG_VALUE_0 ?? "", /^Authorization: Basic /u);
   assert.equal(
     withToken.GIT_CONFIG_VALUE_0?.includes("ghp_super-secret-token-123456"),
@@ -273,6 +278,53 @@ test("token is carried in env-scoped git config, never in argv or plain env", ()
   const withoutToken = gitProcessEnv(null);
   assert.equal(withoutToken.GIT_CONFIG_COUNT, undefined);
   assert.equal(withoutToken.GIT_TERMINAL_PROMPT, "0");
+});
+
+test("git sends the token header to github.com and nowhere else", () => {
+  const env = gitProcessEnv("ghp_super-secret-token-123456");
+  const headerFor = (url: string): string | null => {
+    try {
+      return execFileSync(
+        "git",
+        ["config", "--get-urlmatch", "http.extraheader", url],
+        { encoding: "utf-8", env, stdio: ["ignore", "pipe", "ignore"] }
+      ).trim();
+    } catch {
+      return null;
+    }
+  };
+  assert.match(
+    headerFor("https://github.com/gwkline/homelab") ?? "",
+    /^Authorization: Basic /u
+  );
+  for (const url of [
+    "https://attacker.example/gwkline/homelab",
+    "https://github.com.attacker.example/x/y",
+    "http://github.com/gwkline/homelab",
+    "https://gist.github.com/x",
+  ]) {
+    assert.equal(headerFor(url), null, url);
+  }
+});
+
+test("git may only use the repository's own transport", async (t) => {
+  assert.equal(gitTransport("https://github.com/gwkline/homelab"), "https");
+  assert.equal(gitTransport("git@github.com:gwkline/homelab.git"), "ssh");
+  assert.equal(gitTransport("/srv/repos/notes"), "file");
+  assert.equal(gitTransport("file:///srv/repos/notes"), "file");
+
+  const fixture = await createFixtureRepository();
+  t.after(fixture.cleanup);
+  assert.throws(
+    () =>
+      execFileSync(
+        "git",
+        ["clone", "--bare", fixture.repoDir, path.join(fixture.root, "copy")],
+        { env: gitProcessEnv(null), stdio: "pipe" }
+      ),
+    /transport 'file' not allowed/u,
+    "an https-only git refuses a local path"
+  );
 });
 
 test("document ids are deterministic, UUID-shaped, and path-scoped", () => {
