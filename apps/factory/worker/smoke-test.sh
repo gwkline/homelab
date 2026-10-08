@@ -31,6 +31,13 @@ done
 PRIVILEGED=$(find / -xdev -type f -perm /6000 2>/dev/null || true)
 [ -z "${PRIVILEGED}" ] || fail "setuid/setgid files present: $(printf '%s' "${PRIVILEGED}" | tr '\n' ' ')"
 
+# The agent runs as this user; it must not be able to change what the worker
+# executes or sources after it (#431).
+for f in /usr/local/bin/entrypoint /usr/local/bin/prepare /usr/local/bin/smoke-test \
+  /usr/local/lib/skills-lib.sh /usr/local/bin /usr/local/lib; do
+  [ ! -w "$f" ] || fail "writable by $(id -un): $f"
+done
+
 # Pinned verification skills: content sha must match the manifest.
 SKILLS_DIR="${FACTORY_SKILLS_DIR:-/usr/local/share/worker/skills}"
 python3 - "${SKILLS_DIR}" << 'EOF'
