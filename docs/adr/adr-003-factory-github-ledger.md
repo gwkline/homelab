@@ -88,7 +88,7 @@ Re-arm a sweep by deleting the `factory:sweep:filed` comment. Dry run: `FACTORY_
 
 ## Panel API (tailnet-only)
 
-Every mutation needs a caller: an allowlisted Tailscale login arriving through the panel's own Tailscale proxy from the panel page itself, or a bearer token (one per Executor connection). Both come from Secret `panel-auth`, which maps each to a name; that name is the Run's "requested by". Cross-site requests are refused (`apps/panel/server/auth.ts`).
+Every mutation needs a caller: an allowlisted Tailscale login arriving through the panel's own Tailscale proxy from the panel page itself, or a bearer token (one per machine caller, such as each Executor connection). Both come from Secret `panel-auth`, which maps each to a name; that name is the Run's "requested by". Cross-site requests are refused (`apps/panel/server/auth.ts`).
 
 | Endpoint | Purpose |
 | --- | --- |

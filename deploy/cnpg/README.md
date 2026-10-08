@@ -16,8 +16,8 @@ The admission webhooks are `failurePolicy: Fail`: `Cluster`/`Database` creates f
 
 ## Notes
 
-- `cnpg-system` has no NetworkPolicy on purpose. The API server must always reach the webhooks; a default-deny here blocks every Cluster create/update. Isolation lives in `deploy/postgres/base/netpol.yaml`.
-- Metrics: the manager serves Prometheus text on port 8080 and carries `prometheus.io/scrape` annotations, which VictoriaMetrics discovers. Per-Cluster `PodMonitor` stays off (no Prometheus-operator CRDs here).
+- `cnpg-system` ingress is default-deny except the webhook port, 9443, which the API server must always reach (`deploy/operator-policies/base`, applied after the operators). Postgres's own isolation lives in `deploy/postgres/base/netpol.yaml`.
+- Nothing scrapes the manager's metrics: VictoriaMetrics doesn't discover pods by annotation, and the netpol admits only the webhook. Per-Cluster `PodMonitor` stays off (no Prometheus-operator CRDs here).
 
 ## Upgrade
 

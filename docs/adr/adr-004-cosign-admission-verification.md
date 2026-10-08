@@ -1,18 +1,18 @@
 # ADR-004: Enforce cosign image verification at admission — sigstore policy-controller
 
-**Status:** Accepted, implemented (`deploy/image-policy/base`) **Deciders:** Gavin Kline
+**Status:** Accepted, implemented (`deploy/image-policy/base`, enforcing in `agents`, `sandbox` and `work`) **Deciders:** Gavin Kline
 
 ## Context
 
-CI signs every homelab image keylessly with cosign on push to `main` (`.github/workflows/ci.yaml`, `id-token: write` + `cosign sign`) and moves `:latest` only after signing. Without admission enforcement, nothing stops a pod from running an unsigned or foreign-signed `ghcr.io/gwkline/homelab/**` image.
+CI signs every homelab image keylessly with cosign on push to `main` (`.github/workflows/ci.yaml`, `id-token: write` + `cosign sign`) and tags `sha-<short>` and `:latest` only after signing. Without admission enforcement, nothing stops a pod from running an unsigned or foreign-signed `ghcr.io/gwkline/homelab/**` image.
 
-Constraints: old k3s nodes (8 GB+ RAM, shared with dind/Chromium/agent workspaces), no GitOps controller (ADR-006), and a reluctance to add controllers and CRDs. GHCR packages may be private.
+Constraints: one k3s node whose memory is shared with agent workspaces, no GitOps controller (ADR-006), and a reluctance to add controllers and CRDs. GHCR packages may be private.
 
 ## Options
 
 ### A. CI-only verification (interim, not enough alone)
 
-Run `cosign verify` in CI against every digest a manifest deploys. Zero cluster cost, but the control never reaches the cluster: any path that creates pods outside CI (a compromised deploy script, a manually applied manifest, an agent with Job-creation RBAC — panel, the factory, hermes via executor) runs images with no signature check. Rejected.
+Run `cosign verify` in CI against every digest a manifest deploys. Zero cluster cost, but the control never reaches the cluster: any path that creates pods outside CI (a compromised deploy script, a manually applied manifest, a workload with Job-creation RBAC — the panel and the factory orchestrator) runs images with no signature check. Rejected.
 
 ### B. sigstore policy-controller (chosen)
 

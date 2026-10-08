@@ -4,7 +4,7 @@
 
 ## Context
 
-The cluster is described by root Kustomize (`clusters/home`) plus per-component bases in `deploy/`. A handful of operators are installed out of band: ESO and CNPG (server-side applies from git), and policy-controller and tailscale-operator (Helm). Hardware is old servers with 8 GB+ RAM per node; every MiB is shared with dind, Chromium, and agent workspaces.
+The cluster is described by root Kustomize (`clusters/home`) plus per-component bases in `deploy/`. A handful of operators are installed out of band: ESO and CNPG (server-side applies from git), and policy-controller and tailscale-operator (Helm). Hardware is old servers; the cluster is one node with 32 CPUs and 64 GiB, shared with agent workspaces.
 
 Continuous delivery today is `deploy/deployer`:
 
@@ -16,7 +16,7 @@ Everything else (namespaces, policies, services, config, operators, the deployer
 
 ## Options
 
-- **A. Adopt Flux now.** Merge-to-deployed for every manifest, continuous drift correction and prune, HelmReleases for the operators. Costs: four controllers and their CRDs on the recovery path, a second credential at bootstrap (Flux's git key), debugging through `Kustomization`/`HelmRelease` status instead of `kubectl diff`, and prune risk on a cluster that deliberately runs out-of-band objects (hermes-created Jobs).
+- **A. Adopt Flux now.** Merge-to-deployed for every manifest, continuous drift correction and prune, HelmReleases for the operators. Costs: four controllers and their CRDs on the recovery path, a second credential at bootstrap (Flux's git key), debugging through `Kustomization`/`HelmRelease` status instead of `kubectl diff`, and prune risk on a cluster that deliberately runs out-of-band objects (Jobs created by the panel and the factory orchestrator).
 - **B. Defer (chosen).** The highest-frequency change class (new images, factory manifests) is already automated by the deployer for one short Job every 5 minutes. Revisit on the triggers in D5.
 - **C. Reject outright.** Rejected: the factory is building toward higher merge rates, and Helm-managed operators are accumulating; a permanent "no" forces a worse choice later.
 
@@ -40,7 +40,7 @@ Identical under both options: one hand-entered 1Password service-account token, 
 
 ### D3. Steady-state cost (estimate, unmeasured)
 
-A minimal Flux install (source, kustomize, helm, notification controllers) is ~300–500 Mi RSS combined (~4–6% of one node) and ~1–3% of a core. It would displace only the deployer's short Jobs. Measure before adopting:
+A minimal Flux install (source, kustomize, helm, notification controllers) is ~300–500 Mi RSS combined (under 1% of today's 64 GiB node; 4–6% of the 8 GB nodes this was first weighed against) and ~1–3% of a core. It would displace only the deployer's short Jobs. Measure before adopting:
 
 ```sh
 kubectl top pods -n flux-system --sum
@@ -66,9 +66,11 @@ Install Flux when a timed rebuild passes with zero out-of-band fixes **and** any
 3. A drift incident outside the deployer's targets causes an outage continuous reconciliation would have prevented;
 4. Rebuild timing shows applies are a meaningful share of recovery time.
 
+Trigger 1 holds: the reviewer squash-merges green factory PRs without a human. No timed rebuild has been recorded yet ([rebuild runbook](../rebuild-runbook.md) section 5), so the first condition is unmet and Flux stays deferred.
+
 ## Consequences
 
 - No new controllers, CRDs, or credentials.
-- Images and workload specs roll out within one deployer pass of a merge; rollback is `kubectl rollout undo` or reverting the commit.
+- Images and workload specs roll out within one deployer pass of a merge going green. Rollback is reverting the commit; `kubectl rollout undo` lasts only until the next pass unless the deployer is suspended.
 - Manifests outside the deployer's targets, and changes to `deploy/deployer` itself, still need a manual apply after merge.
-- If the deployer grows a second feature (pruning, health gating), re-read this ADR.
+- If the deployer grows a second feature (pruning, health gating), re-read this ADR. It now deploys only commits whose `ci` passed and fails a pass whose workloads don't roll out, so that re-read is due.

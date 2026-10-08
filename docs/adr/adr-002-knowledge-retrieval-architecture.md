@@ -1,6 +1,6 @@
 # ADR-002: Knowledge architecture — Postgres-native hybrid retrieval
 
-**Status:** Implemented (items 6–7 of D14 deferred) **Deciders:** Gavin Kline
+**Status:** Implemented, except D4 (not built), D6's embedding provider (none configured, so search is BM25-only) and D14 items 6–7 (deferred) **Deciders:** Gavin Kline
 
 **What shipped (D14 map):** 1 — schema (`src/schema.ts`); 2 — ingest worker (`src/ingest.ts`); 3a/3b — BM25 (`src/bm25.ts`) and pgvector (`src/pgvector.ts`) channels; 4 — HTTP surface (`server/retrieval.ts`); 5 — eval harness against both channels. The service layer landed with the vertical completion: `server/ingest.ts` runs the real pipeline (queue contracts + git-source sync + `processDocumentVersion`) and `server/retrieval.ts` runs the Postgres store + RRF fusion with the sources/sync passthrough. Both are entrypoints of the one `apps/knowledge` package and image, deployed as two Deployments from `deploy/knowledge/base`. Ingest owns the schema: every table is a numbered migration in `src/schema.ts`, applied under an advisory lock, and retrieval only checks the applied version. `/v1/search` fuses with `src/fusion.ts`. Still deferred by design: 6 — lifecycle (tombstone API surfaced; the GC job and re-embed backfill runner are follow-ups), 7 — graph (gated by [ADR-008](adr-008-knowledge-graph-expansion-gate.md)).
 
@@ -76,15 +76,17 @@ Provenance is not a separate table in phase one: a chunk's provenance **is** its
 
 Raw bytes (original files/HTML) go to the panel PVC: `/data/knowledge-raw/<namespace>/<sha256>`. Postgres stores extracted text only. `storage_path` is opaque; migrating to S3 later is additive. Nothing is backed up.
 
+Not built: ingest keeps no raw bytes, and no knowledge or panel volume holds them. Postgres has the extracted text only.
+
 ### D5. Ingestion queue
 
-A `ingest_job(id, kind, payload jsonb, status, attempts, error, priority, enqueued_at, started_at, heartbeat_at)` table claimed with `FOR UPDATE SKIP LOCKED` (Probe's `ingestion_queue` pattern). A worker (CronJob first, deployment when volume justifies it) drains: extract → chunk → embed → upsert. Ingest is idempotent: same content_hash = no-op. Phase one's `/search` PR may ingest synchronously for its seed corpus, but the queue is the durable contract for anything bigger than a handful of documents.
+A `ingest_job(id, kind, payload jsonb, status, attempts, error, priority, enqueued_at, started_at, heartbeat_at)` table claimed with `FOR UPDATE SKIP LOCKED` (Probe's `ingestion_queue` pattern). A worker drains it: extract → chunk → embed → upsert. It runs inside the `knowledge-ingest` Deployment rather than as a CronJob. Ingest is idempotent: same content_hash = no-op. Phase one's `/search` PR may ingest synchronously for its seed corpus, but the queue is the durable contract for anything bigger than a handful of documents.
 
 ### D6. Embedding provider
 
 Local, deterministic, no paid API: **fastembed ONNX `BAAI/bge-small-en-v1.5`, 384-d, cosine** (pg-raggraph's default scale; pgkg's bge-m3 1024-d is the upgrade path if evals demand it). `chunk.embedding_model` records the producer (pgkg's embedder-generation discipline): queries embed with the model of the chunks being searched, and different models never mix in one index — a model swap is a re-embed backfill job, not an in-place rewrite.
 
-The in-process fastembed provider is not built yet. Until a real provider is configured, ingest stores deterministic placeholder vectors tagged `fake/<dims>`, and retrieval serves every search as BM25, reporting `mode: "bm25"`. Retrieval logs and exports (`knowledge_embedding_model_mismatch_chunks`) any stored vectors whose model differs from the configured one, so a provider switch shows how much needs re-embedding.
+Superseded in part: the in-process fastembed provider was not built. `src/embedder.ts` instead calls an OpenAI-compatible embeddings endpoint (`KNOWLEDGE_EMBEDDING_PROVIDER=openai`), which a local server can provide. None is configured yet ([deploy/knowledge/README.md](../../deploy/knowledge/README.md)). Until one is, ingest stores deterministic placeholder vectors tagged `fake/<dims>`, and retrieval serves every search as BM25, reporting `mode: "bm25"`. Retrieval logs and exports (`knowledge_embedding_model_mismatch_chunks`) any stored vectors whose model differs from the configured one, so a provider switch shows how much needs re-embedding.
 
 ### D7. Hybrid retrieval: pg_textsearch + pgvector → RRF
 

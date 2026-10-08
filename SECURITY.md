@@ -14,4 +14,4 @@ Out of scope: upstream tools deployed here (t3, hermes-agent, k3s, Tailscale). R
 
 ## Design context
 
-The security model and its deliberate tradeoffs are documented in the main README under "Security model". Read it before reporting; several choices (open egress, Tailscale SSH on nodes) are documented decisions with reasons.
+The security model and its deliberate tradeoffs are documented in the main README under "Security model". Read it before reporting; several choices (public-internet egress for agents and sandbox Jobs, Tailscale SSH on nodes) are documented decisions with reasons ([docs/egress-policy.md](docs/egress-policy.md)).

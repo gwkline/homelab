@@ -2,6 +2,8 @@
 
 Self-hosted [Executor](https://github.com/UsefulSoftwareCo/executor) 1.6.7: the MCP/tool gateway shared by t3code, hermes, and laptop clients. One catalog, one credential store, one set of approval policies. It runs as a single process over a SQLite file on the `/data` PVC, which also holds the generated session and credential-encryption keys. Deleting the PVC loses every integration and makes stored credentials undecryptable. It is not backed up.
 
+Not deployed, and not in `clusters/home`. Before it is, move `executor-tailnet` from a Tailscale LoadBalancer Service to an Ingress: the LoadBalancer proxy needs privileged containers, which the `tailscale` namespace rejects ([deploy/tailscale/README.md](../tailscale/README.md#how-exposure-works)).
+
 ## Prerequisites
 
 - Optional Secret for a headless admin (otherwise use browser first-run setup):
@@ -27,7 +29,7 @@ Clients authenticate with an API key minted in the web console. Register t3code 
 
 ## Factory integration
 
-The panel serves the factory API (`factory-openapi.json`), and the netpols make Executor its only caller, so agents can't get around the approval policies. One-time setup in the web console:
+The panel serves the factory API (`factory-openapi.json`). hermes' and t3code's egress allowlists reach Executor but not the panel, so agents can't get around the approval policies. One-time setup in the web console:
 
 1. Import `deploy/executor/factory-openapi.json` as an OpenAPI integration named `factory`, keeping the default base URL (`http://panel-http.agents.svc:3000`).
 2. Create one connection per client (`hermes`, `t3code`), each with its own bearer token from the `tokens` field of 1Password item `panel-auth` (`<client-id>=<token>`). The panel records that client id as "requested by" and refuses mutations without a valid token.

@@ -59,10 +59,10 @@ REPO=gwkline/launchpad ISSUE=<n> sh apps/factory/github-app/smoke-test.sh   # re
 
 | Event | Action |
 | --- | --- |
-| Planned rotation | Generate a new key → update 1Password → re-run `create-github-app-secret.sh` → restart consumers → run `smoke-test.sh` → remove the old key |
+| Planned rotation | Generate a new key → update 1Password → wait for the hourly sync, or force it with `kubectl -n sandbox annotate externalsecret github-app external-secrets.io/force-sync="$(date +%s)" --overwrite` → run `smoke-test.sh` → remove the old key |
 | Suspected compromise | Remove the key in GitHub now (minted tokens die within 1 h; revoke the installation for an immediate kill), then rotate |
 | Lost key | Generate a new key on the same App and rotate |
-| Deleted App / wrong installation | Recreate and reinstall; update `app-id`/`installation-id` in 1Password and the Secret |
+| Deleted App / wrong installation | Recreate and reinstall; update `app-id`/`installation-id` in 1Password |
 
 The `github-token` PAT stays as fallback until the App path is verified end to end.
 
@@ -70,4 +70,4 @@ The `github-token` PAT stays as fallback until the App path is verified end to e
 
 1. Mint an App token for the orchestrator's publish step (`--permissions contents:write,pull_requests:write,issues:write --out …` in an init step, consumed via `GH_TOKEN_FILE`).
 2. Mint a `contents:read` token for the worker's `clone` initContainer, narrowed to the one repository (the token service needs a `repositories` field), in place of the PAT.
-3. Retire the writer PAT; keep a read-only PAT for non-factory consumers.
+3. Narrow the `github-token` PAT (1Password `github-readonly`) to read-only once the factory no longer writes with it.

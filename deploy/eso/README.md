@@ -2,7 +2,7 @@
 
 ESO syncs Kubernetes Secrets from the `homelab` 1Password vault via the 1Password SDK provider (no Connect server). `base/eso.yaml` is a vendored `helm template --include-crds` render of chart `external-secrets` 2.10.0 with the image digest-pinned and resource bounds set at render time.
 
-This base holds only the operator. The single store, `ClusterSecretStore` `onepassword`, is in `deploy/github-tokens/base/secretstore.yaml` (part of `clusters/home`). Its `spec.conditions` lists the namespaces whose ExternalSecrets may use it; an ExternalSecret anywhere else is refused.
+This base holds the operator, plus `base/metrics.yaml`: a Service and NetworkPolicy that let VictoriaMetrics scrape the controller, so Grafana can alert on an ExternalSecret that isn't Ready. The single store, `ClusterSecretStore` `onepassword`, is in `deploy/github-tokens/base/secretstore.yaml` (part of `clusters/home`). Its `spec.conditions` lists the namespaces whose ExternalSecrets may use it; an ExternalSecret anywhere else is refused.
 
 ## Prerequisites
 

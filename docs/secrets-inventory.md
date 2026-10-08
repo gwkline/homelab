@@ -15,9 +15,9 @@ Every runtime credential, where it comes from, and who consumes it. No secret va
 
 | Secret (keys) | Namespace | 1Password item → fields | Consumers | Notes |
 | --- | --- | --- | --- | --- |
-| `github-token` (`token`) | agents, sandbox | `github-readonly` → `token` | hermes, t3code, panel, knowledge-ingest, factory CronJobs and worker Jobs, `scripts/new-job.sh`, `scripts/egress-smoke.sh` | Fine-grained PAT, Contents read-only on the repos in workload config |
+| `github-token` (`token`) | agents, sandbox | `github-readonly` → `token` | hermes, t3code, panel, knowledge-ingest, factory CronJobs, the `clone` step of worker Jobs, `scripts/new-job.sh`, `scripts/egress-smoke.sh` | Fine-grained PAT. Despite the item name, the factory pushes branches, opens and merges PRs and edits issues with it, so it needs Contents, Issues and Pull requests write on the factory repos |
 | `github-app` (`app-id`, `installation-id`, `private-key`) | sandbox | `factory-github-app` → `app-id`, `installation-id`, `private-key` | factory collector (optional mount; falls back to `github-token`) | Short-lived installation tokens ([github-app.md](github-app.md)). A one-line key with `\n` escapes is expanded |
-| `factory-opencode-auth` (`auth-b64`) | sandbox | `openrouter` → `OPENROUTER_API_KEY` | factory orchestrator → worker Jobs (`OPENCODE_AUTH_B64`) | base64 of opencode `auth.json`, built by the ExternalSecret template |
+| `factory-opencode-auth` (`auth-b64`) | sandbox | `openrouter` → `OPENROUTER_API_KEY` | factory worker Jobs, mounted as a file (`OPENCODE_AUTH_FILE`) | base64 of opencode `auth.json`, built by the ExternalSecret template |
 | `hermes-openrouter` (`OPENROUTER_API_KEY`) | agents | `openrouter` → `OPENROUTER_API_KEY` | hermes | Same item as `factory-opencode-auth`: one edit rotates both |
 | `work-github-token` (`token`, `repos`) | work | `work-github-writer` → `token`, `repos` | work-t3code | PAT limited to the selected work repos (read+write); `repos` = clone URLs, kept out of this public repo. Never synced elsewhere |
 | `work-claude-oauth` (`token`) | work | `work-claude-oauth` → `token` | work-t3code (`CLAUDE_CODE_OAUTH_TOKEN`) | From `claude setup-token`; restart work-t3code after rotating |
@@ -54,11 +54,12 @@ Not credentials anyone holds; each controller recreates its own on a rebuild.
 
 | Secret | Namespace | Owner |
 | --- | --- | --- |
-| `pg-primary-app`, `pg-primary-ca` | database | CNPG |
-| `cnpg-ca-secret` | cnpg-system | CNPG operator |
+| `pg-primary-app`, `pg-primary-ca`, `pg-primary-server`, `pg-primary-replication` | database | CNPG |
+| `cnpg-ca-secret`, `cnpg-webhook-cert` | cnpg-system | CNPG operator |
 | `external-secrets-webhook` | external-secrets | ESO cert-controller |
 | `webhook-certs` | cosign-system | policy-controller |
 | `operator`, `ts-*` | tailscale | Tailscale operator (node state per proxy) |
+| `sh.helm.release.v1.*` | cosign-system, tailscale | Helm release records |
 
 ## Not Kubernetes Secrets
 

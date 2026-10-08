@@ -1,7 +1,8 @@
 # Default-deny ingress for the operator namespaces and `default`. Only the
 # admission webhooks take inbound connections; they are called by the API
-# server, which is not a pod, so their ports are open to any source. Nothing
-# scrapes operator metrics, so no metrics port is open. Kubelet probes are
+# server, which is not a pod, so their ports are open to any source. The one
+# operator metrics port scraped is the ESO controller's, which
+# deploy/eso/base/metrics.yaml opens to VictoriaMetrics. Kubelet probes are
 # node-local traffic, which kube-router always admits.
 # `tailscale` is left open: its proxies take direct WireGuard UDP from new
 # tailnet peers, and denying it would push every UI through DERP relays.
