@@ -103,7 +103,6 @@ classify_checks() {
 verify_for() {
   case "${1:-}" in
     *launchpad*) echo "cargo check --workspace --all-targets" ;;
-    *plantry* | *personal-site* | *pr-czar* | *kline-services-bot* | *discord-bot*) echo "npm run build" ;;
     # Syntax-check every changed .sh (shellcheck when present, else dash -n).
     *homelab*) echo "for f in \$(git diff --name-only HEAD -- '*.sh'); do shellcheck -s sh \"\$f\" 2>/dev/null || dash -n \"\$f\" || exit 1; done; echo verify-ok" ;;
     *) echo "" ;;
