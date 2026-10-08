@@ -1,0 +1,18 @@
+# Under node pressure the kubelet evicts lower-priority pods first, and the
+# scheduler preempts them to place higher-priority ones. Unclassed pods sit at
+# 0, between the two.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: homelab-platform
+value: 100000
+description: Shared services the rest of the cluster depends on (Postgres, ESO, Tailscale, Loki, VictoriaMetrics, panel).
+---
+# Factory and other batch Jobs: evicted first, and never preempt anything.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: homelab-batch
+value: -1000
+preemptionPolicy: Never
+description: Retryable batch work (factory Jobs and CronJobs).

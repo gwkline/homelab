@@ -5,22 +5,24 @@ import {
   RefreshCw,
   Search,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
+import type {
+  KnowledgeSearchHit,
+  KnowledgeSource,
+  KnowledgeSyncJob,
+} from "../../../server/knowledge";
 import {
   EXCERPT_MAX,
   ago,
   citationUrl,
-  getJson,
   postJson,
   sourceBadge,
   sourceLabel,
 } from "../lib/knowledge";
-import type { SearchHit, SourceRow, SyncJob } from "../lib/knowledge";
+import { useKnowledgeSources } from "../lib/use-knowledge-sources";
 import { cn } from "../lib/utils";
 import { Badge, Button, Card, CardHeader, Checkbox, Input, Select } from "./ui";
-
-type Phase = "error" | "loading" | "ready" | "unconfigured";
 
 interface HistoryEntry {
   params: Record<string, unknown>;
@@ -29,7 +31,7 @@ interface HistoryEntry {
 
 const HISTORY_MAX = 8;
 
-const passageText = (hit: SearchHit, expanded: boolean): string => {
+const passageText = (hit: KnowledgeSearchHit, expanded: boolean): string => {
   if (expanded) {
     return hit.text;
   }
@@ -46,7 +48,7 @@ const SearchResult = ({
   onToggle,
 }: {
   expanded: boolean;
-  hit: SearchHit;
+  hit: KnowledgeSearchHit;
   onToggle: () => void;
 }) => {
   const link = citationUrl(hit);
@@ -127,8 +129,8 @@ const SourceItem = ({
   busy: boolean;
   onNamespace: (namespace: string) => void;
   onSync: (sourceId: string) => void;
-  s: SourceRow;
-  watching: SyncJob | null;
+  s: KnowledgeSource;
+  watching: KnowledgeSyncJob | null;
 }) => (
   <div className="px-3 py-2.5">
     <div className="flex items-center justify-between gap-3">
@@ -183,13 +185,11 @@ const SearchResults = ({
   expandedId,
   onToggle,
   results,
-  runId,
   searchError,
 }: {
   expandedId: string | null;
   onToggle: (chunkId: string) => void;
-  results: SearchHit[] | null;
-  runId: string | null;
+  results: KnowledgeSearchHit[] | null;
   searchError: string | null;
 }) => (
   <>
@@ -208,7 +208,6 @@ const SearchResults = ({
         <p className="text-muted-foreground text-xs">
           {results.length} result{results.length === 1 ? "" : "s"} · ranked by
           fused score
-          {runId !== null && ` · run ${runId.slice(0, 18)}`}
         </p>
         {results.map((hit) => (
           <SearchResult
@@ -225,13 +224,16 @@ const SearchResults = ({
 
 // Full-page explorer: cited search, history, and source health + sync controls.
 export const KnowledgeExplorer = () => {
-  const [phase, setPhase] = useState<Phase>("loading");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [sources, setSources] = useState<SourceRow[]>([]);
-
-  const [syncBusy, setSyncBusy] = useState<string | null>(null);
-  const [job, setJob] = useState<SyncJob | null>(null);
-  const [jobMsg, setJobMsg] = useState<string | null>(null);
+  const {
+    errorMsg,
+    job,
+    jobMsg,
+    loadSources,
+    phase,
+    sources,
+    syncBusy,
+    triggerSync,
+  } = useKnowledgeSources();
 
   const [query, setQuery] = useState("");
   const [namespace, setNamespace] = useState("");
@@ -240,92 +242,9 @@ export const KnowledgeExplorer = () => {
   const [includeSuperseded, setIncludeSuperseded] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [results, setResults] = useState<SearchHit[] | null>(null);
-  const [runId, setRunId] = useState<string | null>(null);
+  const [results, setResults] = useState<KnowledgeSearchHit[] | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  const loadSources = useCallback(async () => {
-    const { body, ok } = await getJson("/api/knowledge/sources");
-    if (body.configured === false) {
-      setPhase("unconfigured");
-      return;
-    }
-    if (!ok) {
-      setPhase("error");
-      setErrorMsg(String(body.error ?? "knowledge API unreachable"));
-      return;
-    }
-    setSources((body.sources ?? []) as SourceRow[]);
-    setPhase("ready");
-  }, []);
-
-  useEffect(() => {
-    loadSources();
-    const id = setInterval(loadSources, 15_000);
-    return () => clearInterval(id);
-  }, [loadSources]);
-
-  // Poll the sync job every 2s until it reaches a terminal state.
-  useEffect(() => {
-    if (job === null || job.status === "succeeded" || job.status === "failed") {
-      return;
-    }
-    const t = setTimeout(async () => {
-      const { body, ok } = await getJson(
-        `/api/knowledge/sync/${encodeURIComponent(job.jobId)}`
-      );
-      if (!ok) {
-        setJobMsg(
-          `job progress unavailable: ${String(body.error ?? "unknown")}`
-        );
-        return;
-      }
-      const next = body as unknown as SyncJob;
-      if (next.status === "succeeded") {
-        setJobMsg(
-          `sync succeeded · ${next.documentsIngested ?? "?"} docs · ${next.chunksIngested ?? "?"} chunks`
-        );
-        setJob(null);
-        loadSources();
-      } else if (next.status === "failed") {
-        setJobMsg(`sync failed: ${next.error ?? "unknown error"}`);
-        setJob(null);
-        loadSources();
-      } else {
-        setJob(next);
-      }
-    }, 2000);
-    return () => clearTimeout(t);
-  }, [job, loadSources]);
-
-  const triggerSync = async (sourceId: string) => {
-    setSyncBusy(sourceId);
-    setJobMsg(null);
-    try {
-      const { body, ok } = await postJson("/api/knowledge/sync", { sourceId });
-      if (!ok) {
-        setJobMsg(String(body.error ?? "failed to queue sync"));
-        return;
-      }
-      setJob({
-        attempts: null,
-        chunksIngested: null,
-        documentsIngested: null,
-        error: null,
-        finishedAt: null,
-        jobId: String(body.jobId ?? ""),
-        sourceId,
-        startedAt: null,
-        status: String(body.status ?? "queued"),
-      });
-      setJobMsg(`sync queued (${String(body.jobId)}) — watching job…`);
-    } catch (error) {
-      setJobMsg(String(error));
-    } finally {
-      setSyncBusy(null);
-    }
-  };
 
   const runSearch = useCallback(
     async (params: Record<string, unknown>, label: string) => {
@@ -338,8 +257,7 @@ export const KnowledgeExplorer = () => {
           setSearchError(String(body.error ?? "search failed"));
           return;
         }
-        setResults((body.results ?? []) as SearchHit[]);
-        setRunId(typeof body.runId === "string" ? body.runId : null);
+        setResults((body.results ?? []) as KnowledgeSearchHit[]);
         setHistory((prev) => {
           const next = [
             { params, query: label },
@@ -485,7 +403,6 @@ export const KnowledgeExplorer = () => {
               setExpandedId(expandedId === chunkId ? null : chunkId)
             }
             results={results}
-            runId={runId}
             searchError={searchError}
           />
         </div>

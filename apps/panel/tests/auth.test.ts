@@ -1,19 +1,12 @@
 // Mutating routes: cross-site refusal, content type, caller identity.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { test } from "node:test";
 
-import { ALLOWED_LOGIN, jsonAs, writeAuthDir } from "./helpers.ts";
+import { ALLOWED_LOGIN, freePort, jsonAs, startPanel } from "./helpers.ts";
 
-const root = path.join(import.meta.dirname, "..");
-const PORT = 3981;
-const TAILNET_PORT = 3982;
 const REPO = "gwkline/launchpad";
 
 const MUTATIONS: { body: unknown; method: string; route: string }[] = [
@@ -134,46 +127,18 @@ test("mutating routes refuse cross-site and anonymous callers", async () => {
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   }
 
-  const stage = mkdtempSync(path.join(tmpdir(), "panel-auth-test-"));
-  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
-  copyFileSync(
-    path.join(root, "dist", "index.js"),
-    path.join(stage, "index.js")
-  );
-  copyFileSync(
-    path.join(root, "web", "dist", "index.html"),
-    path.join(stage, "web", "dist", "index.html")
-  );
-  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
-    env: {
-      ...process.env,
-      GH_API_BASE: `http://127.0.0.1:${portOf(gh)}`,
-      GH_TOKEN: "test-token",
-      KNOWLEDGE_API_BASE: "http://127.0.0.1:1",
-      KNOWLEDGE_API_TOKEN: "knowledge-token",
-      PANEL_AUTH_DIR: writeAuthDir(),
-      PANEL_K8S_BASE: `http://127.0.0.1:${portOf(k8s)}`,
-      PANEL_ROOT: stage,
-      PANEL_TAILNET_PORT: String(TAILNET_PORT),
-      PORT: String(PORT),
-    },
-    stdio: "pipe",
+  const tailnetPort = await freePort();
+  const panel = await startPanel({
+    GH_API_BASE: `http://127.0.0.1:${portOf(gh)}`,
+    GH_TOKEN: "test-token",
+    KNOWLEDGE_API_BASE: "http://127.0.0.1:1",
+    KNOWLEDGE_API_TOKEN: "knowledge-token",
+    PANEL_K8S_BASE: `http://127.0.0.1:${portOf(k8s)}`,
+    PANEL_TAILNET_PORT: String(tailnetPort),
   });
-  child.stderr.on("data", (d) => process.stderr.write(d));
   try {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(
-        () => reject(new Error("server did not start")),
-        5000
-      );
-      child.stdout.on(
-        "data",
-        (d) =>
-          d.toString().includes("listening") && (clearTimeout(t), resolve())
-      );
-    });
-    const cluster = `http://127.0.0.1:${PORT}`;
-    const tailnet = `http://127.0.0.1:${TAILNET_PORT}`;
+    const cluster = panel.base;
+    const tailnet = `http://127.0.0.1:${tailnetPort}`;
 
     // A page on another origin posting text/plain (a CORS simple request).
     for (const m of MUTATIONS) {
@@ -283,7 +248,7 @@ test("mutating routes refuse cross-site and anonymous callers", async () => {
     // Reads stay open.
     assert.equal((await fetch(`${cluster}/api/state`)).status, 200);
   } finally {
-    child.kill();
+    panel.stop();
     gh.close();
     k8s.close();
   }

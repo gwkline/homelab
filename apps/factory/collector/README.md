@@ -26,7 +26,7 @@ An issue is eligible when **all** of these hold:
 1. it is an issue, not a pull request;
 2. its state is `open`;
 3. if `FACTORY_ELIGIBILITY_LABEL` is set, it carries that label;
-4. it carries **no** factory lifecycle label (`factory/queued`, `factory/in-progress`, `factory/pending-approval`, `factory/draft-pr`, `factory/needs-review`, `factory/approved`, `factory/failed`, `factory/cancelled`, `factory/stuck`).
+4. it carries **no** factory lifecycle label (`factory/queued`, `factory/in-progress`, `factory/draft-pr`, `factory/needs-review`, `factory/failed`, `factory/cancelled`, `factory/stuck`).
 
 ## Idempotency
 

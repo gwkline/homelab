@@ -15,7 +15,7 @@ const SOURCE_ID_MAX = 128;
 
 export const SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 export const NAMESPACE_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
-export const KNOWLEDGE_MODES = ["bm25", "vector", "hybrid"] as const;
+const KNOWLEDGE_MODES = ["bm25", "vector", "hybrid"] as const;
 export const KNOWLEDGE_MODE_SET: ReadonlySet<string> = new Set(KNOWLEDGE_MODES);
 export const KNOWLEDGE_TOP_K_MAX = 50;
 export const KNOWLEDGE_QUERY_MAX = 2000;
@@ -47,7 +47,7 @@ export const loadKnowledgeConfig = (env = process.env): KnowledgeConfig => {
 
 // ── response shapes (normalized) ──
 
-export interface KnowledgeSourceJob {
+interface KnowledgeSourceJob {
   jobId: string;
   startedAt: string | null;
   status: string;
@@ -115,7 +115,6 @@ export class KnowledgeApiError extends Error {
   }
 }
 
-// Duplicates index.ts helpers so tests can import this module standalone.
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)

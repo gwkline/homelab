@@ -1,4 +1,12 @@
+# Every UI uses an Ingress proxy, which runs in userspace; the operator and
+# those proxies pass baseline. A LoadBalancer-class proxy needs privileged
+# containers and is rejected here (deploy/tailscale/README.md).
 apiVersion: v1
 kind: Namespace
 metadata:
   name: tailscale
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

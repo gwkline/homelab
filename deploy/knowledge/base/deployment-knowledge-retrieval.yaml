@@ -57,12 +57,14 @@ spec:
               port: http
             periodSeconds: 30
           readinessProbe:
-            # Unauthenticated route: probes can't carry the bearer token.
+            # Unauthenticated; checks the database and schema version, so the
+            # pod leaves the Service while Postgres is down.
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http
-            failureThreshold: 30
             periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
       volumes:
         - name: knowledge-token
           secret:

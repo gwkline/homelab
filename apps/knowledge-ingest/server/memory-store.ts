@@ -102,6 +102,19 @@ const toRecord = (row: JobRow): IngestJobRecord => {
   };
 };
 
+/** Finished jobs keep their metadata but not the document text they carried. */
+const dropContent = (row: JobRow): void => {
+  if (row.payload.kind === "document-version") {
+    const { content: _content, ...rest } = row.payload.documentVersion;
+    row.payload = {
+      documentVersion: rest as DocumentVersionPayload,
+      kind: "document-version",
+    };
+  }
+};
+
+const DAY_MS = 86_400_000;
+
 const documentKey = (payload: DocumentPayload): string =>
   `${payload.namespace}|${payload.source.sourceId}|${payload.externalId}|${payload.version.versionId}`;
 
@@ -276,6 +289,7 @@ export const createMemoryIngestStore = (
       row.result = { ...outcome };
       row.error = null;
       row.finishedAt = now();
+      dropContent(row);
       row.workerId = null;
       return Promise.resolve(true);
     },
@@ -399,6 +413,7 @@ export const createMemoryIngestStore = (
       if (row.attempts >= row.maxAttempts) {
         row.status = "dead";
         row.finishedAt = now();
+        dropContent(row);
       } else {
         row.status = "retryable";
         row.availableAt = new Date(now().getTime() + retryDelaySeconds * 1000);
@@ -432,6 +447,39 @@ export const createMemoryIngestStore = (
     },
 
     ping: () => Promise.resolve(),
+
+    pruneFinished(retentionDays: number): Promise<number> {
+      const cutoff = now().getTime() - retentionDays * DAY_MS;
+      const latest = new Map<string, JobRow>();
+      for (const row of jobs.values()) {
+        if (row.finishedAt === null) {
+          continue;
+        }
+        const key = `${row.sourceId}|${row.status}`;
+        const kept = latest.get(key);
+        if (
+          kept === undefined ||
+          kept.finishedAt === null ||
+          row.finishedAt > kept.finishedAt
+        ) {
+          latest.set(key, row);
+        }
+      }
+      const keep = new Set(latest.values());
+      let pruned = 0;
+      for (const [jobId, row] of jobs) {
+        if (
+          (row.status === "succeeded" || row.status === "dead") &&
+          row.finishedAt !== null &&
+          row.finishedAt.getTime() < cutoff &&
+          !keep.has(row)
+        ) {
+          jobs.delete(jobId);
+          pruned += 1;
+        }
+      }
+      return Promise.resolve(pruned);
+    },
 
     publishDocumentVersion(
       payload: DocumentPayload,
@@ -475,6 +523,7 @@ export const createMemoryIngestStore = (
         row.status = row.attempts >= row.maxAttempts ? "dead" : "pending";
         if (row.status === "dead") {
           row.finishedAt = nowDate;
+          dropContent(row);
         }
         row.workerId = null;
         row.error = STALE_RECOVERY_MESSAGE;

@@ -33,6 +33,12 @@ spec:
         - podSelector:
             matchLabels:
               app: panel
+        - podSelector:
+            matchLabels:
+              app: hermes
+        - podSelector:
+            matchLabels:
+              app: t3code
       ports:
         - protocol: TCP
           port: 3000

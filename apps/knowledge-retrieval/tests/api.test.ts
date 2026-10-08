@@ -337,3 +337,25 @@ test("metrics report an enabled vector channel and answer 503 when the store fai
   });
   assert.equal((await down.request("/metrics")).status, 503);
 });
+
+test("readyz follows the store's database check; healthz never does", async () => {
+  let healthy = true;
+  const store: RetrievalStore = {
+    ping: () =>
+      healthy
+        ? Promise.resolve()
+        : Promise.reject(new Error("connect ECONNREFUSED")),
+    search: () => Promise.resolve({ bm25: [], vector: [] }),
+  };
+  const app = createApp({
+    config: baseConfig(TOKEN),
+    logger: noopLogger,
+    store,
+  });
+  assert.equal((await app.request("/readyz")).status, 200);
+  healthy = false;
+  const down = await app.request("/readyz");
+  assert.equal(down.status, 503);
+  assert.deepEqual(await down.json(), { status: "unavailable" });
+  assert.equal((await app.request("/healthz")).status, 200);
+});

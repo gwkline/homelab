@@ -21,6 +21,7 @@ spec:
         seccompProfile:
           type: RuntimeDefault
         fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
       terminationGracePeriodSeconds: 60
       containers:
         - name: t3code
@@ -70,8 +71,10 @@ spec:
             requests:
               cpu: "1"
               memory: 2Gi
+              ephemeral-storage: 1Gi
             limits:
               memory: 6Gi
+              ephemeral-storage: 8Gi
           startupProbe:
             httpGet:
               path: /
@@ -79,18 +82,6 @@ spec:
             failureThreshold: 30
             periodSeconds: 10
       initContainers:
-        # Root only to chown the volume for uid 1000.
-        - name: volume-init
-          image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
-          command: ["chown", "-R", "1000:1000", "/data"]
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-              add: ["CHOWN", "FOWNER"]
-          volumeMounts:
-            - name: data
-              mountPath: /data
         # Installs the allowlisted skills at the pinned ref. Always exits 0:
         # on failure the pod starts on stale skills.
         - name: skills-sync
@@ -141,8 +132,9 @@ spec:
           secret:
             secretName: github-token
             optional: true
-        # Standalone claim rather than a volumeClaimTemplate, which is
-        # immutable and so could never be resized.
+        # Standalone claim: volumeClaimTemplates are immutable, so a volume
+        # added to the existing StatefulSet has to be one. local-path can't
+        # resize it either way.
         - name: t3state
           persistentVolumeClaim:
             claimName: t3state-t3code-0

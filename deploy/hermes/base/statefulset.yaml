@@ -20,19 +20,9 @@ spec:
         seccompProfile:
           type: RuntimeDefault
         fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
       terminationGracePeriodSeconds: 60
       initContainers:
-        - name: volume-init
-          image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
-          command: ["chown", "-R", "1000:1000", "/data"]
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-              add: ["CHOWN", "FOWNER"]
-          volumeMounts:
-            - name: data
-              mountPath: /data
         # Installs the allowlisted skills at the pinned ref. Always exits 0:
         # on failure the gateway starts on stale skills.
         - name: skills-sync
@@ -167,8 +157,10 @@ spec:
             requests:
               cpu: "500m"
               memory: 1Gi
+              ephemeral-storage: 256Mi
             limits:
               memory: 4Gi
+              ephemeral-storage: 4Gi
       volumes:
         - name: github-token
           secret:

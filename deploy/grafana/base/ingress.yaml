@@ -1,0 +1,17 @@
+# https://grafana.<tailnet>.ts.net (TLS terminated by the Tailscale Ingress).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  namespace: agents
+  annotations:
+    tailscale.com/tags: tag:k8s-operator
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: grafana
+      port:
+        number: 80
+  tls:
+    - hosts: [grafana]

@@ -47,11 +47,14 @@ fi
 
 echo "[security] run=${RUN_ID} repo=${REPO} issue=#${ISSUE_NUM} mode=${MODE}"
 
-# Build the authenticated URL at runtime; never put a token in a Job manifest.
-CLONE_URL="${CLONE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git}"
-git clone --depth 20 "${CLONE_URL}" repo
-git -C repo remote set-url origin "https://github.com/${REPO}.git"
-cd repo
+# The Job's initContainer normally cloned already (apps/factory/worker/prepare.sh);
+# a Job spec without it hands this container the token, so clone here.
+WORK_DIR="${WORK_DIR:-/work}"
+if [ ! -d "${WORK_DIR}/repo/.git" ]; then
+  FACTORY_REPO="${REPO}" sh /usr/local/bin/prepare
+fi
+unset GH_TOKEN GITHUB_TOKEN
+cd "${WORK_DIR}/repo"
 BASE_SHA=$(git rev-parse HEAD)
 mkdir -p "${OUT}"
 
@@ -88,7 +91,7 @@ if [ -n "${HARNESS}" ]; then append "_Harness tag (for triage): \`${HARNESS}\` â
 
 append "## Scope"
 append "- Repo: \`${REPO}\` @ \`${BASE_SHA}\`"
-append "- Scanners: gitleaks, shellcheck, hadolint, semgrep, trivy, kustomize verify, secret-pattern grep"
+append "- Scanners: gitleaks, shellcheck, hadolint, semgrep, trivy, kustomize verify"
 append ""
 
 # shellcheck disable=SC2034
@@ -98,7 +101,6 @@ run_section "gitleaks (secrets)" sh -c 'gitleaks detect --no-git --source . --ve
 run_section "shellcheck (factory shell)" sh -c 'shellcheck apps/factory/security/entrypoint.sh apps/factory/orchestrator/run.sh apps/factory/worker/entrypoint.sh 2>&1 | head -n 200; echo "shellcheck exit $?"'
 run_section "hadolint (Dockerfiles)" sh -c 'hadolint apps/factory/security/Dockerfile 2>&1 | head -n 200; echo "hadolint worker:"; hadolint apps/factory/worker/Dockerfile 2>&1 | head -n 100; echo "hadolint orchestrator:"; hadolint apps/factory/orchestrator/Dockerfile 2>&1 | head -n 100'
 run_section "kustomize verify (deploy/factory)" sh -c 'kubectl kustomize deploy/factory/base 2>&1 | head -n 50; echo "kustomize exit $?"'
-run_section "secret-pattern grep (verify.sh pattern)" sh -c 'PAT=$(sed -n "s/.*pattern=.\\(.*\\)./\\1/p" scripts/verify.sh 2>/dev/null); grep -rnE "$PAT" --exclude-dir=.git --exclude=scripts/verify.sh . 2>&1 | head -n 100; echo "grep exit $?"'
 if command -v semgrep >/dev/null 2>&1; then
   run_section "semgrep (SAST, p/ci)" sh -c 'semgrep --config p/ci --error --timeout 120 2>&1 | head -n 400; echo "semgrep exit $?"'
 else

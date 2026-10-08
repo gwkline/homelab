@@ -1,6 +1,7 @@
 #!/bin/sh
-# Factory medic helpers — the only write paths the medic has. gh/jq/git are
-# called by name so tests can shim them via PATH.
+# Factory medic helpers — the only write paths the medic has. Source
+# apps/factory/lib/factory.sh first (labels, markers, the gh wrapper); gh, jq
+# and git resolve through PATH so tests can shim them.
 #
 # The only git write is medic_publish_patch: a fast-forward push of the PR's
 # existing factory branch. No force, no branch creation, no push to main.
@@ -79,13 +80,13 @@ this PR branch only; never touches main, never force-pushes." || {
 # One failed attempt against a PR head SHA. The count of these comments is the
 # retry budget; a pushed fix changes the head SHA and resets it.
 medic_failed_marker() { # $1 = head sha
-  printf '<!-- factory:medic:%s:failed -->' "${1:?sha}"
+  printf '<!-- %s -->' "$(factory_medic_marker "${1:?sha}" failed)"
 }
 
 # A repair queued against a PR head SHA (embedded in the brief). The same head
 # still red after this marker means the repair failed.
 medic_queued_marker() { # $1 = head sha
-  printf '<!-- factory:medic:%s:queued -->' "${1:?sha}"
+  printf '<!-- %s -->' "$(factory_medic_marker "${1:?sha}" queued)"
 }
 
 # Count PR comments containing a marker. `.. | objects` makes the count
@@ -120,7 +121,7 @@ _Automated factory-medic run; comment auto-managed._" >/dev/null
 # Park the linked issue for a human; later sweeps skip it via the label.
 #   $1 = repo, $2 = issue number, $3 = PR number, $4 = head sha, $5 = attempts
 medic_mark_stuck() {
-  gh issue edit "${2:?issue}" -R "${1:?repo}" --add-label "factory/stuck" >/dev/null
+  gh issue edit "${2:?issue}" -R "${1:?repo}" --add-label "${LABEL_STUCK}" >/dev/null
   gh issue comment "${2:?issue}" -R "${1:?repo}" \
-    --body="🩺🚨 Factory medic gave up: ${5:?n} consecutive failed repair attempts on PR #${3:?pr} at head \`${4:?sha}\` — labeled \`factory/stuck\`. A human takes it from here." >/dev/null
+    --body="🩺🚨 Factory medic gave up: ${5:?n} consecutive failed repair attempts on PR #${3:?pr} at head \`${4:?sha}\` — labeled \`${LABEL_STUCK}\`. A human takes it from here." >/dev/null
 }

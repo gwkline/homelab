@@ -3,21 +3,24 @@ kind: Namespace
 metadata:
   name: agents
   labels:
-    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
-    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
     # Opts into image-signature verification (deploy/image-policy).
     policy.sigstore.dev/include: "true"
 ---
-# Throwaway Jobs (factory, chaos); egress is public-internet only.
+# Throwaway Jobs: factory loops and workers, panel-launched runs, ad-hoc
+# scripts/new-job.sh Jobs. Egress is public-internet only.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: sandbox
   labels:
-    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
-    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
     policy.sigstore.dev/include: "true"
 ---
 # Work isolation zone: egress is public-internet only, and the only
@@ -27,9 +30,10 @@ kind: Namespace
 metadata:
   name: work
   labels:
-    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
-    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
     policy.sigstore.dev/include: "true"
 ---
 apiVersion: v1

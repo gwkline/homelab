@@ -1,77 +1,15 @@
 // Hung upstreams, request logging, and SIGTERM draining.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
-import { copyFileSync, mkdirSync, mkdtempSync } from "node:fs";
-import { createServer } from "node:http";
-import type { Server } from "node:http";
-import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { test } from "node:test";
 
-const root = path.join(import.meta.dirname, "..");
+import { listen, startPanel } from "./helpers.ts";
 
 // Accepts connections and never answers.
-const blackHole = async (): Promise<Server> => {
-  const server = createServer(() => {
+const blackHole = async () =>
+  await listen(() => {
     // never respond
   });
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  return server;
-};
-
-const urlOf = (server: Server): string =>
-  `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-
-interface Panel {
-  base: string;
-  child: ChildProcessWithoutNullStreams;
-  lines: Record<string, unknown>[];
-}
-
-const startPanel = async (
-  port: number,
-  env: Record<string, string>
-): Promise<Panel> => {
-  const stage = mkdtempSync(path.join(tmpdir(), "panel-resilience-"));
-  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
-  copyFileSync(
-    path.join(root, "dist", "index.js"),
-    path.join(stage, "index.js")
-  );
-  copyFileSync(
-    path.join(root, "web", "dist", "index.html"),
-    path.join(stage, "web", "dist", "index.html")
-  );
-  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
-    env: { ...process.env, PANEL_ROOT: stage, PORT: String(port), ...env },
-    stdio: "pipe",
-  });
-  child.stderr.on("data", (d) => process.stderr.write(d));
-  const lines: Record<string, unknown>[] = [];
-  let buffered = "";
-  const listening = new Promise<void>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error("server did not start")), 5000);
-    child.stdout.on("data", (d: Buffer) => {
-      buffered += d.toString();
-      const parts = buffered.split("\n");
-      buffered = parts.pop() ?? "";
-      for (const part of parts) {
-        const line = JSON.parse(part) as Record<string, unknown>;
-        lines.push(line);
-        if (String(line.msg).startsWith("listening")) {
-          clearTimeout(t);
-          resolve();
-        }
-      }
-    });
-  });
-  await listening;
-  return { base: `http://127.0.0.1:${port}`, child, lines };
-};
 
 const timed = async (url: string): Promise<{ ms: number; status: number }> => {
   const started = performance.now();
@@ -83,10 +21,10 @@ const timed = async (url: string): Promise<{ ms: number; status: number }> => {
 test("a never-responding upstream fails the request with 504 and is logged", async () => {
   const k8s = await blackHole();
   const gh = await blackHole();
-  const panel = await startPanel(3991, {
-    GH_API_BASE: urlOf(gh),
+  const panel = await startPanel({
+    GH_API_BASE: gh.url,
     GH_TOKEN: "test-token",
-    PANEL_K8S_BASE: urlOf(k8s),
+    PANEL_K8S_BASE: k8s.url,
     PANEL_UPSTREAM_TIMEOUT_MS: "300",
   });
   try {
@@ -115,8 +53,8 @@ test("a never-responding upstream fails the request with 504 and is logged", asy
       JSON.stringify(upstream)
     );
   } finally {
-    panel.child.kill();
-    for (const server of [k8s, gh]) {
+    panel.stop();
+    for (const { server } of [k8s, gh]) {
       server.closeAllConnections();
       server.close();
     }
@@ -125,8 +63,8 @@ test("a never-responding upstream fails the request with 504 and is logged", asy
 
 test("a request that outlives the request budget gets 504", async () => {
   const k8s = await blackHole();
-  const panel = await startPanel(3992, {
-    PANEL_K8S_BASE: urlOf(k8s),
+  const panel = await startPanel({
+    PANEL_K8S_BASE: k8s.url,
     PANEL_REQUEST_TIMEOUT_MS: "300",
     PANEL_UPSTREAM_TIMEOUT_MS: "60000",
   });
@@ -135,24 +73,22 @@ test("a request that outlives the request budget gets 504", async () => {
     assert.equal(status, 504);
     assert.ok(ms < 2000, `took ${Math.round(ms)}ms`);
   } finally {
-    panel.child.kill();
-    k8s.closeAllConnections();
-    k8s.close();
+    panel.stop();
+    k8s.server.closeAllConnections();
+    k8s.server.close();
   }
 });
 
 test("SIGTERM drains in-flight requests, refuses new ones, then exits", async () => {
   // Kubernetes answers after a pause, long enough to signal mid-request.
-  const k8s = createServer((_req, res) => {
+  const k8s = await listen((_req, res) => {
     setTimeout(() => {
       res
         .writeHead(200, { "content-type": "application/json" })
         .end('{"items":[]}');
     }, 500);
   });
-  k8s.listen(0, "127.0.0.1");
-  await once(k8s, "listening");
-  const panel = await startPanel(3993, { PANEL_K8S_BASE: urlOf(k8s) });
+  const panel = await startPanel({ PANEL_K8S_BASE: k8s.url });
   try {
     const inFlight = timed(`${panel.base}/api/state`);
     await new Promise((resolve) => setTimeout(resolve, 150));
@@ -166,7 +102,7 @@ test("SIGTERM drains in-flight requests, refuses new ones, then exits", async ()
     assert.equal(code, 0);
     assert.ok(panel.lines.some((l) => l.msg === "stopped"));
   } finally {
-    panel.child.kill();
-    k8s.close();
+    panel.stop();
+    k8s.server.close();
   }
 });

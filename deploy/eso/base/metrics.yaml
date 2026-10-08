@@ -1,0 +1,41 @@
+# A stable scrape target for VictoriaMetrics (ExternalSecret Ready conditions
+# for alerting), so it needs no pod-discovery rights. The vendored chart
+# render has none.
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-secrets-metrics
+  namespace: external-secrets
+spec:
+  selector:
+    app.kubernetes.io/name: external-secrets
+    app.kubernetes.io/instance: external-secrets
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: metrics
+---
+# The controller serves only metrics (no probes, no webhook), so VictoriaMetrics
+# is the one client it has to admit.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-victoriametrics-to-controller-metrics
+  namespace: external-secrets
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: external-secrets
+      app.kubernetes.io/instance: external-secrets
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agents
+          podSelector:
+            matchLabels:
+              app: victoriametrics
+      ports:
+        - protocol: TCP
+          port: 8080

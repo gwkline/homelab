@@ -10,6 +10,7 @@ labels:
 resources:
   - collector-cronjob.yaml
   - knowledge-context-secret.yaml
+  - opencode-auth-secret.yaml
   - profile-code-pr.yaml
   - profile-security.yaml
   - medic-cronjob.yaml

@@ -10,6 +10,8 @@ RUN sh /usr/local/lib/install-gh.sh
 COPY apps/shared/install-kubectl.sh /usr/local/lib/install-kubectl.sh
 RUN sh /usr/local/lib/install-kubectl.sh
 
+# Shared factory shell library and label list (apps/factory/lib).
+COPY apps/factory/lib/factory.sh apps/factory/lib/labels.json /usr/local/lib/factory/
 WORKDIR /reviewer
 COPY apps/factory/reviewer/run-reviewer.sh /reviewer/run-reviewer.sh
 COPY apps/factory/reviewer/run-sweeper.sh /reviewer/run-sweeper.sh

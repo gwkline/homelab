@@ -71,6 +71,11 @@ check_https() { # <namespace> <ingress> <required: 1|0>
 check_https agents t3code-0 1
 check_https agents panel 1
 check_https work work-t3code-0 0
+check_https agents grafana 0
+check_https agents headlamp 0
+check_https agents homepage 0
+check_https agents cloudbeaver 0
+check_https agents knowledge 0
 
 echo "== 5. tailscale exposure annotations =="
 # Every tailscale LoadBalancer Service must declare its hostname, and every
@@ -132,6 +137,28 @@ for es in tailscale/operator-oauth agents/github-token; do
     fail=1
   fi
 done
+
+echo "== 8. node IP =="
+# NetworkPolicies allow the API by the node IP from clusters/home/node; a
+# server that came back on another address breaks them silently.
+rendered=$(kubectl kustomize deploy/policies/base 2>/dev/null |
+  awk '/name: headlamp-kube-api/ { f = 1 } f && /cidr:/ { n++; if (n == 2) { sub(/.*cidr: */, ""); sub(/\/.*/, ""); print; exit } }')
+live=$(kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes \
+  -o jsonpath='{.items[*].endpoints[*].addresses[*]}' 2>/dev/null)
+case " $live " in
+  *" $rendered "*)
+    if [ -n "$rendered" ]; then
+      echo "  ok: API endpoint $rendered matches clusters/home/node"
+    else
+      echo "  FAIL: no node IP rendered from deploy/policies/base"
+      fail=1
+    fi
+    ;;
+  *)
+    echo "  FAIL: API endpoint '${live}' != rendered node IP '${rendered}' (update clusters/home/node/node.yaml)"
+    fail=1
+    ;;
+esac
 
 echo
 if [ "$fail" -eq 0 ]; then
