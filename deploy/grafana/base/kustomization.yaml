@@ -4,8 +4,7 @@ namespace: agents
 
 labels:
   - pairs:
-      app.kubernetes.io/part-of: homelab
-      app.kubernetes.io/managed-by: kustomize
+      app.kubernetes.io/name: grafana
     includeSelectors: false
 
 resources:
@@ -39,3 +38,6 @@ configMapGenerator:
     files:
       - provisioning/alerting/contact-points.yaml
       - provisioning/alerting/rules.yaml
+
+components:
+  - ../../components/labels

@@ -2,7 +2,7 @@
 # plus list/watch on the workloads for rollout status. No secrets, pods/exec,
 # or anything cluster-scoped, and no Roles or RoleBindings: writing those needs
 # escalate/bind, which would make the deployer admin of sandbox. They are
-# applied by hand (README.md).
+# applied by hand (../README.md).
 apiVersion: v1
 kind: ServiceAccount
 metadata:

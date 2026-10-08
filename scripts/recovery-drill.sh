@@ -81,7 +81,7 @@ end_stage
 
 # ---------------------------------------------------------------------------
 stage secrets
-kubectl apply -k deploy/namespaces
+kubectl apply -k deploy/namespaces/base
 ./scripts/create-onepassword-service-account.sh
 end_stage
 

@@ -1,6 +1,6 @@
 # deployer
 
-Continuous delivery for this repo's workloads. A CronJob in `agents` runs [deploy.sh](deploy.sh) every 5 minutes on the `ops` image ([images/ops](../../images/ops/Dockerfile)). The script is mounted from the `deployer-script` ConfigMap, which kustomize generates from this directory.
+Continuous delivery for this repo's workloads. A CronJob in `agents` runs [deploy.sh](base/deploy.sh) every 5 minutes on the `ops` image ([images/ops](../../images/ops/Dockerfile)). The script is mounted from the `deployer-script` ConfigMap, which kustomize generates from `base/`.
 
 ## Each pass
 
@@ -21,11 +21,11 @@ CI pushes `sha-<short>` before it signs. So a CI run that fails after pushing ca
 
 The deployer writes no RBAC. Writing Roles needs `escalate`/`bind`, which would make it admin of `sandbox`. After merging a change to any of these, a cluster admin applies it:
 
-- **This directory** (the CronJob, the script, the deployer's own RBAC): `kubectl apply -k deploy/deployer`.
+- **The deployer itself** (the CronJob, the script, its own RBAC): `kubectl apply -k deploy/deployer/base`.
 - **Roles and RoleBindings in a target base**, such as the factory's:
 
   ```sh
-  sh -c '. deploy/deployer/lib.sh && kubectl kustomize "$1" | select_kinds Role RoleBinding' - deploy/factory/base |
+  sh -c '. deploy/deployer/base/lib.sh && kubectl kustomize "$1" | select_kinds Role RoleBinding' - deploy/factory/base |
     kubectl apply -f -
   ```
 

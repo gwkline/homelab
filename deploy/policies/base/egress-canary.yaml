@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/name: egress-canary
 spec:
   schedule: "*/30 * * * *"
+  startingDeadlineSeconds: 300
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
@@ -80,6 +81,7 @@ metadata:
     app.kubernetes.io/name: egress-canary
 spec:
   schedule: "*/30 * * * *"
+  startingDeadlineSeconds: 300
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3

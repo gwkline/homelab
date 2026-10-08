@@ -1,10 +1,10 @@
 #!/bin/sh
-# Offline tests for deploy/deployer/lib.sh: which commit gets deployed, which
-# image build each workload gets, and how the rendered stream is filtered.
+# Offline tests for deploy/deployer/base/lib.sh: which commit gets deployed,
+# which image build each workload gets, and how the rendered stream is filtered.
 set -eu
 
-lib="$(cd "$(dirname "$0")/.." && pwd)/lib.sh"
-# shellcheck source=deploy/deployer/lib.sh
+lib="$(cd "$(dirname "$0")/../base" && pwd)/lib.sh"
+# shellcheck source=deploy/deployer/base/lib.sh
 . "$lib"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

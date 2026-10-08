@@ -6,8 +6,8 @@ The [Tailscale Kubernetes operator](https://tailscale.com/kb/1236/kubernetes-ope
 
 | File | Purpose |
 | --- | --- |
-| `namespace.yaml` | `tailscale` namespace (operator + its `ts-*` proxy pods) |
-| `operator-oauth.yaml` | ExternalSecret (via `ClusterSecretStore` `onepassword`) producing Secret `operator-oauth` |
+| `base/namespace.yaml` | `tailscale` namespace (operator + its `ts-*` proxy pods) |
+| `base/operator-oauth.yaml` | ExternalSecret (via `ClusterSecretStore` `onepassword`) producing Secret `operator-oauth` |
 | `values.yaml` | pinned helm values for the operator chart: operator and proxy image digests, operator resources, default proxy tag and ProxyClass |
 | `proxyclass.yaml` | ProxyClass `homelab`: requests and limits for every proxy. Applied after helm, which installs the CRD |
 
@@ -16,7 +16,7 @@ The [Tailscale Kubernetes operator](https://tailscale.com/kb/1236/kubernetes-ope
 Prerequisite: External Secrets Operator is running and `ClusterSecretStore` `onepassword` (in `clusters/home`) is Ready.
 
 ```sh
-kubectl apply -k deploy/tailscale # namespace + ExternalSecret -> Secret operator-oauth
+kubectl apply -k deploy/tailscale/base # namespace + ExternalSecret -> Secret operator-oauth
 helm repo add tailscale https://pkgs.tailscale.com/helmcharts
 helm upgrade --install tailscale-operator tailscale/tailscale-operator \
   --version 1.102.3 \

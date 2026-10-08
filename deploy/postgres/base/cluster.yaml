@@ -52,15 +52,9 @@ spec:
       # No CPU limit: throttling wrecks Postgres tail latency.
       memory: 2Gi
 
-  # Passwords come from out-of-band basic-auth Secrets (README).
+  # The password comes from the basic-auth Secret in owner-secrets.yaml.
   managed:
     roles:
-      - name: factory_owner
-        login: true
-        superuser: false
-        connectionLimit: 20
-        passwordSecret:
-          name: pg-primary-factory-owner
       - name: knowledge_owner
         login: true
         superuser: false

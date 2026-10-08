@@ -14,7 +14,6 @@ metadata:
   name: factory-profile-code-pr
   namespace: sandbox
   labels:
-    app.kubernetes.io/part-of: homelab
     factory.gwkline.io/profile: code-pr
 data:
   profile.json: |

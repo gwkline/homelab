@@ -4,12 +4,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-labels:
-  - pairs:
-      app.kubernetes.io/part-of: homelab
-      app.kubernetes.io/managed-by: kustomize
-    includeSelectors: false
-
 resources:
   - upstream.yaml
 
@@ -63,3 +57,6 @@ patches:
                   limits:
                     cpu: 100m
                     memory: 200Mi
+
+components:
+  - ../../components/labels

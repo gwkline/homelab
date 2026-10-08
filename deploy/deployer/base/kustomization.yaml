@@ -3,8 +3,7 @@ kind: Kustomization
 
 labels:
   - pairs:
-      app.kubernetes.io/part-of: homelab
-      app.kubernetes.io/managed-by: kustomize
+      app.kubernetes.io/name: deployer
     includeSelectors: false
 
 resources:
@@ -20,3 +19,6 @@ configMapGenerator:
       - lib.sh
     options:
       disableNameSuffixHash: true
+
+components:
+  - ../../components/labels

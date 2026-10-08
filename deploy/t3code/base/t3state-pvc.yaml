@@ -4,8 +4,6 @@ kind: PersistentVolumeClaim
 metadata:
   name: t3state-t3code-0
   namespace: agents
-  labels:
-    app.kubernetes.io/part-of: homelab
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:

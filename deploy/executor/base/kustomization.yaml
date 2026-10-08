@@ -4,11 +4,13 @@ namespace: agents
 
 labels:
   - pairs:
-      app.kubernetes.io/part-of: homelab
-      app.kubernetes.io/managed-by: kustomize
+      app.kubernetes.io/name: executor
     includeSelectors: false
 
 resources:
   - service.yaml
   - statefulset.yaml
   - netpol.yaml
+
+components:
+  - ../../components/labels

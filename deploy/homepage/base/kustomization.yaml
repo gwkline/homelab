@@ -4,8 +4,7 @@ namespace: agents
 
 labels:
   - pairs:
-      app.kubernetes.io/part-of: homelab
-      app.kubernetes.io/managed-by: kustomize
+      app.kubernetes.io/name: homepage
     includeSelectors: false
 
 resources:
@@ -13,3 +12,6 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
+
+components:
+  - ../../components/labels

@@ -59,11 +59,11 @@ kubectl -n external-secrets rollout status deploy/external-secrets
 ### 3.3 Bootstrap secrets
 
 ```sh
-kubectl apply -k deploy/namespaces
+kubectl apply -k deploy/namespaces/base
 ./scripts/create-onepassword-service-account.sh   # external-secrets only; the ClusterSecretStore reads it
 ```
 
-That is the only hand-entered secret. Everything else, including the Postgres owner-role passwords (items `knowledge-db`, `factory-db`), syncs from 1Password with the core set ([secrets-inventory.md](secrets-inventory.md)).
+That is the only hand-entered secret. Everything else, including the Postgres owner-role password (item `knowledge-db`), syncs from 1Password with the core set ([secrets-inventory.md](secrets-inventory.md)).
 
 ### 3.4 Image admission
 

@@ -4,32 +4,21 @@ metadata:
   name: factory-security
   namespace: sandbox
   labels:
-    app.kubernetes.io/part-of: homelab
     factory.gwkline.io/component: security
     factory.gwkline.io/profile: security
 spec:
   # Per-issue security runs go through the panel (profile=security).
   schedule: "15 */6 * * *"
-  concurrencyPolicy: Forbid
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      ttlSecondsAfterFinished: 86400
       activeDeadlineSeconds: 1800
-      backoffLimit: 0
       template:
         metadata:
           labels:
             factory.gwkline.io/profile: security
         spec:
-          restartPolicy: Never
           serviceAccountName: factory-security
           automountServiceAccountToken: false
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 1000
-            seccompProfile: { type: RuntimeDefault }
           # Only the clone step holds the GitHub token (ADR-001 D6).
           initContainers:
             - name: clone
@@ -63,10 +52,6 @@ spec:
               resources:
                 requests: { cpu: 500m, memory: 1Gi }
                 limits: { cpu: "2", memory: 4Gi }
-              securityContext:
-                allowPrivilegeEscalation: false
-                capabilities: { drop: ["ALL"] }
-                readOnlyRootFilesystem: true
               volumeMounts:
                 - { name: tmp, mountPath: /tmp }
                 - { name: home, mountPath: /home/node }
@@ -75,7 +60,6 @@ spec:
                 - { name: out, mountPath: /out }
           volumes:
             - { name: clone-tmp, emptyDir: {} }
-            - { name: tmp, emptyDir: {} }
             - { name: home, emptyDir: {} }
             - { name: task, emptyDir: {} }
             - { name: work, emptyDir: {} }

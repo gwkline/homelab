@@ -4,32 +4,21 @@ metadata:
   name: factory-collector
   namespace: sandbox
   labels:
-    app.kubernetes.io/part-of: homelab
     factory.gwkline.io/component: collector
 spec:
   # Queues eligible issues by labeling them factory/queued; the label is the
   # Run's ledger record, so repeated polls can't duplicate work.
   schedule: "5 * * * *"
-  concurrencyPolicy: Forbid
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      ttlSecondsAfterFinished: 86400
       activeDeadlineSeconds: 900
-      backoffLimit: 0
       template:
         metadata:
           labels:
             factory.gwkline.io/profile: collector
         spec:
-          restartPolicy: Never
           serviceAccountName: factory-collector
           automountServiceAccountToken: false
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 1000
-            seccompProfile: { type: RuntimeDefault }
           containers:
             - name: collector
               image: ghcr.io/gwkline/homelab/factory/collector:latest
@@ -70,10 +59,6 @@ spec:
               resources:
                 requests: { cpu: 100m, memory: 128Mi }
                 limits: { cpu: 500m, memory: 512Mi }
-              securityContext:
-                allowPrivilegeEscalation: false
-                capabilities: { drop: ["ALL"] }
-                readOnlyRootFilesystem: true
               volumeMounts:
                 - { name: tmp, mountPath: /tmp }
                 - {
@@ -82,7 +67,6 @@ spec:
                     readOnly: true,
                   }
           volumes:
-            - { name: tmp, emptyDir: {} }
             - name: github-app
               secret:
                 secretName: github-app

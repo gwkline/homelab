@@ -1,12 +1,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-labels:
-  - pairs:
-      app.kubernetes.io/part-of: homelab
-      app.kubernetes.io/managed-by: kustomize
-    includeSelectors: false
-
 resources:
   - priorityclasses.yaml
   - networkpolicy.yaml
@@ -14,4 +8,5 @@ resources:
   - egress-canary.yaml
 
 components:
+  - ../../components/labels
   - ../../../clusters/home/node

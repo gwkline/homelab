@@ -3,9 +3,6 @@ kind: ConfigMap
 metadata:
   name: hermes-executor
   namespace: agents
-  labels:
-    app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/part-of: homelab
 data:
   mcp-url: http://executor.agents.svc:8080/mcp
   # Executor attributes policy decisions and audit events to this identity.

@@ -4,11 +4,11 @@ kind: CronJob
 metadata:
   name: factory-stats-snapshot
   namespace: agents
-  labels:
-    app.kubernetes.io/part-of: homelab
 spec:
   # Late Sunday, so the snapshot captures the nearly complete week.
   schedule: "53 23 * * 0"
+  # Still worth taking up to an hour late; past that, wait for next week.
+  startingDeadlineSeconds: 3600
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -16,6 +16,8 @@ spec:
     spec:
       activeDeadlineSeconds: 300
       backoffLimit: 0
+      # Kept until the next run replaces it.
+      ttlSecondsAfterFinished: 604800
       template:
         metadata:
           labels:

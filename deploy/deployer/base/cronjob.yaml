@@ -7,6 +7,8 @@ metadata:
   namespace: agents
 spec:
   schedule: "*/5 * * * *"
+  # A pass that can't start within a minute is skipped; the next is due soon.
+  startingDeadlineSeconds: 60
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
