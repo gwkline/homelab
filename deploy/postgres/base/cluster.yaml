@@ -31,9 +31,12 @@ spec:
     initdb:
       dataChecksums: true
 
+  # Not a limit: local-path ignores the size (ADR-005 D3).
   storage:
     size: 20Gi
     storageClass: local-path
+
+  priorityClassName: homelab-platform
 
   # local-path pins data to a node; agent nodes are rebuilt freely, so pin to
   # the durable server node.
