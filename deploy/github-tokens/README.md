@@ -1,6 +1,6 @@
 # GitHub tokens
 
-ExternalSecrets that sync GitHub PATs from the `homelab` 1Password vault, plus the `onepassword` SecretStores for `agents`, `sandbox`, and `work`. ESO owns the Secrets (`creationPolicy: Owner`), so manual edits get reverted.
+ExternalSecrets that sync GitHub PATs from the `homelab` 1Password vault, plus `ClusterSecretStore` `onepassword`, the one store every ExternalSecret uses (`secretstore.yaml`; its `conditions` list the namespaces allowed to use it). ESO owns the Secrets (`creationPolicy: Owner`), so manual edits get reverted.
 
 ## 1Password items
 
@@ -14,7 +14,7 @@ The read and write tokens are separate items with separate permissions.
 
 ## Prerequisites
 
-ESO and the `onepassword-service-account` Secrets ([deploy/eso](../eso/README.md)).
+ESO and Secret `external-secrets/onepassword-service-account` ([deploy/eso](../eso/README.md)).
 
 ## Apply
 
@@ -23,7 +23,7 @@ Part of `clusters/home`. Standalone: `kubectl apply -k deploy/github-tokens/base
 ## Verify
 
 ```sh
-kubectl get secretstore,externalsecret -A    # all Ready (github-token-writer may be False if the item is absent)
+kubectl get clustersecretstore,externalsecret -A    # all Ready (github-token-writer may be False if the item is absent)
 kubectl -n agents exec hermes-0 -- gh api user -q .login
 ```
 

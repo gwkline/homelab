@@ -17,7 +17,7 @@ A second t3code instance for work repositories, in the `work` namespace. It uses
 | `work-claude-oauth` | `token` | Output of `claude setup-token` run on a logged-in machine (the in-pod login can't complete headless). Required. |
 | `work-depot-token` | `token` | Depot org token for `depot bake`. Optional. |
 
-Plus the `onepassword-service-account` Secret in `work` (`scripts/create-onepassword-service-account.sh work`).
+They sync through `ClusterSecretStore` `onepassword`, whose conditions include `work`; no 1Password credential lives in this namespace.
 
 ## Apply
 
@@ -26,7 +26,7 @@ Part of `clusters/home`; the deployer keeps the StatefulSet on the latest image.
 ## Verify
 
 ```sh
-kubectl get secretstore,externalsecret -n work
+kubectl get externalsecret -n work
 kubectl -n work rollout status statefulset work-t3code
 kubectl -n work exec work-t3code-0 -- gh api repos/gwkline/homelab --jq .name   # must fail (404)
 kubectl -n work exec work-t3code-0 -- ls /data/repos
