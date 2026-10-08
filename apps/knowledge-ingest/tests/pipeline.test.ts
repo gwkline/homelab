@@ -16,6 +16,7 @@ import type {
 } from "../server/pipeline-worker.ts";
 import {
   createPipelineHandler,
+  DEFAULT_FETCH_TIMEOUT_MS,
   DEFAULT_MAX_CONTENT_BYTES,
   parseDocumentVersionPayload,
   sha256Hex,
@@ -73,6 +74,11 @@ const rig = (chunks = 3): Rig => {
   ): WorkerDeps => ({
     config: makeWorkerConfig(),
     handler: createPipelineHandler({
+      config: {
+        fetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
+        maxContentBytes: DEFAULT_MAX_CONTENT_BYTES,
+        sourceUrlPrefixes: ["https://github.com/", "https://docs.example/"],
+      },
       ...(overrides.fetchImpl === undefined
         ? {}
         : { fetchImpl: overrides.fetchImpl }),

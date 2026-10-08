@@ -1,10 +1,13 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import type { RetrievalMode } from "./store.ts";
 
 export interface RetrievalConfig {
   port: number;
+  /** Admin bearer: every route, including the ingest passthrough. */
   token: string;
+  /** Read-only bearer: `/v1/search` only. Null until it is provisioned. */
+  searchToken: string | null;
   maxQueryLength: number;
   maxTopK: number;
   defaultTopK: number;
@@ -91,6 +94,30 @@ const tokenFromEnv = (env: Record<string, string | undefined>): string => {
   );
 };
 
+/**
+ * Optional: the secret is mounted `optional`, so a missing or empty file
+ * means the search token is not provisioned yet and only the admin token
+ * works.
+ */
+const searchTokenFromEnv = (
+  env: Record<string, string | undefined>,
+  adminToken: string
+): string | null => {
+  let token: string | null =
+    env.KNOWLEDGE_RETRIEVAL_SEARCH_TOKEN?.trim() || null;
+  const file = env.KNOWLEDGE_RETRIEVAL_SEARCH_TOKEN_FILE?.trim();
+  if (token === null && file && existsSync(file)) {
+    token =
+      readTokenFile(file, "KNOWLEDGE_RETRIEVAL_SEARCH_TOKEN_FILE") || null;
+  }
+  if (token === adminToken) {
+    throw new Error(
+      "the search token must differ from the admin token, or it would carry admin scope"
+    );
+  }
+  return token;
+};
+
 const modeFromEnv = (
   env: Record<string, string | undefined>
 ): RetrievalMode => {
@@ -169,6 +196,7 @@ export const configFromEnv = (
       CONFIG_DEFAULTS.requestTimeoutMs
     ),
     rrfK: positiveInt(env, "KNOWLEDGE_RRF_K", CONFIG_DEFAULTS.rrfK),
+    searchToken: searchTokenFromEnv(env, token),
     seedFile: env.KNOWLEDGE_SEED_FILE?.trim() || null,
     token,
   };
@@ -194,6 +222,7 @@ export const baseConfig = (
   port: CONFIG_DEFAULTS.port,
   requestTimeoutMs: CONFIG_DEFAULTS.requestTimeoutMs,
   rrfK: CONFIG_DEFAULTS.rrfK,
+  searchToken: null,
   seedFile: null,
   token,
   ...overrides,

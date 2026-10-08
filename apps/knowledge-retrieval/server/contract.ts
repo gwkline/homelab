@@ -5,6 +5,7 @@ import type { RetrievalConfig } from "./config.ts";
 export type ApiErrorCode =
   | "invalid_request"
   | "unauthorized"
+  | "forbidden"
   | "not_found"
   | "internal_error"
   | "store_unavailable"
@@ -16,6 +17,7 @@ export const errorSchema = z
       code: z.enum([
         "invalid_request",
         "unauthorized",
+        "forbidden",
         "not_found",
         "internal_error",
         "store_unavailable",

@@ -1,6 +1,7 @@
 #!/bin/bash
-# Offline test for run-reviewer.sh with a PATH-shimmed gh that fails the test
-# on any PR write (merge / ready / label edits).
+# Offline test for run-reviewer.sh with a PATH-shimmed gh. Read-only mode must
+# not write (merge / ready fail the test); auto-merge mode must refuse PRs that
+# change merge-gate paths, or whose file list it cannot read.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/../../../../" || exit 1
@@ -20,7 +21,14 @@ case "$*" in
     cat "$GH_FIXTURE_DIR/checks.json" ;;
   */reviews)
     cat "$GH_FIXTURE_DIR/reviews.json" ;;
+  *"/files?"*)
+    n="$(printf '%s' "$*" | sed 's|.*/pulls/\([0-9]*\)/files.*|\1|')"
+    cat "$GH_FIXTURE_DIR/files-$n.json" 2>/dev/null || { echo "gh: HTTP 502" >&2; exit 1; } ;;
   *"pr merge"*|*"pr ready"*)
+    if [ -n "${GH_ALLOW_WRITES:-}" ]; then
+      echo "$*" >> "$GH_FIXTURE_DIR/writes.log"
+      exit 0
+    fi
     echo "FAIL: reviewer attempted a write: gh $*" >&2
     exit 99 ;;
   *)
@@ -55,5 +63,34 @@ echo "$OUT" | grep -q "#10.*APPROVED"                || { echo "FAIL: #10 should
 ! echo "$OUT" | grep -q "PR #11"                     || { echo "FAIL: unrelated PR was processed"; exit 1; }
 echo "$OUT" | grep -q "\[reviewer\] done"            || { echo "FAIL: no completion line"; exit 1; }
 [ "$RC" -eq 0 ]                                      || { echo "FAIL: exit code $RC"; exit 1; }
-rm -f "$SHIM/gh"
 echo "PASS: reviewer label filtering behaves"
+
+# Auto-merge: green, ready PRs. #20 changes docs only; #21 edits the CI
+# workflow; #22's file list cannot be read.
+cat > "$FIX/prs.json" <<'EOF'
+[
+ {"number":20,"head":{"ref":"factory/issue-30/code-pr"},"draft":false,"labels":[]},
+ {"number":21,"head":{"ref":"factory/issue-31/code-pr"},"draft":false,"labels":[]},
+ {"number":22,"head":{"ref":"factory/issue-32/code-pr"},"draft":false,"labels":[]}
+]
+EOF
+echo '[{"filename":"docs/notes.md"}]' > "$FIX/files-20.json"
+echo '[{"filename":"docs/notes.md"},{"filename":".github/workflows/ci.yaml"}]' > "$FIX/files-21.json"
+echo '[]' > "$FIX/reviews.json"
+: > "$FIX/writes.log"
+RC=0
+OUT="$(GH_AUTH_SKIP=1 GH_TOKEN=test GH_FIXTURE_DIR="$FIX" GH_ALLOW_WRITES=1 \
+  FACTORY_REPO=gwkline/homelab FACTORY_REVIEWER_AUTO_MERGE=true \
+  PATH="$SHIM:$PATH" apps/factory/reviewer/run-reviewer.sh)" || RC=$?
+echo "$OUT"
+[ "$RC" -eq 0 ] || { echo "FAIL: auto-merge run exit code $RC"; exit 1; }
+grep -qx "pr merge 20 -R gwkline/homelab --squash --delete-branch" "$FIX/writes.log" \
+  || { echo "FAIL: #20 (docs only) was not merged"; cat "$FIX/writes.log"; exit 1; }
+! grep -q "pr merge 21" "$FIX/writes.log" || { echo "FAIL: #21 (edits CI) was merged"; exit 1; }
+! grep -q "pr merge 22" "$FIX/writes.log" || { echo "FAIL: #22 (unreadable files) was merged"; exit 1; }
+echo "$OUT" | grep -qF "PR #21: changes merge-gate paths (.github/workflows/ci.yaml) — not merging" \
+  || { echo "FAIL: no reason logged for #21"; exit 1; }
+echo "$OUT" | grep -q "PR #22: cannot list its changed files — not merging" \
+  || { echo "FAIL: no reason logged for #22"; exit 1; }
+rm -f "$SHIM/gh"
+echo "PASS: auto-merge skips PRs that change merge-gate paths, and fails closed"

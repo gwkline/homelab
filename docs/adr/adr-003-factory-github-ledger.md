@@ -43,6 +43,10 @@ Worker pods run at the `restricted` Pod Security level.
 - One Run = one issue + one profile. The branch `factory/issue-<N>/<profile>` is the dedupe key: before creating anything the orchestrator looks for an existing branch/PR with that head and updates or skips instead of duplicating.
 - Run marker comment `<!-- factory:run:<issue>:<ts> -->`, edited in place, carries status, profile/workflow (`code-pr@v1`), attempt, the worker report on success, and a redacted log tail on failure.
 - A worker failure retries once (two run markers max), then the issue lands on `factory/failed`.
+- Retrying can't help in some cases. The orchestrator then parks the issue on `factory/failed` + `factory/stuck` at once, with the reason in the run comment:
+  - the run cannot be attempted (exit 78, ADR-001 D5);
+  - the issue is labelled `needs:<capability>` and the profile's `capabilities` lack it, e.g. `needs:cluster` on `code-pr`;
+  - the patch touches a merge-gate path (ADR-001 D7).
 
 ## State machine (labels)
 
@@ -53,7 +57,7 @@ Worker pods run at the `restricted` Pod Security level.
 | `factory/draft-pr` | orchestrator | draft PR open; stays until merge |
 | `factory/needs-review` | reviewer | PR ready and CI green |
 | `factory/failed` | orchestrator | worker failed; reclaimer may requeue |
-| `factory/stuck` | medic, reclaimer | retries exhausted; needs a human |
+| `factory/stuck` | medic, reclaimer, orchestrator | retries exhausted, or parked by the orchestrator; needs a human |
 | `factory/cancelled` | panel cancel, human | stopped |
 
 PR `isDraft`, `reviewDecision`, and check rollup are derived state; labels remain the ledger. A merged PR closes its issue via `Closes #N`. Factory PRs merge without a human once CI is green; the trust boundary is admission (the collector's `factory` label, which only collaborators can apply).

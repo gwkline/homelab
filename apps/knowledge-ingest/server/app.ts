@@ -16,6 +16,7 @@ import {
   syncTriggerResponseSchema,
 } from "./contract.ts";
 import type { Logger } from "./log.ts";
+import { isAllowedSourceUrl } from "./source-url.ts";
 import type {
   IngestJobRecord,
   IngestRequestInput,
@@ -234,6 +235,23 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
       c.req.valid("json"),
       new Date().toISOString()
     );
+    if (
+      input.source.url !== null &&
+      !isAllowedSourceUrl(input.source.url, config.sourceUrlPrefixes)
+    ) {
+      logger.warn("source url refused", {
+        requestId,
+        sourceId: input.source.sourceId,
+      });
+      return c.json(
+        errorBody(
+          "invalid_request",
+          `source url must be https under ${config.sourceUrlPrefixes.join(", ")}`,
+          requestId
+        ),
+        422
+      );
+    }
     try {
       const { duplicate, job } = await store.enqueueIngest(input);
       logger.info("ingest accepted", {

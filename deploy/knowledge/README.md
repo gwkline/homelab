@@ -8,7 +8,7 @@ Two services in `agents` over the `knowledge` database ([deploy/postgres](../pos
 ## Prerequisites
 
 - `pg-primary` is healthy with the `knowledge` database.
-- 1Password items `knowledge-db` and `knowledge-api-token` (contracts in `base/externalsecret.yaml`). The `knowledge-db` password must match Secret `database/pg-primary-knowledge-owner`.
+- 1Password items `knowledge-db` and `knowledge-api-token` (contracts in `base/externalsecret.yaml`). Optionally `knowledge-search-token`, a read-only token that can only call `/v1/search`. The `knowledge-db` password must match Secret `database/pg-primary-knowledge-owner`.
 - `github-token` in `agents` (for private git sources).
 
 ## Apply

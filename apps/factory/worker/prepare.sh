@@ -8,7 +8,8 @@
 #        (optional: public repos clone anonymously)
 #   out  ${WORK_DIR}/repo with a credential-free origin; skills in
 #        SKILLS_TARGET with their status in SKILLS_STATUS_FILE
-#   exit 0 cloned · 1 clone failed or stalled · 78 misconfiguration
+#   exit 0 cloned · 1 clone failed or stalled (retryable) · 78 cannot attempt:
+#        misconfiguration or a failed private-skills sync
 #
 # The token reaches git only through a throwaway GIT_ASKPASS helper, never a
 # URL, so nothing on disk (.git/config, FETCH_HEAD) records it.
@@ -18,7 +19,7 @@ WORK_DIR="${WORK_DIR:-/work}"
 REPO="${FACTORY_REPO:-}"
 case "${REPO}" in
   */*) ;;
-  *) echo "[prepare] FATAL: FACTORY_REPO must be owner/name (got '${REPO}')" >&2; exit 78 ;;
+  *) echo "[prepare] CANNOT ATTEMPT: FACTORY_REPO must be owner/name (got '${REPO}')" >&2; exit 78 ;;
 esac
 CLONE_URL="${CLONE_URL:-https://github.com/${REPO}.git}"
 _PREPARE_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -66,11 +67,15 @@ else
   echo "[prepare] cloned ${REPO} @ $(git -C "${WORK_DIR}/repo" rev-parse --short HEAD)"
 fi
 
-# Pinned private skills (apps/shared/skills-lib.sh). A failure is recorded in
-# SKILLS_STATUS_FILE and the run continues without them.
+# Pinned private skills (apps/shared/skills-lib.sh), required when SKILLS_REF
+# is set: without them the run only churns to "no changes", so a failed sync
+# stops it as cannot-attempt (78) with the reason.
 if [ -n "${SKILLS_REF:-}" ] && [ -f "${SKILLS_LIB}" ]; then
   # shellcheck source=apps/shared/skills-lib.sh
   . "${SKILLS_LIB}"
-  skills_sync \
-    || echo "[prepare] WARNING: skills sync FAILED — the agent runs without private skills" >&2
+  if ! skills_sync; then
+    _err=$(sed -n 's/.*"error":"\([^"]*\)".*/\1/p' "${SKILLS_STATUS_FILE:-/dev/null}" 2>/dev/null || true)
+    echo "[prepare] CANNOT ATTEMPT: private skills sync failed${_err:+ (${_err})}; check that the github-token Secret can read ${SKILLS_REPO_URL:-the skills repo}" >&2
+    exit 78
+  fi
 fi
