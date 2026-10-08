@@ -1,5 +1,5 @@
 #!/bin/sh
-# Shared workspace plumbing, sourced by t3code and loop-agent entrypoints.
+# Shared workspace plumbing, sourced by the t3code, hermes and ops entrypoints.
 # Expects optional env:
 #   GITHUB_TOKEN_FILE  path to a mounted Secret containing a fine-grained PAT
 #   GITHUB_TOKEN       raw PAT fallback (prefer the mounted file)

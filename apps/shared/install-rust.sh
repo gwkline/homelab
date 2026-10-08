@@ -2,7 +2,7 @@
 # Installs a pinned Rust toolchain system-wide via rustup-init, sha256-verified
 # against digests recorded here; rustup verifies the toolchain it downloads.
 # The caller sets RUSTUP_HOME/CARGO_HOME (ENV) and puts $CARGO_HOME/bin on
-# PATH. Both trees are left writable so the runtime uid can fetch crates and
+# PATH. Both trees belong to the runtime uid, so it can fetch crates and
 # install a toolchain a repo's rust-toolchain.toml asks for. Needs a C linker
 # (gcc or g++) from the caller's apt layer.
 set -eu
@@ -28,5 +28,7 @@ echo "${sha}  /tmp/rustup-init" | sha256sum -c -
 chmod +x /tmp/rustup-init
 /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain "${RUST_VERSION}"
 rm -f /tmp/rustup-init
-chmod -R a+rwX "${RUSTUP_HOME}" "${CARGO_HOME}"
+# uid 1000 is every caller's runAsUser. Owned by it rather than world-writable:
+# $CARGO_HOME/bin is on PATH, and no other uid may replace what is there.
+chown -R 1000:1000 "${RUSTUP_HOME}" "${CARGO_HOME}"
 cargo --version

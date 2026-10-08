@@ -16,4 +16,6 @@ COPY apps/factory/lib/factory.sh apps/factory/lib/labels.json /usr/local/lib/fac
 WORKDIR /orch
 COPY apps/factory/orchestrator/run.sh apps/factory/orchestrator/marker.sh apps/factory/orchestrator/knowledge-context.sh apps/factory/orchestrator/run-reclaimer.sh apps/factory/orchestrator/worker-job.jq /orch/
 RUN chmod +x /orch/run.sh /orch/knowledge-context.sh /orch/run-reclaimer.sh
+# The pods' runAsUser; the slim base has no user to name.
+USER 1000:1000
 ENTRYPOINT ["/orch/run.sh"]
