@@ -102,6 +102,12 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
 kubectl get ingress -A   # t3code-0, work-t3code-0, panel get <host>.<tailnet>.ts.net
 ```
 
+Every operator namespace now exists, so apply their default-deny ingress policies (webhook ports stay open to the API server):
+
+```sh
+kubectl apply -k deploy/operator-policies/base
+```
+
 ### 3.8 Verify
 
 ```sh
@@ -118,7 +124,6 @@ kubectl apply -k deploy/loki/base
 kubectl apply -k deploy/grafana/base      # needs Secret grafana-admin
 kubectl apply -k deploy/executor/base     # optional Secret executor-admin
 kubectl apply -k deploy/knowledge/base    # needs 1Password knowledge-db / knowledge-api-token
-kubectl apply -k deploy/cloudbeaver/base  # then ./scripts/create-cloudbeaver-secret.sh
 ```
 
 Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart && scripts/pg-smoke.sh verify`.

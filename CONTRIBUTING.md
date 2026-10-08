@@ -5,10 +5,10 @@
 ```sh
 npm ci                 # one install for every app (npm workspaces)
 npm run lint && npm run format:check && npm run typecheck && npm test
-./scripts/verify.sh    # shellcheck, manifest builds, secret scan
+./scripts/verify.sh    # shell/Dockerfile/workflow lint, manifest builds and references, gitleaks
 ```
 
-CI runs the same checks, plus every `apps/**/tests/*.test.sh` fixture test and the panel e2e against a kind cluster.
+CI runs the same checks, plus every `apps/**/tests/*.test.sh` and `deploy/*/tests/*.test.sh` fixture test and the panel e2e against a kind cluster.
 
 ## Conventions
 

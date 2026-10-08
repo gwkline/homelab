@@ -52,7 +52,7 @@ Dashboards, datasources, alert rules, and scrape/Loki/Alloy configs are ConfigMa
 
 ## D7. Decision
 
-Grafana + single-node VictoriaMetrics + kube-state-metrics + kubelet/cAdvisor scraping for metrics; Loki single binary + Alloy for logs. Small non-privileged pods in `agents`, plain kustomize, digest/version-pinned images (Renovate bumps them), no Helm, no CRDs, no HA. Alert rules are provisioned in Grafana (`deploy/grafana/base/alerting.yaml`) with no notification routing until something needs to page. Leaving VictoriaMetrics means swapping one datasource; dashboards survive.
+Grafana + single-node VictoriaMetrics + kube-state-metrics + kubelet/cAdvisor scraping for metrics; Loki single binary + Alloy for logs. Small non-privileged pods in `agents`, plain kustomize, digest/version-pinned images (Renovate bumps them), no Helm, no CRDs, no HA. Alert rules are provisioned in Grafana (`deploy/grafana/base/provisioning/alerting/`) and notify one ntfy topic. Leaving VictoriaMetrics means swapping one datasource; dashboards survive.
 
 ## Consequences
 

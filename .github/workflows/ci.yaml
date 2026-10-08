@@ -10,13 +10,19 @@ on:
   schedule:
     - cron: "0 10 * * 1"
 
-# Main runs queue rather than overlap, so `latest` only ever moves forward.
+# One group per PR number, so fork PRs with the same branch name never
+# cancel each other. Main runs queue rather than overlap.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Each job requests only what it uses.
+permissions: {}
+
 env:
-  REGISTRY: ghcr.io
+  # BuildKit runs every build and, in `publish`, holds the push credential.
+  BUILDKIT_IMAGE: moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+  SBOM_GENERATOR: docker/buildkit-syft-scanner:1.12.0@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9
 
 jobs:
   check:
@@ -25,6 +31,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
@@ -55,24 +63,17 @@ jobs:
         with:
           # Full history for the gitleaks mainline scan below.
           fetch-depth: 0
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          persist-credentials: false
+      - name: Install pinned linters
+        run: |
+          ./scripts/install-ci-tools.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: ./scripts/verify.sh
       - name: Secret scan (git history, first-parent mainline)
-        run: |
-          (
-            cd /tmp
-            curl -fsSL -O https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
-            curl -fsSL -O https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt
-            grep 'gitleaks_8.30.1_linux_x64.tar.gz' gitleaks_8.30.1_checksums.txt | sha256sum -c --strict -
-            # -C BEFORE the member name, or GNU tar treats it as another member
-            # and the binary lands in cwd ("gitleaks: command not found").
-            tar -xzf gitleaks_8.30.1_linux_x64.tar.gz -C /usr/local/bin gitleaks
-            gitleaks version
-          )
-          gitleaks git --log-opts=--first-parent --config .gitleaks.toml --redact
+        run: gitleaks git --log-opts=--first-parent --config .gitleaks.toml --redact
       - name: Shell fixture tests
         run: |
-          for t in apps/*/tests/*.test.sh apps/factory/*/tests/*.test.sh; do
+          for t in apps/*/tests/*.test.sh apps/factory/*/tests/*.test.sh deploy/*/tests/*.test.sh; do
             echo "==> $t"
             sh "$t"
           done
@@ -85,6 +86,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
@@ -105,6 +108,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
         with:
           cluster_name: manifest-smoke
@@ -129,6 +134,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           fetch-depth: 0
       - id: diff
         env:
@@ -150,9 +156,11 @@ jobs:
           cat images.json
           echo "images=$(cat images.json)" >> "$GITHUB_OUTPUT"
 
+  # Pull requests and branch runs: build and smoke-test with no registry
+  # credential. Reads main's build cache and never writes it.
   build:
     needs: [changes, check, validate, panel-e2e]
-    if: needs.changes.outputs.images != '[]'
+    if: needs.changes.outputs.images != '[]' && (github.event_name == 'pull_request' || github.ref != 'refs/heads/main')
     name: build ${{ matrix.image.name }}
     strategy:
       matrix:
@@ -160,35 +168,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-      id-token: write # keyless cosign signing via OIDC
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
-        id: meta
-        env:
-          IMAGE_NAME: ${{ github.repository }}/${{ matrix.image.name }}
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: type=sha
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
 
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        id: push
         with:
           context: .
           file: ${{ matrix.image.dir }}/Dockerfile
-          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
           # t3code and factory/worker float their agent CLIs on dist-tags; a
           # unique CACHEBUST per run keeps the GHA cache from replaying a
           # stale resolution layer (apps/shared/install-agent-clis.sh).
@@ -196,7 +188,6 @@ jobs:
           build-args: |
             CACHEBUST=${{ github.run_id }}
           cache-from: type=gha,scope=${{ matrix.image.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
 
       # Every advertised coding CLI answers, non-root holds, pinned skills
       # match their sha. Same CACHEBUST, so this rebuild is a cache hit.
@@ -206,24 +197,105 @@ jobs:
           docker buildx build --load --build-arg CACHEBUST=${{ github.run_id }} -t factory-worker-smoke -f apps/factory/worker/Dockerfile .
           docker run --rm --entrypoint /usr/local/bin/smoke-test factory-worker-smoke
 
+  # Main only. The image is pushed by digest, smoke-tested and signed before
+  # any tag points at it, so the deployer never resolves a tag to an image
+  # admission would reject. `latest` moves only while this run's commit is
+  # still main's head, so re-running an old run cannot roll it back.
+  publish:
+    needs: [changes, check, validate, panel-e2e]
+    if: needs.changes.outputs.images != '[]' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    name: publish ${{ matrix.image.name }}
+    strategy:
+      # One image failing must not cancel the others mid-publish.
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.changes.outputs.images) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing via OIDC
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}/${{ matrix.image.name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Labels, and the sha-<7 char> tag the deployer resolves.
+      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: type=sha
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        id: push
+        with:
+          context: .
+          file: ${{ matrix.image.dir }}/Dockerfile
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta.outputs.labels }}
+          sbom: generator=${{ env.SBOM_GENERATOR }}
+          provenance: mode=max
+          build-args: |
+            CACHEBUST=${{ github.run_id }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
+
+      - name: Smoke test factory/worker image
+        if: matrix.image.name == 'factory/worker'
+        run: |
+          docker buildx build --load --build-arg CACHEBUST=${{ github.run_id }} -t factory-worker-smoke -f apps/factory/worker/Dockerfile .
+          docker run --rm --entrypoint /usr/local/bin/smoke-test factory-worker-smoke
+
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
-      # `latest` moves only after the digest is signed, so the deployer never
-      # resolves it to an image admission would reject.
-      - name: Sign and tag latest
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+
+      - name: Sign
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
-          IMAGE: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.image.name }}
         run: |
           test -n "${DIGEST}"
           cosign sign --yes "${IMAGE}@${DIGEST}"
-          docker buildx imagetools create --tag "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
+
+      - name: Tag
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          SHA_TAG: ${{ steps.meta.outputs.tags }}
+        run: |
+          docker buildx imagetools create --tag "${SHA_TAG}" "${IMAGE}@${DIGEST}"
+          head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [ "${head}" = "${GITHUB_SHA}" ]; then
+            docker buildx imagetools create --tag "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
+          else
+            echo "::notice::main is at ${head}, not ${GITHUB_SHA}; latest stays put"
+          fi
+
+      # The SBOM and provenance also ride in the signed index as BuildKit
+      # attestations. This adds a signed, Rekor-logged provenance
+      # attestation (`cosign verify-attestation --type slsaprovenance1`).
+      - name: Attest provenance
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --format '{{ json .Provenance.SLSA }}' > "${RUNNER_TEMP}/provenance.json"
+          cosign attest --yes --type slsaprovenance1 --predicate "${RUNNER_TEMP}/provenance.json" "${IMAGE}@${DIGEST}"
 
   # The single required status check: green only when every job above
   # succeeded or was legitimately skipped.
   ci:
     if: always()
-    needs: [check, validate, panel-e2e, manifest-smoke, changes, build]
+    needs: [check, validate, panel-e2e, manifest-smoke, changes, build, publish]
     runs-on: ubuntu-latest
     steps:
       - run: test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false

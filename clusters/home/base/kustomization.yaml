@@ -12,6 +12,7 @@ resources:
   - ../../../deploy/github-tokens/base
   - ../../../deploy/tailscale
   - ../../../deploy/postgres/base
+  - ../../../deploy/cloudbeaver/base
   - ../../../deploy/t3code/base
   - ../../../deploy/hermes/base
   - ../../../deploy/homepage/base
@@ -23,4 +24,3 @@ resources:
   - ../../../deploy/factory/base
   - ../../../deploy/deployer
   - ../../../deploy/work-t3code/base
-  - ../../../deploy/chaos/base

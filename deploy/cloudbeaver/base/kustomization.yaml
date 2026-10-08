@@ -9,6 +9,7 @@ labels:
     includeSelectors: false
 
 resources:
+  - externalsecret.yaml
   - initial-datasources.yaml
   - statefulset.yaml
   - service.yaml

@@ -71,10 +71,9 @@ echo "[t3code] agent-state sync started (${STATE_SRC})"
 SKILLS_STORE="${DATA_DIR}/skills-generated"
 SKILLS_STATUS="${DATA_DIR}/skills-sync/status.json"
 if [ -f "${SKILLS_STATUS}" ] && grep -q '"ok":true' "${SKILLS_STATUS}"; then
-  for _skills_dir in /home/node/.claude/skills; do
-    skills_link_generated "${SKILLS_STORE}" "${_skills_dir}" \
-      || echo "[t3code] WARNING: skills link into ${_skills_dir} incomplete" >&2
-  done
+  _skills_dir=/home/node/.claude/skills
+  skills_link_generated "${SKILLS_STORE}" "${_skills_dir}" \
+    || echo "[t3code] WARNING: skills link into ${_skills_dir} incomplete" >&2
   echo "[t3code] skills-sync: $(cat "${SKILLS_STATUS}")"
 else
   echo "[t3code] WARNING: skills-sync did not produce a healthy store this boot — running WITHOUT private skills (see ${SKILLS_STATUS})" >&2

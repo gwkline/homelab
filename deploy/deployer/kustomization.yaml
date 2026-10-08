@@ -10,3 +10,13 @@ labels:
 resources:
   - rbac.yaml
   - cronjob.yaml
+
+# A fixed name: each Job mounts whatever script is current when it starts.
+configMapGenerator:
+  - name: deployer-script
+    namespace: agents
+    files:
+      - deploy.sh
+      - lib.sh
+    options:
+      disableNameSuffixHash: true

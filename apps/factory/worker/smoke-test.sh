@@ -24,6 +24,13 @@ cursor-agent --version > /dev/null 2>&1 || fail "cursor-agent --version failed"
 
 [ "$(id -u)" = "1000" ] || fail "image runs as uid $(id -u), expected 1000 (non-root)"
 
+# Nothing that raises privilege: no container runtime, no setuid/setgid file.
+for c in podman newuidmap newgidmap; do
+  if command -v "$c" > /dev/null 2>&1; then fail "unexpected privileged tooling: $c"; fi
+done
+PRIVILEGED=$(find / -xdev -type f -perm /6000 2>/dev/null || true)
+[ -z "${PRIVILEGED}" ] || fail "setuid/setgid files present: $(printf '%s' "${PRIVILEGED}" | tr '\n' ' ')"
+
 # Pinned verification skills: content sha must match the manifest.
 SKILLS_DIR="${FACTORY_SKILLS_DIR:-/usr/local/share/worker/skills}"
 python3 - "${SKILLS_DIR}" << 'EOF'
@@ -40,4 +47,11 @@ EOF
 
 [ -s /usr/local/share/worker/brief.schema.json ] || fail "brief.schema.json missing"
 
-echo "SMOKE OK: all advertised CLIs, non-root user, pinned skills verified"
+# The clone step is a separate initContainer; the image itself never carries
+# a GitHub credential into PID 1's environment.
+[ -x /usr/local/bin/prepare ] || fail "prepare (initContainer clone step) missing"
+if tr '\0' '\n' < /proc/1/environ | grep -qE '^(GH_TOKEN|GITHUB_TOKEN)='; then
+  fail "GitHub token in PID 1 environment"
+fi
+
+echo "SMOKE OK: all advertised CLIs, non-root user, no setuid/setgid, pinned skills verified"

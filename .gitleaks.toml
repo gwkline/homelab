@@ -1,12 +1,33 @@
-# Gitleaks config for the CI history scan (ci.yaml `validate` job). The scan
-# walks the first-parent mainline only, so stale feature-branch fixtures can
-# never poison the gate. Working-tree patterns are checked separately by
-# scripts/verify.sh.
+# Gitleaks config for scripts/verify.sh (working tree) and CI's history scan
+# (ci.yaml `validate` job). The history scan walks the first-parent mainline
+# only, so stale feature-branch fixtures can never poison the gate.
 
 title = "homelab gitleaks config"
 
 [extend]
 useDefault = true
+
+# Credential formats this repo handles that the default rules miss or only
+# catch next to a key-like variable name. The defaults already cover 1Password
+# service-account tokens (ops_) and GitHub App tokens (ghs_).
+
+[[rules]]
+id = "openrouter-api-key"
+description = "OpenRouter API key"
+regex = '''sk-or-v1-[0-9a-f]{64}'''
+keywords = ["sk-or-v1-"]
+
+[[rules]]
+id = "anthropic-oauth-token"
+description = "Claude Code OAuth token"
+regex = '''sk-ant-oat01-[A-Za-z0-9_-]{80,}'''
+keywords = ["sk-ant-oat01-"]
+
+[[rules]]
+id = "tailscale-key"
+description = "Tailscale auth key, OAuth client secret or API key"
+regex = '''tskey-(?:auth|client|api)-[A-Za-z0-9]+-[A-Za-z0-9]{16,}'''
+keywords = ["tskey-"]
 
 [allowlist]
 description = "Synthetic fixtures that must contain real-shaped tokens"

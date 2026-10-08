@@ -940,3 +940,65 @@ test(
     }
   }
 );
+
+test(
+  "integration: adopting a pre-ledger database re-tags its fake vectors",
+  { skip: !hasLiveDb },
+  async () => {
+    const schema = "knowledge_retag_test";
+    const { default: pg } = await import("pg");
+    const pool = new pg.Pool({
+      connectionString: process.env["DATABASE_URL"],
+      options: `-c search_path=${schema},public`,
+    });
+    try {
+      await pool.query("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public");
+      await pool.query(
+        "CREATE EXTENSION IF NOT EXISTS pg_textsearch SCHEMA public"
+      );
+      await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      await pool.query(`CREATE SCHEMA ${schema}`);
+      // The tables as they stood before the ledger, with rows the fake
+      // provider wrote under the real model's name.
+      await pool.query(KNOWLEDGE_MIGRATIONS[0]?.sql ?? "");
+      await pool.query(
+        "INSERT INTO knowledge_namespace (name) VALUES ('retag')"
+      );
+      await pool.query(
+        `INSERT INTO document (id, namespace, source, external_id, content_hash)
+         VALUES ('d1', 'retag', 'git', 'a.md', $1)`,
+        [sha256("a")]
+      );
+      await pool.query(
+        `INSERT INTO document_version (id, document_id, version, content_hash)
+         VALUES ('d1-v1', 'd1', 1, $1)`,
+        [sha256("a")]
+      );
+      const insertChunk = `INSERT INTO chunks
+  (chunk_id, document_id, version_id, namespace, text, content_hash, chunker_version, embedding, embedding_model)
+VALUES ($1, 'd1', 'd1-v1', 'retag', $1, $2, 'v1', $3::vector, $4)`;
+      await pool.query(insertChunk, [
+        "c-real-tag",
+        sha256("c1"),
+        unitVector384(0),
+        "BAAI/bge-small-en-v1.5",
+      ]);
+      await pool.query(insertChunk, ["c-unembedded", sha256("c2"), null, null]);
+
+      assert.deepEqual(
+        await migrateKnowledgeSchema(pool),
+        KNOWLEDGE_MIGRATIONS.map((migration) => migration.id)
+      );
+      const { rows } = await pool.query(
+        "SELECT chunk_id, embedding_model FROM chunks ORDER BY chunk_id"
+      );
+      assert.deepEqual(rows, [
+        { chunk_id: "c-real-tag", embedding_model: "fake/384" },
+        { chunk_id: "c-unembedded", embedding_model: null },
+      ]);
+      await pool.query(`DROP SCHEMA ${schema} CASCADE`);
+    } finally {
+      await pool.end();
+    }
+  }
+);

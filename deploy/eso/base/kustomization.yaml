@@ -10,3 +10,4 @@ labels:
 resources:
   - namespace.yaml
   - eso.yaml
+  - metrics.yaml

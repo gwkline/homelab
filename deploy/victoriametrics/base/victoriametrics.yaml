@@ -7,7 +7,9 @@ metadata:
   labels:
     app: victoriametrics
 data:
-  # Node metrics go through the API-server proxy, so the pod never dials node IPs.
+  # Node metrics come straight from the kubelet at the node's InternalIP:10250
+  # (node discovery's default address). The kubelet serving cert is signed by
+  # the cluster CA and lists the node IP, so the SA's ca.crt verifies it.
   promscrape.yml: |
     global:
       scrape_interval: 30s
@@ -15,47 +17,40 @@ data:
     scrape_configs:
       - job_name: kubelet
         scheme: https
+        metrics_path: /metrics
         kubernetes_sd_configs:
           - role: node
         bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
         tls_config:
           ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-          server_name: kubernetes.default.svc
         relabel_configs:
           - source_labels: [__meta_kubernetes_node_name]
             target_label: node
           - source_labels: [__meta_kubernetes_node_name]
             target_label: instance
-          - target_label: __address__
-            replacement: kubernetes.default.svc
-          - source_labels: [__meta_kubernetes_node_name]
-            regex: (.+)
-            target_label: __metrics_path__
-            replacement: /api/v1/nodes/$1/proxy/metrics
 
       - job_name: cadvisor
         scheme: https
+        metrics_path: /metrics/cadvisor
         kubernetes_sd_configs:
           - role: node
         bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
         tls_config:
           ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-          server_name: kubernetes.default.svc
         relabel_configs:
           - source_labels: [__meta_kubernetes_node_name]
             target_label: node
           - source_labels: [__meta_kubernetes_node_name]
             target_label: instance
-          - target_label: __address__
-            replacement: kubernetes.default.svc
-          - source_labels: [__meta_kubernetes_node_name]
-            regex: (.+)
-            target_label: __metrics_path__
-            replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
 
       - job_name: kube-state-metrics
         static_configs:
           - targets: ["kube-state-metrics.agents.svc:8080"]
+
+      # ESO's controller: ExternalSecret Ready conditions for alerting.
+      - job_name: external-secrets
+        static_configs:
+          - targets: ["external-secrets-metrics.external-secrets.svc:8080"]
 
       - job_name: victoriametrics
         static_configs:
@@ -100,19 +95,7 @@ spec:
         seccompProfile:
           type: RuntimeDefault
         fsGroup: 1000
-      initContainers:
-        # Root only to chown the local-path volume for uid 1000.
-        - name: volume-init
-          image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
-          command: ["chown", "-R", "1000:1000", "/var/lib/victoria-metrics"]
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-              add: ["CHOWN", "FOWNER"]
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/victoria-metrics
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: victoriametrics
           # Flags change between versions; bump deliberately.

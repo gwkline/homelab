@@ -1,0 +1,266 @@
+# Grafana-managed rules over VictoriaMetrics. Each rule is one condition: it
+# fires once per affected object, and the policy in contact-points.yaml
+# batches a rule's instances into one notification.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: homelab-health
+    folder: Homelab
+    interval: 1m
+    rules:
+      # cAdvisor's root-cgroup view of each block device; PVC stats can't be
+      # used because every local-path PVC reports the same node filesystem.
+      - uid: homelab-node-filesystem
+        title: Node filesystem above 80%
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.device }} on {{ $labels.node }} is over 80% full. Kubelet image GC starts at 70% and DiskPressure evicts pods at 90%; find what grew on the Homelab Nodes dashboard."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: victoriametrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (node, device) (container_fs_usage_bytes{id="/",device=~"/dev/.+",device!="/dev/shm"} / container_fs_limit_bytes{id="/",device=~"/dev/.+",device!="/dev/shm"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.8] }
+
+      - uid: homelab-node-disk-pressure
+        title: Node disk pressure
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node {{ $labels.node }} reports DiskPressure=True and is evicting pods. Free space on the node now."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: victoriametrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (node) (kube_node_status_condition{condition="DiskPressure",status="true"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      - uid: homelab-deployment-unavailable
+        title: Deployment unavailable
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has had fewer available replicas than desired for 15m: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: victoriametrics
+            model:
+              refId: A
+              instant: true
+              expr: "count by (namespace, deployment) (kube_deployment_status_replicas_available < kube_deployment_spec_replicas)"
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      - uid: homelab-statefulset-unavailable
+        title: StatefulSet unavailable
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: "StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} has had fewer ready replicas than desired for 15m: kubectl -n {{ $labels.namespace }} describe statefulset {{ $labels.statefulset }}"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: victoriametrics
+            model:
+              refId: A
+              instant: true
+              expr: "count by (namespace, statefulset) (kube_statefulset_status_replicas_ready < kube_statefulset_replicas)"
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      # CNPG manages its pods directly, so the StatefulSet rule doesn't see
+      # Postgres. The instance readiness probe fails when Postgres doesn't
+      # accept connections.
+      - uid: homelab-postgres-not-ready
+        title: Postgres not ready
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: "No ready pg-primary instance in database for 5m; factory and knowledge are down. kubectl -n database get cluster pg-primary; kubectl -n database describe pod -l cnpg.io/cluster=pg-primary"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: victoriametrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum(kube_pod_status_ready{namespace="database",condition="true",pod=~"pg-primary-[0-9]+"}) or vector(0)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+
+      # Age of the last success in units of the CronJob's own interval (time
+      # between its last and next scheduled runs). The deployer, every factory
+      # loop and any new CronJob are covered without a per-job threshold. The
+      # egress canary has its own rule.
+      - uid: homelab-cronjob-stale
+        title: CronJob has not succeeded in two intervals
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: 'CronJob {{ $labels.namespace }}/{{ $labels.cronjob }} last succeeded more than two schedule intervals ago. Its failed runs: {job_name=~"{{ $labels.cronjob }}-.*"} in Loki.'
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: victoriametrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, cronjob) ((time() - kube_cronjob_status_last_successful_time{cronjob!="egress-canary"}) / (kube_cronjob_next_schedule_time - kube_cronjob_status_last_schedule_time)) unless on (namespace, cronjob) (kube_cronjob_spec_suspend == 1)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [2] }
+
+      # Positive while the latest scheduled run hasn't succeeded: briefly
+      # during each run, persistently once a run fails or hangs. Keyed on the
+      # CronJob rather than its Jobs, so it neither resolves when the next run
+      # starts nor when ttlSecondsAfterFinished deletes the failed Job.
+      - uid: homelab-egress-canary-failed
+        title: Egress canary failed
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: 'The latest egress-canary run in {{ $labels.namespace }} did not succeed: either a pod with no egress allowance reached the network (NetworkPolicy egress is not enforced) or the canary itself broke. Logs: {namespace="{{ $labels.namespace }}", job_name=~"egress-canary-.*"}'
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: victoriametrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace) (kube_cronjob_status_last_schedule_time{cronjob="egress-canary"} - (kube_cronjob_status_last_successful_time{cronjob="egress-canary"} or kube_cronjob_status_last_schedule_time{cronjob="egress-canary"} * 0))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      - uid: homelab-externalsecret-not-ready
+        title: ExternalSecret not ready
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: "ExternalSecret {{ $labels.namespace }}/{{ $labels.name }} is not Ready, so its Secret no longer follows 1Password: kubectl -n {{ $labels.namespace }} describe externalsecret {{ $labels.name }}"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: victoriametrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, name) (externalsecret_status_condition{condition="Ready",status="False"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      # Jobs created directly (factory workers, panel Jobs). CronJob-owned
+      # failures are the stale-CronJob rule's.
+      - uid: homelab-jobs-repeatedly-failing
+        title: Repeated Job failures
+        condition: C
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: "Namespace {{ $labels.namespace }} had 3 or more failed Jobs in 24h. Group them by job_name on the Homelab Workloads dashboard and open their logs in Explore."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 86400, to: 0 }
+            datasourceUid: victoriametrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum by (namespace) (increase(kube_job_status_failed[24h]) unless on (namespace, job_name) max_over_time(kube_job_owner{owner_kind="CronJob"}[24h]))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [2] }

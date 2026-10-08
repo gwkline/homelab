@@ -10,7 +10,7 @@ Constraints:
 
 - Kubernetes Jobs are the only execution primitive. No Temporal/NATS/Argo/Tekton.
 - A fine-grained PAT is acceptable initially; a GitHub App ([docs/github-app.md](../github-app.md)) replaces it without contract changes.
-- Worker PRs are always drafts, never auto-merged. CI plus review gates promotion.
+- Worker PRs open as drafts. Green CI gates promotion and merge (D7).
 
 ## Decisions
 
@@ -38,17 +38,23 @@ Input, mounted read-only at `/task/brief.json` (schema: `apps/factory/worker/bri
 
 Output: `/out/report.json`, `/out/patch.diff`, and the log stream. Exit 0 plus a valid `report.json` is success; anything else is a failed attempt (one automatic retry).
 
+The patch is the diff from the clone's base commit, agent commits included. Agent CLI and package-manager state (`.opencode/`, `.cursor/`, `.claude/`, `.codex/`, `.local/`, `.cache/`, `*.db`, `*.sqlite*`) is written to `.git/info/exclude` before the agent runs. A patch that still adds such a path, or exceeds `WORKER_PATCH_MAX_BYTES` (512 KiB), is rejected: report `tests: rejected`, no patch artifact, exit 65.
+
 ### D6. Credential boundaries
 
-- Worker: no GitHub write token, no kubeconfig, netpol-restricted egress. Read-only clone; the token is unset before the agent runs.
+- Worker: the agent container holds no GitHub credential and no kubeconfig, and its egress is netpol-restricted. Unsetting a token in the entrypoint is not enough: the entrypoint is PID 1, so its initial environment stays readable in `/proc/1/environ` by the agent (same uid).
+  - The Job's `clone` initContainer (`apps/factory/worker/prepare.sh`) is the only container given the `github-token` Secret. It clones into a shared `emptyDir` through a throwaway `GIT_ASKPASS` helper, so no URL or file keeps the token, syncs the pinned private skills, and exits.
+  - The agent container refuses to start if it finds a credential beside a pre-cloned repo.
+  - The model key reaches it as a mounted file (`OPENCODE_AUTH_FILE`), not env.
+  - The clone token is still the owner's PAT; a read-only, single-repo App installation token ([docs/github-app.md](../github-app.md)) is the follow-up.
 - Publishing step: scoped token (PAT today, App installation token later), Contents + Pull requests write on allowlisted repos only.
 - Orchestrator: RBAC limited to Jobs/Pods in `sandbox`.
 - No token is ever logged or persisted outside its Secret.
 
 ### D7. Approval points
 
-1. Automated: CI on the draft PR plus the reviewer CronJob. Draft → ready needs green CI and review approval.
-2. Human: nothing merges autonomously by default.
+1. Admission (human): only issues a collaborator labels `factory` become Runs (the collector). That label is the one human decision before a merge.
+2. Merge (automated): the reviewer CronJob flips a green draft to ready and squash-merges it once `ci` is green. There is no approval step between the worker's patch and the draft PR.
 
 ### D8–D9. HTTP/MCP surface and sequence (superseded)
 

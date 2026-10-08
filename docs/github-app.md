@@ -44,7 +44,7 @@ Each mint narrows to a subset (`POST /app/installations/{id}/access_tokens` with
 | orchestrator publish step (planned) | `contents:write, pull_requests:write, issues:write` |
 | smoke test | `contents:write, issues:read, metadata:read` |
 
-Workers never receive an App token (ADR-001 D6).
+Worker agent containers never receive a token. Only the worker Job's `clone` initContainer does, and today that is the `github-token` PAT (ADR-001 D6).
 
 ## Token service
 
@@ -74,4 +74,5 @@ The `github-token` PAT stays as fallback until the App path is verified end to e
 ## Remaining migration
 
 1. Mint an App token for the orchestrator's publish step (`--permissions contents:write,pull_requests:write,issues:write --out …` in an init step, consumed via `GH_TOKEN_FILE`).
-2. Retire the writer PAT; keep a read-only PAT for non-factory consumers.
+2. Mint a `contents:read` token for the worker's `clone` initContainer, narrowed to the one repository (the token service needs a `repositories` field), in place of the PAT.
+3. Retire the writer PAT; keep a read-only PAT for non-factory consumers.

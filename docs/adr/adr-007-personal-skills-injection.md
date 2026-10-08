@@ -84,7 +84,7 @@ The installer executes nothing from the skills repo.
 
 ### D10. Failure contract, CI, and wiring
 
-In pods the installer degrades but never fails (errors → `status.json`, exit 0); `SKILLS_STRICT=1` makes errors fatal. `scripts/check-personal-skills.sh` (run by `scripts/verify.sh`, so in CI) validates the fixture: manifest consistency, secret scan, install into claude/hermes/codex sandboxes, idempotent re-run, default-deny, no overwrite of user content, unreviewed-file rejection.
+In pods the installer degrades but never fails (errors → `status.json`, exit 0); `SKILLS_STRICT=1` makes errors fatal. `scripts/check-personal-skills.sh` (run by `scripts/verify.sh`, so in CI) validates the fixture: manifest consistency, install into claude/hermes/codex sandboxes, idempotent re-run, default-deny, no overwrite of user content, unreviewed-file rejection.
 
 Remaining work to make this functional — wire a consumer (e.g. t3code or hermes) with:
 
