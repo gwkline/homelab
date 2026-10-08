@@ -13,22 +13,64 @@
   "kubernetes": {
     "managerFilePatterns": ["/^deploy/.+\\.ya?ml$/"]
   },
+  "customDatasources": {
+    "cursor-agent": {
+      "description": "Cursor publishes no release feed; its install script names the current build",
+      "defaultRegistryUrlTemplate": "https://cursor.com/install",
+      "format": "plain"
+    }
+  },
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Versions recorded under a `# renovate: datasource=\u2026 depName=\u2026` comment (Dockerfile ARG/ENV, shared install scripts)",
+      "description": "Versions recorded under a `# renovate: datasource=… depName=…` comment: shell and Dockerfile assignments (`NAME=v`, `ARG NAME=v`, `NAME=\"${NAME:-v}\"`), workflow env values, and image refs with a digest",
       "managerFilePatterns": [
         "/(^|/)Dockerfile$/",
-        "/^apps/shared/install-[^/]+\\.sh$/"
+        "/^apps/shared/install-[^/]+\\.sh$/",
+        "/^bootstrap/[^/]+\\.sh$/",
+        "/^scripts/[^/]+\\.sh$/",
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
       ],
       "matchStrings": [
-        "datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*(?:ARG |ENV )?[A-Za-z0-9_]+=(?<currentValue>\\S+)"
+        "renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: registryUrl=(?<registryUrl>\\S+))?(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*(?:ARG |ENV )?[A-Za-z0-9_]+=(?:\"\\$\\{[A-Za-z0-9_]+:-)?(?<currentValue>[^\"\\s}]+)",
+        "renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*[A-Za-z0-9_]+: \"?(?<currentValue>[0-9][^\"\\s@:]*)",
+        "renovate: datasource=(?<datasource>docker) depName=(?<depName>\\S+)\\n\\s*[A-Za-z0-9_]+: \\S+?:(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[0-9a-f]{64})"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "CNPG operator image: the kustomize override and OPERATOR_IMAGE_NAME move together (the kustomize manager cannot read a separate digest field)",
+      "managerFilePatterns": ["/^deploy/cnpg/base/kustomization\\.yaml$/"],
+      "datasourceTemplate": "docker",
+      "matchStrings": [
+        "name: (?<depName>ghcr\\.io/cloudnative-pg/cloudnative-pg)\\n\\s+newTag: (?<currentValue>\\S+)\\n\\s+digest: (?<currentDigest>sha256:[0-9a-f]{64})",
+        "value: (?<depName>ghcr\\.io/cloudnative-pg/cloudnative-pg):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[0-9a-f]{64})"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "External Secrets chart version of the vendored eso.yaml render",
+      "managerFilePatterns": ["/^deploy/eso/README\\.md$/"],
+      "datasourceTemplate": "helm",
+      "depNameTemplate": "external-secrets",
+      "registryUrlTemplate": "https://charts.external-secrets.io",
+      "matchStrings": [
+        "chart `external-secrets` (?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "P-Stack plugin tree pinned to a cursor/plugins commit",
+      "managerFilePatterns": ["/^apps/factory/worker/Dockerfile$/"],
+      "datasourceTemplate": "git-refs",
+      "depNameTemplate": "https://github.com/cursor/plugins",
+      "currentValueTemplate": "main",
+      "matchStrings": ["ARG PSTACK_REF=(?<currentDigest>[0-9a-f]{40})"]
     }
   ],
   "packageRules": [
     {
-      "description": "Our own images float on :latest; deploy/deployer resolves them",
+      "description": "Our own images: deploy/deployer pins each to a per-commit build",
       "matchPackageNames": ["/^ghcr\\.io/gwkline/homelab//"],
       "enabled": false
     },
@@ -36,10 +78,12 @@
       "description": "Third-party images: keep tag+digest pins current",
       "matchDatasources": ["docker"],
       "matchUpdateTypes": ["digest", "pin", "patch", "minor"],
-      "automerge": true
+      "automerge": true,
+      "minimumReleaseAge": "3 days",
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
     },
     {
-      "description": "Downloaded build tools: grouped, reviewed by hand",
+      "description": "Downloaded build tools: grouped, reviewed by hand. Bump the sha256 recorded next to each version in the same PR",
       "groupName": "build tools",
       "matchManagers": ["custom.regex"],
       "automerge": false
@@ -68,11 +112,77 @@
       "respectLatest": false
     },
     {
+      "description": "Cursor agent builds are dated: compare on the date, not the commit suffix",
+      "matchDepNames": ["cursor-agent"],
+      "versioning": "regex:^(?<major>\\d{4})\\.(?<minor>\\d{2})\\.(?<patch>\\d{2})-"
+    },
+    {
+      "description": "CNPG operator: the image, OPERATOR_IMAGE_NAME and the vendored CRDs/RBAC must move together",
+      "matchPackageNames": ["ghcr.io/cloudnative-pg/cloudnative-pg"],
+      "groupName": "cnpg operator",
+      "automerge": false,
+      "prBodyNotes": [
+        "Re-vendor `deploy/cnpg/base/upstream.yaml` from this release's `cnpg-<version>.yaml` in this PR, and update the version in `deploy/cnpg/README.md` and `docs/rebuild-runbook.md` (deploy/cnpg/README.md, Upgrade)."
+      ]
+    },
+    {
+      "description": "Postgres operand: images/pg-textsearch is built against this exact image",
+      "matchPackageNames": [
+        "ghcr.io/cloudnative-pg/postgresql",
+        "ghcr.io/cloudnative-pg/pgvector"
+      ],
+      "groupName": "postgres operand",
+      "automerge": false,
+      "prBodyNotes": [
+        "`images/pg-textsearch` must build against the same operand as `deploy/postgres/base/cluster-image-catalog.yaml`. After merge, re-pin the rebuilt pg-textsearch digest in `deploy/postgres/base/cluster.yaml`."
+      ]
+    },
+    {
+      "description": "External Secrets: eso.yaml is a vendored chart render",
+      "matchDepNames": ["external-secrets"],
+      "groupName": "external-secrets",
+      "automerge": false,
+      "prBodyNotes": [
+        "Re-render `deploy/eso/base/eso.yaml` from this chart version in this PR (deploy/eso/README.md, Upgrade), and update `docs/rebuild-runbook.md`."
+      ]
+    },
+    {
+      "description": "Tailscale: the operator chart is helm-installed by hand; tailscaled is installed by bootstrap",
+      "matchDepNames": [
+        "tailscale-operator",
+        "tailscale/tailscale",
+        "tailscale/k8s-operator"
+      ],
+      "groupName": "tailscale",
+      "automerge": false,
+      "prBodyNotes": [
+        "Chart and operator/proxy image versions move together: update `deploy/tailscale/values.yaml`, `deploy/tailscale/README.md` and `docs/rebuild-runbook.md`, then re-run the helm upgrade. A tailscaled bump also needs the new installer sha256 in `bootstrap/bootstrap.sh`."
+      ]
+    },
+    {
+      "description": "k3s: nodes upgrade by re-running bootstrap",
+      "matchDepNames": ["k3s-io/k3s"],
+      "groupName": "k3s",
+      "automerge": false,
+      "prBodyNotes": [
+        "Update `K3S_INSTALLER_SHA256` in `bootstrap/bootstrap.sh`, the version table in `docs/rebuild-runbook.md`, and the kind node image in `.github/workflows/ci.yaml` and `scripts/manifest-smoke.sh`."
+      ]
+    },
+    {
+      "description": "policy-controller chart is helm-installed by hand",
+      "matchDepNames": ["policy-controller"],
+      "automerge": false,
+      "prBodyNotes": [
+        "Update `docs/rebuild-runbook.md` and `deploy/image-policy/README.md`, then re-run the helm upgrade."
+      ]
+    },
+    {
       "description": "npm: grouped non-major updates",
       "groupName": "npm non-major",
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["minor", "patch"],
-      "automerge": true
+      "automerge": true,
+      "minimumReleaseAge": "3 days"
     },
     {
       "description": "GitHub Actions: monthly, grouped",
@@ -80,7 +190,9 @@
       "matchManagers": ["github-actions"],
       "extends": ["schedule:monthly"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
-      "automerge": true
+      "automerge": true,
+      "minimumReleaseAge": "3 days",
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
     }
   ]
 }

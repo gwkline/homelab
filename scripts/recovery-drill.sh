@@ -8,7 +8,9 @@
 # service-account token (OP_SERVICE_ACCOUNT_TOKEN, or pasted at the prompt).
 set -eu
 
+# renovate: datasource=helm depName=tailscale-operator registryUrl=https://pkgs.tailscale.com/helmcharts
 TS_CHART_VERSION=1.102.3
+# renovate: datasource=helm depName=policy-controller registryUrl=https://sigstore.github.io/helm-charts
 POLICY_CHART_VERSION=0.10.7
 
 POD_TIMEOUT=600s
