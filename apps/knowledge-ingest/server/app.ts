@@ -1,9 +1,14 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 
+import {
+  bearerTokenMatches,
+  requestIdMiddleware,
+  requestLogMiddleware,
+} from "../../knowledge/src/http.ts";
+import type { RequestEnv } from "../../knowledge/src/http.ts";
+import type { Logger } from "../../knowledge/src/log.ts";
 import type { IngestConfig } from "./config.ts";
 import {
   errorBody,
@@ -15,7 +20,6 @@ import {
   syncJobResponseSchema,
   syncTriggerResponseSchema,
 } from "./contract.ts";
-import type { Logger } from "./log.ts";
 import { isAllowedSourceUrl } from "./source-url.ts";
 import type {
   IngestJobRecord,
@@ -23,22 +27,6 @@ import type {
   IngestStore,
 } from "./store.ts";
 import { SourceNotFoundError, StoreUnavailableError } from "./store.ts";
-
-interface AppEnv {
-  Variables: { requestId: string };
-}
-
-const tokenFingerprint = (token: string): Buffer =>
-  createHash("sha256").update(token).digest();
-
-const bearerTokenMatches = (header: string, expected: string): boolean => {
-  const match = /^Bearer\s+(?<token>.+)$/u.exec(header);
-  const token = match?.groups?.["token"];
-  if (!token) {
-    return false;
-  }
-  return timingSafeEqual(tokenFingerprint(token), tokenFingerprint(expected));
-};
 
 const withPingTimeout = async (
   store: IngestStore,
@@ -115,9 +103,9 @@ export interface AppDeps {
 
 const READY_TIMEOUT_MS = 2000;
 
-export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
+export const createApp = (deps: AppDeps): OpenAPIHono<RequestEnv> => {
   const { config, store, logger } = deps;
-  const app = new OpenAPIHono<AppEnv>({
+  const app = new OpenAPIHono<RequestEnv>({
     defaultHook: (result, c) => {
       if (!result.success) {
         logger.warn("request validation failed", {
@@ -137,39 +125,14 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
     },
   });
 
-  app.use(
-    "*",
-    createMiddleware<AppEnv>(async (c, next) => {
-      const header = c.req.header("x-request-id") ?? "";
-      c.set(
-        "requestId",
-        /^[\w.-]{8,128}$/u.test(header) ? header : `req_${randomUUID()}`
-      );
-      return await next();
-    })
-  );
-
-  app.use(
-    "*",
-    createMiddleware<AppEnv>(async (c, next) => {
-      const startedAt = performance.now();
-      // eslint-disable-next-line node/callback-return -- hono middleware intentionally logs after next() resolves
-      await next();
-      logger.info("request", {
-        durationMs: Math.round((performance.now() - startedAt) * 1000) / 1000,
-        method: c.req.method,
-        path: c.req.path,
-        requestId: c.get("requestId"),
-        status: c.res.status,
-      });
-    })
-  );
+  app.use("*", requestIdMiddleware());
+  app.use("*", requestLogMiddleware(logger));
 
   // Network policy limits reachability; this constant-time bearer check is
   // the application-layer gate.
   app.use(
     "/v1/*",
-    createMiddleware<AppEnv>(async (c, next) => {
+    createMiddleware<RequestEnv>(async (c, next) => {
       const header = c.req.header("authorization") ?? "";
       if (!bearerTokenMatches(header, config.token)) {
         logger.warn("unauthorized", {

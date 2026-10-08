@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import path from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+
+import { hasLiveDb, withFreshDatabase } from "./live-db.ts";
 
 /**
  * Runs the real ingest and retrieval entrypoints: boot order on a fresh,
@@ -14,7 +15,6 @@ import { setTimeout as sleep } from "node:timers/promises";
  * databases and the vector and pg_textsearch extensions.
  */
 
-const hasLiveDb = Boolean(process.env["DATABASE_URL"]);
 const TOKEN = "boot-order-test-token-0123456789";
 const RETRIEVAL_ENTRY = path.resolve(import.meta.dirname, "../server/index.ts");
 const INGEST_ENTRY = path.resolve(
@@ -116,23 +116,6 @@ const stop = async (service: Service): Promise<number | null> => {
   });
   service.process.kill("SIGTERM");
   return await exited;
-};
-
-const withFreshDatabase = async (
-  fn: (url: string) => Promise<void>
-): Promise<void> => {
-  const { default: pg } = await import("pg");
-  const admin = new pg.Pool({ connectionString: process.env["DATABASE_URL"] });
-  const name = `knowledge_boot_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
-  await admin.query(`CREATE DATABASE ${name}`);
-  try {
-    const url = new URL(process.env["DATABASE_URL"] ?? "");
-    url.pathname = `/${name}`;
-    await fn(url.toString());
-  } finally {
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
-    await admin.end();
-  }
 };
 
 const retrievalEnv = (url: string): Record<string, string> => ({

@@ -2,7 +2,7 @@
 
 **Status:** Implemented (items 6–7 of D14 deferred) **Deciders:** Gavin Kline
 
-**What shipped (D14 map):** 1 — schema (`src/schema.ts`); 2 — ingest worker (`src/ingest.ts`); 3a/3b — BM25 (`src/bm25.ts`) and pgvector (`src/pgvector.ts`) channels; 4 — HTTP surface (`apps/knowledge-retrieval`); 5 — eval harness against both channels. The service layer landed with the vertical completion: `apps/knowledge-ingest` runs the real pipeline (queue contracts + git-source sync + `processDocumentVersion`) and `apps/knowledge-retrieval` runs the Postgres store + RRF fusion with the sources/sync passthrough; both deploy from `deploy/knowledge/base`. Still deferred by design: 6 — lifecycle (tombstone API surfaced; the GC job and re-embed backfill runner are follow-ups), 7 — graph (gated by [ADR-008](adr-008-knowledge-graph-expansion-gate.md)).
+**What shipped (D14 map):** 1 — schema (`src/schema.ts`); 2 — ingest worker (`src/ingest.ts`); 3a/3b — BM25 (`src/bm25.ts`) and pgvector (`src/pgvector.ts`) channels; 4 — HTTP surface (`apps/knowledge-retrieval`); 5 — eval harness against both channels. The service layer landed with the vertical completion: `apps/knowledge-ingest` runs the real pipeline (queue contracts + git-source sync + `processDocumentVersion`) and `apps/knowledge-retrieval` runs the Postgres store + RRF fusion with the sources/sync passthrough; both deploy from `deploy/knowledge/base`. Ingest owns the schema: every table is a numbered migration in `src/schema.ts`, applied under an advisory lock, and retrieval only checks the applied version. `/v1/search` fuses with `src/fusion.ts`. Still deferred by design: 6 — lifecycle (tombstone API surfaced; the GC job and re-embed backfill runner are follow-ups), 7 — graph (gated by [ADR-008](adr-008-knowledge-graph-expansion-gate.md)). Not yet met: D2's single package. The services are still two workspaces with two images; they share `apps/knowledge/src` for schema, HTTP, auth, logging, and fusion.
 
 ## Context
 
@@ -84,6 +84,8 @@ A `ingest_job(id, kind, payload jsonb, status, attempts, error, priority, enqueu
 
 Local, deterministic, no paid API: **fastembed ONNX `BAAI/bge-small-en-v1.5`, 384-d, cosine** (pg-raggraph's default scale; pgkg's bge-m3 1024-d is the upgrade path if evals demand it). `chunk.embedding_model` records the producer (pgkg's embedder-generation discipline): queries embed with the model of the chunks being searched, and different models never mix in one index — a model swap is a re-embed backfill job, not an in-place rewrite.
 
+The in-process fastembed provider is not built yet. Until a real provider is configured, ingest stores deterministic placeholder vectors tagged `fake/<dims>`, and retrieval serves every search as BM25, reporting `mode: "bm25"`. Retrieval logs and exports (`knowledge_embedding_model_mismatch_chunks`) any stored vectors whose model differs from the configured one, so a provider switch shows how much needs re-embedding.
+
 ### D7. Hybrid retrieval: pg_textsearch + pgvector → RRF
 
 - **BM25 channel** — [`timescale/pg_textsearch`](https://github.com/timescale/pg_textsearch) (PG17/18, `shared_preload_libraries`, CNPG-configurable):
@@ -97,7 +99,7 @@ Local, deterministic, no paid API: **fastembed ONNX `BAAI/bge-small-en-v1.5`, 38
   ```
   Partial index keeps dead chunks out of the corpus statistics. Top-k uses Block-Max WAND; no phrase queries (documented limitation) — acceptable for chunk-level search.
 - **Vector channel** — pgvector HNSW, also partial: `USING hnsw (embedding vector_cosine_ops) WHERE valid_to IS NULL`, with the namespace predicate supported by a plain index (pre-filter), mindful of pgvector's post-filter recall semantics.
-- **Fusion** — the existing `src/fusion.ts` RRF (k=60, windowSize=100) is unchanged and is the contract both channels feed: ranked chunk-id lists, no raw scores, deterministic tie-breaks.
+- **Fusion** — the existing `src/fusion.ts` RRF (k=60, windowSize=100) is unchanged and is the contract both channels feed: ranked chunk-id lists, no raw scores, deterministic tie-breaks. `/v1/search` and the eval run the same function.
 - **Reranking** — deferred, matching acuity's gating and `apps/knowledge/README.md`: add a cross-encoder only if the harness shows fused retrieval lagging the best single channel on real retriever output.
 
 ### D8. Citations and provenance guarantees
@@ -128,6 +130,7 @@ If and when evals trigger graph work (D12), it uses **relational tables and recu
 Reuse `apps/knowledge/eval/` unchanged in shape: committed corpus (`knowledge-eval-corpus-v1`), metrics Recall@5 / MRR@5 / citation accuracy / no-answer correctness, thresholds in `eval/thresholds.ts` as CI gates, run provenance via `eval/run-meta.ts`. Evolution:
 
 - The BM25 and pgvector channels run under the same harness; the eval-local scorers in `eval/rank.ts` stay as independent cross-checks.
+- CI runs every live-database suite against Postgres with pgvector and pg_textsearch. That includes the eval corpus through the production path, ingested by `processDocumentVersion` and served by `/v1/search` (`apps/knowledge-retrieval/tests/eval-production.test.ts`), with floors pinned like the eval's.
 - Before any graph/extraction work (D1/D11): bump the corpus to v2 with a **multi-hop query class** whose recall failure is the documented trigger.
 - Corpus changes bump the dataset version; thresholds only ever rise.
 

@@ -153,6 +153,11 @@ test(
       await migrateKnowledgeSchema(pool);
       const input = testInput(run, 0);
       const sequential = await store.enqueueIngest(input);
+      assert.equal(
+        sequential.duplicate,
+        false,
+        "a fresh job is not a duplicate"
+      );
       const duplicate = await store.enqueueIngest(input);
       assert.equal(duplicate.duplicate, true);
       assert.equal(duplicate.job.jobId, sequential.job.jobId);
@@ -276,7 +281,7 @@ test(
         "the re-run published nothing new (idempotent version identity)"
       );
       const published = await pool.query(
-        "SELECT COUNT(*)::int AS n FROM document WHERE source_id = $1",
+        "SELECT COUNT(*)::int AS n FROM ingest_document WHERE source_id = $1",
         [input.source.sourceId]
       );
       assert.equal(

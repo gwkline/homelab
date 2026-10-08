@@ -2,6 +2,7 @@ import { once } from "node:events";
 
 import { serve } from "@hono/node-server";
 
+import { createJsonLogger } from "../../knowledge/src/log.ts";
 import { createPgPool } from "../../knowledge/src/pg-pool.ts";
 import {
   KNOWLEDGE_SCHEMA_VERSION,
@@ -11,7 +12,6 @@ import { createApp } from "./app.ts";
 import { configFromEnv } from "./config.ts";
 import { createMemoryManifestStore } from "./git-sync.ts";
 import { PgKnowledgeSink } from "./knowledge-sink.ts";
-import { createJsonLogger } from "./log.ts";
 import { createMemoryIngestStore } from "./memory-store.ts";
 import { PgIngestStore } from "./pg-store.ts";
 import {

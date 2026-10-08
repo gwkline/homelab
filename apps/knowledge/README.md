@@ -15,7 +15,16 @@ npm run typecheck -w apps/knowledge
 npm run eval -w apps/knowledge   # retrieval eval; --json, --subset, --out run.json
 ```
 
-The live-database tests are skipped unless `DATABASE_URL` points at a Postgres with pgvector and pg_textsearch. `tests/embed-smoke.test.ts` calls a real embedding provider only when `KNOWLEDGE_EMBEDDING_SMOKE_URL` is set.
+The live-database tests are skipped unless `DATABASE_URL` points at a Postgres with pgvector and pg_textsearch whose user can create databases. CI's `knowledge-postgres` job runs them all against `tests/postgres/Dockerfile`. To match it locally:
+
+```sh
+docker build -t knowledge-pg apps/knowledge/tests/postgres   # amd64; add --platform linux/amd64 elsewhere
+docker run -d --rm -p 5432:5432 -e POSTGRES_PASSWORD=knowledge -e POSTGRES_DB=knowledge knowledge-pg
+DATABASE_URL=postgresql://postgres:knowledge@localhost:5432/knowledge \
+  npm test -w apps/knowledge -w apps/knowledge-ingest -w apps/knowledge-retrieval
+```
+
+`tests/embed-smoke.test.ts` calls a real embedding provider only when `KNOWLEDGE_EMBEDDING_SMOKE_URL` is set.
 
 ## Modules
 
@@ -29,7 +38,9 @@ The live-database tests are skipped unless `DATABASE_URL` points at a Postgres w
 | `src/ingest.ts` | Chunk, embed, and persist one document version. |
 | `src/bm25.ts` | Keyword channel over a partial pg_textsearch index. |
 | `src/pgvector.ts` | Semantic channel over a partial HNSW cosine index. |
-| `src/fusion.ts` | Reciprocal Rank Fusion. |
+| `src/fusion.ts` | Reciprocal Rank Fusion, used by `/v1/search` and the eval. |
+| `src/pg-pool.ts` | The services' pool: size, connection and statement timeouts, and an idle-error listener. |
+| `src/http.ts`, `src/log.ts`, `src/store-errors.ts` | Bearer check, request-id and request-log middleware, JSON logger, and the 503 store error, shared by both services. |
 
 ## Key contracts
 
@@ -44,7 +55,7 @@ The live-database tests are skipped unless `DATABASE_URL` points at a Postgres w
 
 ## Evaluation
 
-`eval/` compares BM25-only, vector-only, and fused retrieval over a small committed corpus (`eval/corpus.ts`) and hand-labeled channel fixtures (`eval/fixtures.ts`). Channel rankings come from eval-local scorers (`eval/rank.ts`), not from `src/`, so a broken retriever shows up as a metric drop. Fusion is the real `src/fusion.ts`.
+`eval/` compares BM25-only, vector-only, and fused retrieval over a small committed corpus (`eval/corpus.ts`) and hand-labeled channel fixtures (`eval/fixtures.ts`). Channel rankings come from eval-local scorers (`eval/rank.ts`), not from `src/`, so a broken retriever shows up as a metric drop. Fusion is the real `src/fusion.ts`. The production path is gated separately: `apps/knowledge-retrieval/tests/eval-production.test.ts` ingests the same corpus with `processDocumentVersion` and scores `/v1/search` against Postgres.
 
 The metrics are Recall@5, MRR@5, precision, citation accuracy, no-answer correctness, and latency. Every run records git SHA, schema version, embedding model, chunker version, and retrieval config.
 

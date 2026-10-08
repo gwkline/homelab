@@ -158,7 +158,6 @@ export class PgRetrievalStore implements RetrievalStore {
       await this.assertSchemaReady();
       const { includeSuperseded } = options.filters;
       const bm25 = buildBm25SearchQuery(options.query, {
-        includeSuperseded,
         limit: options.limitPerChannel,
         namespace: options.namespace,
       });

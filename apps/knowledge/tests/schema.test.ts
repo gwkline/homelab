@@ -23,6 +23,7 @@ import {
 } from "../src/schema.ts";
 import type { ChunkUpsertInput } from "../src/schema.ts";
 import { fakePool } from "./fake-pool.ts";
+import { ensurePublicExtensions } from "./live-fixtures.ts";
 
 const sha256 = (text: string): string =>
   createHash("sha256").update(text).digest("hex");
@@ -540,10 +541,7 @@ test(
     try {
       // SCHEMA public keeps a first install out of the scratch schema so
       // cleanup can never drop it.
-      await pool.query("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public");
-      await pool.query(
-        "CREATE EXTENSION IF NOT EXISTS pg_textsearch SCHEMA public"
-      );
+      await ensurePublicExtensions(pool);
 
       // --- From-empty migration ------------------------------------------
       await pool.query(`DROP SCHEMA IF EXISTS ${SCRATCH_SCHEMA} CASCADE`);
@@ -954,10 +952,7 @@ test(
       options: `-c search_path=${schema},public`,
     });
     try {
-      await pool.query("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public");
-      await pool.query(
-        "CREATE EXTENSION IF NOT EXISTS pg_textsearch SCHEMA public"
-      );
+      await ensurePublicExtensions(pool);
       await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
       await pool.query(`CREATE SCHEMA ${schema}`);
       // The tables as they stood before the ledger, with rows the fake
