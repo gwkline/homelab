@@ -65,8 +65,8 @@ RUN mkdir -p /task /out /work && chown -R node:node /task /out /work
 USER node
 WORKDIR /work
 
-COPY --chmod=755 --chown=node:node apps/factory/security/entrypoint.sh /usr/local/bin/entrypoint
+COPY --chmod=755 --chown=root:root apps/factory/security/entrypoint.sh /usr/local/bin/entrypoint
 # Shared with the code-pr worker: the Job's initContainer clone step.
-COPY --chmod=755 --chown=node:node apps/factory/worker/prepare.sh /usr/local/bin/prepare
+COPY --chmod=755 --chown=root:root apps/factory/worker/prepare.sh /usr/local/bin/prepare
 
 ENTRYPOINT ["/usr/local/bin/entrypoint"]

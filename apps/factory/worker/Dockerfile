@@ -48,16 +48,18 @@ RUN mkdir -p /task /out /work && chown -R node:node /task /out /work \
 USER node
 WORKDIR /work
 
-COPY --chmod=755 --chown=node:node apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
-COPY --chmod=755 --chown=node:node apps/factory/worker/entrypoint.sh /usr/local/bin/entrypoint
+# Root-owned: the agent runs as node, and dash reads a script as it runs it,
+# so a writable entrypoint would let the agent rewrite the checks that follow.
+COPY --chmod=644 --chown=root:root apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
+COPY --chmod=755 --chown=root:root apps/factory/worker/entrypoint.sh /usr/local/bin/entrypoint
 # The Job's initContainer: clone + skills sync, the only step with a GitHub token.
-COPY --chmod=755 --chown=node:node apps/factory/worker/prepare.sh /usr/local/bin/prepare
+COPY --chmod=755 --chown=root:root apps/factory/worker/prepare.sh /usr/local/bin/prepare
 # Private skills the entrypoint syncs before the agent runs. A Job may
 # override SKILLS_REF (full SHA, verified by the sync) or SKILLS_ALLOWLIST.
 ENV SKILLS_REF=445e4255288732efb00c8878151610c2669f5e93 \
     SKILLS_ALLOWLIST="software-development/homelab-k3s-ops software-development/poteto-mode" \
     SKILLS_TARGET=/work/skills-generated \
     SKILLS_STATUS_FILE=/out/skills-sync.json
-COPY --chmod=755 --chown=node:node apps/factory/worker/smoke-test.sh /usr/local/bin/smoke-test
+COPY --chmod=755 --chown=root:root apps/factory/worker/smoke-test.sh /usr/local/bin/smoke-test
 
 ENTRYPOINT ["/usr/local/bin/entrypoint"]
