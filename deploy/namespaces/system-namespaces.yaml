@@ -1,0 +1,49 @@
+# Pod Security levels for namespaces this repo doesn't otherwise own, so every
+# namespace carries an enforce label. Node debugging (`kubectl debug node/...`)
+# needs host namespaces and hostPath: run it with `-n kube-system`.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: default
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+# k3s system components and local-path's hostPath helper pods.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-public
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-node-lease
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# policy-controller (helm, deploy/image-policy). The chart's webhook sets no
+# runAsNonRoot or seccomp profile, so it passes baseline but not restricted.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cosign-system
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

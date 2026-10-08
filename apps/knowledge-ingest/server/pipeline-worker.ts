@@ -265,6 +265,37 @@ const ledgerSourceKind = (sourceLabel: string): IngestSourceInput["kind"] => {
   return "url";
 };
 
+const tooLarge = (bytes: number, cap: number): Error =>
+  new Error(
+    `pipeline: fetched body is ${bytes}+ bytes, above the ${cap} byte cap`
+  );
+
+/** Reads at most `cap` bytes, cancelling the stream as soon as it runs over. */
+const readCapped = async (
+  response: Response,
+  cap: number
+): Promise<Uint8Array> => {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > cap) {
+    await response.body?.cancel();
+    throw tooLarge(declared, cap);
+  }
+  if (response.body === null) {
+    return new Uint8Array();
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  // Leaving the loop early cancels the stream, so the rest is never read.
+  for await (const chunk of response.body) {
+    total += chunk.byteLength;
+    if (total > cap) {
+      throw tooLarge(total, cap);
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, total);
+};
+
 /** Fetch url/web content, capped at `maxContentBytes`; the caller verifies the hash. */
 const fetchText = async (
   url: string,
@@ -287,12 +318,7 @@ const fetchText = async (
   if (!response.ok) {
     throw new Error(`pipeline: fetch returned HTTP ${response.status}`);
   }
-  const body = await response.arrayBuffer();
-  if (body.byteLength > config.maxContentBytes) {
-    throw new Error(
-      `pipeline: fetched body is ${body.byteLength} bytes, above the ${config.maxContentBytes} byte cap`
-    );
-  }
+  const body = await readCapped(response, config.maxContentBytes);
   return new TextDecoder("utf-8").decode(body);
 };
 

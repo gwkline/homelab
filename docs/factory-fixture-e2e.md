@@ -39,7 +39,7 @@ Trigger again while the run is in flight, or wait a tick. Expect exactly one Run
 
 Queue an issue whose body demands an impossible change (e.g. edit a file that does not exist). The worker exits non-zero; after at most two attempts the issue lands on `factory/failed` with a redacted log tail and no PR exists. Reset with `gh issue edit <N> --remove-label factory/failed`.
 
-Credential check: worker Jobs set `automountServiceAccountToken: false`; `GH_TOKEN` is unset by the worker entrypoint after the clone, before the agent runs.
+Credential check: worker Jobs set `automountServiceAccountToken: false`, and only the `clone` initContainer carries `GH_TOKEN`: `kubectl get job -n sandbox <job> -o jsonpath='{.spec.template.spec.containers[0].env[*].name}'` lists no `GH_TOKEN`.
 
 ## Offline tests
 

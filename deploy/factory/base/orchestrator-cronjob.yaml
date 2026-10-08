@@ -133,7 +133,6 @@ spec:
     matchLabels:
       factory.gwkline.io/component: orchestrator
   policyTypes: [Ingress, Egress]
-  ingress: []
   # Policy matches after DNAT, so the API server is allowed at its node
   # endpoint; a Service VIP rule would never match.
   egress:

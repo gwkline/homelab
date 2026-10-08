@@ -1,4 +1,10 @@
-# Callers supply only repo/task inputs; the profile fixes everything else.
+# Callers supply only repo/task inputs; the profile fixes everything else. The
+# orchestrator renders each worker Job from this (apps/factory/orchestrator/
+# worker-job.jq), so a change here applies from the next run.
+#   activeDeadlineSeconds  stay under the orchestrator's 3900s tick deadline
+#   workSizeLimit          the /work emptyDir: clone, build output, scratch
+#   resources              the agent container; its ephemeral-storage limit
+#                          must cover workSizeLimit plus HOME and caches
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,16 +17,16 @@ data:
   profile.json: |
     {
       "name": "code-pr",
-      "version": 1,
       "image": "ghcr.io/gwkline/homelab/factory/worker:latest",
       "serviceAccount": "factory-worker",
       "activeDeadlineSeconds": 3600,
       "backoffLimit": 0,
-      "ttlSecondsAfterFinished": 3600,
-      "resources": { "requests": {"cpu": "1", "memory": "1Gi"},
-                     "limits":   {  "cpu": "4",     "memory": "12Gi"} },
-      "envAllowlist": ["WORKER_CMD", "VERIFY_COMMAND"],
-      "netpolName": "allow-factory-worker"
+      "ttlSecondsAfterFinished": 86400,
+      "resources": {
+        "requests": { "cpu": "500m", "memory": "512Mi", "ephemeral-storage": "2Gi" },
+        "limits": { "cpu": "2", "memory": "12Gi", "ephemeral-storage": "16Gi" }
+      },
+      "workSizeLimit": "12Gi"
     }
 ---
 # Worker egress: HTTPS to the public internet (GitHub, the model provider,
@@ -35,8 +41,7 @@ spec:
   podSelector:
     matchLabels:
       factory.gwkline.io/profile: code-pr
-  policyTypes: [Ingress, Egress]
-  ingress: [] # nothing may connect TO a worker
+  policyTypes: [Ingress, Egress] # no ingress rules: nothing may connect TO a worker
   egress:
     - to:
         - namespaceSelector:

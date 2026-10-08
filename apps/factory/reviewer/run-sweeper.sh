@@ -25,37 +25,24 @@
 # cannot trigger a write.
 set -eu
 
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+FACTORY_LIB_DIR="${FACTORY_LIB_DIR:-/usr/local/lib/factory}"
+[ -f "${FACTORY_LIB_DIR}/factory.sh" ] || FACTORY_LIB_DIR="${SCRIPT_DIR}/../lib"
+# shellcheck source=apps/factory/lib/factory.sh
+. "${FACTORY_LIB_DIR}/factory.sh"
+
 REPOS="${FACTORY_REPOS:?FACTORY_REPOS required (comma-separated owner/name)}"
 DRY_RUN="${FACTORY_SWEEP_DRY_RUN:-false}"
-GH_BIN="${GH_BIN:-/usr/local/bin/gh}"
 PING_AFTER_H="${SWEEP_PING_AFTER_H:-168}"        # courtesy ping age (7d)
 PING_REVIEWER="${SWEEP_PING_REVIEWER:-gwkline}"  # human who stays the gate
 RED_GRACE_H="${SWEEP_RED_GRACE_H:-24}"           # fresh red goes to medic
 MEDIC_MAX="${SWEEP_MEDIC_MAX_RETRIES:-4}"        # exhausted when count >= max
 DRIFT_COMMITS="${SWEEP_DRIFT_COMMITS:-50}"       # rebase-warning threshold
 SWEEP_NOW="${SWEEP_NOW:-}"                       # test hook: fixed epoch "now"
-LABEL_QUEUED="factory/queued"
-LABEL_STUCK="factory/stuck"
 MARKER_FILED="factory:sweep:filed:"
 MARKER_DRIFT="factory:sweep:drift:"
-# The medic writes one '<!-- factory:medic:<head-sha>:failed -->' comment per
-# failed attempt (apps/factory/medic/medic-lib.sh); count the ones for the
-# CURRENT head sha so this matches the medic's own retry budget.
-medic_marker() { # $1 = head sha
-  printf 'factory:medic:%s:failed' "${1:?head sha}"
-}
 
-gh() {
-  if command -v timeout >/dev/null 2>&1; then
-    timeout 60 "$GH_BIN" "$@"
-  else
-    "$GH_BIN" "$@"
-  fi
-}
-
-if [ -z "${GH_AUTH_SKIP:-}" ]; then
-  gh auth status >/dev/null 2>&1 || { echo "[sweeper] gh auth failed" >&2; exit 1; }
-fi
+factory_gh_auth || { echo "[sweeper] gh auth failed" >&2; exit 1; }
 
 now_epoch() {
   if [ -n "$SWEEP_NOW" ]; then printf '%s\n' "$SWEEP_NOW"; else date -u +%s; fi
@@ -80,7 +67,7 @@ pr_markers() {
   if ! gh api "repos/$1/issues/$2/comments?per_page=100" > "$_pm_file" 2>/dev/null; then
     rm -f "$_pm_file"; return 2
   fi
-  if ! _pm_out="$(jq -r --arg m1 "$MARKER_FILED" --arg m2 "$MARKER_DRIFT" --arg m3 "$(medic_marker "${3:-}")" '
+  if ! _pm_out="$(jq -r --arg m1 "$MARKER_FILED" --arg m2 "$MARKER_DRIFT" --arg m3 "$(factory_medic_marker "${3:-}" failed)" '
     [ ([.[] | (.body // "") | contains($m1)] | any),
       ([.[] | select((.body // "") | contains($m2))][0].id // "-"),
       ([.[] | (.body // "" | (split($m3) | length - 1))] | add // 0)
@@ -99,21 +86,12 @@ ci_state() {
   if ! gh api "repos/$1/commits/$2/check-runs" > "$_cs_file" 2>/dev/null; then
     rm -f "$_cs_file"; return 2
   fi
-  _cs_out="$(python3 - "$_cs_file" "$3" << 'PYEOF'
+  _cs_ci="$(classify_checks < "$_cs_file")"
+  _cs_out="$(python3 - "$_cs_file" "$3" "$_cs_ci" << 'PYEOF'
 import sys, json, datetime
 runs = (json.load(open(sys.argv[1])).get("check_runs") or [])
-concls = [(r.get("conclusion") or r.get("status") or "") for r in runs]
+ci = sys.argv[3]
 red_states = ("failure", "timed_out", "action_required", "stale", "cancelled")
-pending_states = ("", "pending", "queued", "in_progress", "waiting")
-ci = "green"
-if any(c in red_states for c in concls):
-    ci = "red"
-elif any(c in pending_states for c in concls):
-    ci = "pending"
-elif any(c not in ("success", "skipped", "neutral") for c in concls):
-    ci = "unknown"
-elif not concls:
-    ci = "pending"
 red_epoch = "-"
 latest = ""
 summary = []
@@ -238,7 +216,7 @@ _Auto-filed by factory-sweeper (idempotent via the HTML marker above)._"
   ensure_queued_label "$_ff_repo"
   _ff_issue="$(gh api -X POST "repos/${_ff_repo}/issues" \
     -f title="$_ff_title" -f body="$_ff_body" \
-    -F 'labels[]=factory/queued' 2>/dev/null | jq -r '.number // empty')" || _ff_issue=""
+    -F "labels[]=${LABEL_QUEUED}" 2>/dev/null | jq -r '.number // empty')" || _ff_issue=""
   case "${_ff_issue:-}" in
     ''|null|*[!0-9]*)
       echo "[sweeper] ${_ff_repo}#${_ff_num}: fix-issue write failed" >&2
@@ -247,7 +225,7 @@ _Auto-filed by factory-sweeper (idempotent via the HTML marker above)._"
   esac
   if ! gh api -X POST "repos/${_ff_repo}/issues/${_ff_num}/comments" \
     -f body="<!-- ${MARKER_FILED}${_ff_num} -->
-🔧 Factory sweeper: PR stuck ci-red (${_ff_reason}) — filed fix issue #${_ff_issue} (factory/queued). The human merge gate is untouched." >/dev/null 2>&1; then
+🔧 Factory sweeper: PR stuck ci-red (${_ff_reason}) — filed fix issue #${_ff_issue} (${LABEL_QUEUED}). The human merge gate is untouched." >/dev/null 2>&1; then
     echo "[sweeper] warn: PR marker comment write failed for ${_ff_repo}#${_ff_num} (search backstop prevents re-file)" >&2
   fi
   echo "[sweeper] filed fix issue #${_ff_issue} for ${_ff_repo}#${_ff_num}: ${_ff_reason}"

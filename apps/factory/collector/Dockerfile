@@ -6,5 +6,6 @@ WORKDIR /app
 # ../github-app/token-service.ts import resolves the same in-image and in CI.
 COPY apps/factory/collector/package.json apps/factory/collector/tsconfig.json apps/factory/collector/config.ts apps/factory/collector/github-client.ts apps/factory/collector/github-errors.ts apps/factory/collector/run-collector.ts /app/apps/factory/collector/
 COPY apps/factory/github-app/token-service.ts /app/apps/factory/github-app/token-service.ts
+COPY apps/factory/lib/labels.json /app/apps/factory/lib/labels.json
 ENV NODE_ENV=production
 ENTRYPOINT ["node", "--experimental-strip-types", "/app/apps/factory/collector/run-collector.ts"]

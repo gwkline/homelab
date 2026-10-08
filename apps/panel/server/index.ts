@@ -99,6 +99,8 @@ const knowledgeCfg = loadKnowledgeConfig();
 const knowledge = createKnowledgeClient(knowledgeCfg);
 
 const FACTORY_NS = "sandbox";
+// Matches the factory CronJobs' ttlSecondsAfterFinished.
+const FACTORY_JOB_TTL_SECONDS = 86_400;
 // Each factory repo and the orchestrator CronJob that serves it
 // (deploy/factory/base/orchestrator-*cronjob.yaml). A run clones that CronJob,
 // so a repo without one could never leave factory/queued.
@@ -128,27 +130,17 @@ const FACTORY_PROFILE_INFO = [
 const FACTORY_RUN_STATES: [string, string][] = [
   ["factory/queued", "queued"],
   ["factory/in-progress", "running"],
-  ["factory/pending-approval", "awaiting-approval"],
   ["factory/draft-pr", "published"],
   ["factory/needs-review", "needs-review"],
-  ["factory/approved", "approved"],
   ["factory/failed", "failed"],
   ["factory/cancelled", "cancelled"],
 ];
 const FACTORY_RUN_STATE_NAMES = new Set(FACTORY_RUN_STATES.map(([, s]) => s));
-const FACTORY_CANCELABLE = new Set(["queued", "running", "awaiting-approval"]);
+const FACTORY_CANCELABLE = new Set(["queued", "running"]);
 const FACTORY_RETRYABLE = new Set(["failed", "cancelled"]);
-const FACTORY_TERMINAL_DONE = new Set([
-  "published",
-  "needs-review",
-  "approved",
-]);
+const FACTORY_TERMINAL_DONE = new Set(["published", "needs-review"]);
 // States whose labels must be stripped when a run is cancelled or retried.
-const FACTORY_ACTIVE_LABELS = [
-  "factory/queued",
-  "factory/in-progress",
-  "factory/pending-approval",
-];
+const FACTORY_ACTIVE_LABELS = ["factory/queued", "factory/in-progress"];
 const FACTORY_FAILED_LABELS = ["factory/failed", "factory/cancelled"];
 const runStateFor = (issue: GhIssue): string | null => {
   const labels = new Set((issue.labels ?? []).map((l) => l.name));
@@ -212,21 +204,12 @@ const ghToken = (): string | null => {
   if (direct) {
     return direct.trim();
   }
-  for (const p of [
-    "/secrets/token",
-    "/secrets/github-token",
-    "/var/run/secrets/github-token",
-  ]) {
-    try {
-      const v = readFileSync(p, "utf-8").trim();
-      if (v) {
-        return v;
-      }
-    } catch {
-      // path not mounted — try the next one
-    }
+  try {
+    return readFileSync("/secrets/token", "utf-8").trim() || null;
+  } catch {
+    // github-token not mounted
+    return null;
   }
-  return null;
 };
 
 const GH_API_BASE = (
@@ -597,36 +580,8 @@ app.get("/api/factory/all-issues", async (c) => {
   return c.json({ repos: reposOut });
 });
 
-app.get("/api/factory/issues", async (c) => {
-  const repo = (c.req.query("repo") ?? DEFAULT_FACTORY_REPO).trim();
-  if (!FACTORY_REPOS.has(repo)) {
-    return c.json(
-      { error: `repo not allowed (use ${[...FACTORY_REPOS].join(", ")})` },
-      400
-    );
-  }
-  try {
-    const data = (await ghFetch(
-      `/repos/${repo}/issues?state=open&per_page=50`
-    )) as GhIssue[];
-    const issues = data
-      .filter((i) => !i.pull_request)
-      .map((i) => ({
-        labels: (i.labels ?? []).map((l) => l.name),
-        number: i.number,
-        state: i.state,
-        title: i.title,
-        url: i.html_url,
-      }));
-    return c.json({ issues, repo });
-  } catch (error: unknown) {
-    return c.json({ error: errMessage(error) }, respondStatus(error));
-  }
-});
-
 app.get("/api/factory/stats/rollup", async (c) => {
   const now = new Date();
-  const rollupWeeks = weekKeysBack(now, STATS_WINDOW_WEEKS);
   const week = weekStart(now);
   const weeks = weekKeysBack(now, STATS_WINDOW_WEEKS);
   const repoList = [...FACTORY_REPOS];
@@ -676,9 +631,8 @@ app.get("/api/factory/stats/rollup", async (c) => {
     history,
     persisted,
     repos: reposOut,
-    stats: { weeks: rollupWeeks },
     totals,
-    weeks: rollupWeeks,
+    weeks,
   });
 });
 
@@ -1110,6 +1064,8 @@ const triggerFactoryJob = async (
     const jobName = `factory-issue-${issueNum}-${ts}`.slice(0, 63);
     // Inject FACTORY_ISSUE directly to avoid racing GitHub label propagation.
     const spec = structuredClone(template.spec ?? {}) as JobTemplateSpec;
+    // Finished Jobs never linger, even if the CronJob template loses its TTL.
+    spec.ttlSecondsAfterFinished ??= FACTORY_JOB_TTL_SECONDS;
     const containers = spec.template?.spec?.containers ?? [];
     if (containers[0]) {
       containers[0].env = withEnv(containers[0].env ?? [], {

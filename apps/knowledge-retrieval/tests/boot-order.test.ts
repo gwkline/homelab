@@ -8,9 +8,10 @@ import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 
 /**
- * Boots the real ingest and retrieval entrypoints against a fresh, empty
- * database in each order. Needs DATABASE_URL with rights to create databases
- * and the vector and pg_textsearch extensions.
+ * Runs the real ingest and retrieval entrypoints: boot order on a fresh,
+ * empty database, readiness while the database is unreachable, and surviving
+ * dropped connections. The live tests need DATABASE_URL with rights to create
+ * databases and the vector and pg_textsearch extensions.
  */
 
 const hasLiveDb = Boolean(process.env["DATABASE_URL"]);
@@ -105,15 +106,16 @@ const search = (retrieval: Service): Promise<Response> =>
     method: "POST",
   });
 
-const stop = async (service: Service): Promise<void> => {
+/** SIGTERM, then the exit code. */
+const stop = async (service: Service): Promise<number | null> => {
   if (service.process.exitCode !== null) {
-    return;
+    return service.process.exitCode;
   }
-  const exited = new Promise((resolve) => {
+  const exited = new Promise<number | null>((resolve) => {
     service.process.once("exit", resolve);
   });
   service.process.kill("SIGTERM");
-  await exited;
+  return await exited;
 };
 
 const withFreshDatabase = async (
@@ -201,6 +203,79 @@ test(
           await stop(retrieval);
         }
       }
+    });
+  }
+);
+
+test(
+  "retrieval stays up but NotReady while its database is unreachable",
+  {
+    timeout: 60_000,
+  },
+  async () => {
+    const deadPort = await freePort();
+    const retrieval = await startService(
+      RETRIEVAL_ENTRY,
+      retrievalEnv(
+        `postgresql://knowledge:unused@127.0.0.1:${deadPort}/knowledge`
+      )
+    );
+    try {
+      await waitFor(retrieval, "/healthz", 200);
+      assert.equal((await fetch(`${retrieval.base}/readyz`)).status, 503);
+      assert.equal((await search(retrieval)).status, 503);
+      assert.equal(retrieval.process.exitCode, null, retrieval.output());
+    } finally {
+      await stop(retrieval);
+    }
+    assert.equal(retrieval.process.exitCode, 0, "SIGTERM exits cleanly");
+  }
+);
+
+test(
+  "terminated database connections crash neither service",
+  { skip: hasLiveDb ? false : "DATABASE_URL is not set", timeout: 120_000 },
+  async () => {
+    await withFreshDatabase(async (url) => {
+      const ingest = await startService(INGEST_ENTRY, ingestEnv(url));
+      let retrieval: Service | null = null;
+      try {
+        await waitFor(ingest, "/readyz", 200);
+        retrieval = await startService(RETRIEVAL_ENTRY, retrievalEnv(url));
+        await waitFor(retrieval, "/readyz", 200);
+        // Leaves idle clients in both pools, the case that used to crash.
+        assert.equal((await search(retrieval)).status, 200);
+
+        const { default: pg } = await import("pg");
+        const admin = new pg.Pool({ connectionString: url });
+        const killed = await admin.query(
+          `SELECT count(pg_terminate_backend(pid))::int AS n FROM pg_stat_activity
+           WHERE application_name IN ('knowledge-ingest', 'knowledge-retrieval')`
+        );
+        await admin.end();
+        assert.ok(
+          Number(killed.rows[0]?.["n"]) >= 2,
+          "both pools held connections"
+        );
+
+        await sleep(1000);
+        assert.equal(ingest.process.exitCode, null, ingest.output());
+        assert.equal(retrieval.process.exitCode, null, retrieval.output());
+        await waitFor(ingest, "/readyz", 200);
+        await waitFor(retrieval, "/readyz", 200);
+        assert.equal((await search(retrieval)).status, 200);
+      } finally {
+        await stop(ingest);
+        if (retrieval !== null) {
+          await stop(retrieval);
+        }
+      }
+      assert.equal(
+        ingest.process.exitCode,
+        0,
+        "ingest drains and exits cleanly"
+      );
+      assert.equal(retrieval?.process.exitCode, 0, "retrieval exits cleanly");
     });
   }
 );

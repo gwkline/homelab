@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Create Secret onepassword-service-account, the one hand-entered secret ESO
-# needs. Idempotent; never logs the token.
+# Create Secret external-secrets/onepassword-service-account, the one
+# hand-entered secret: ClusterSecretStore onepassword authenticates with it.
+# It lives only in external-secrets, where only ESO runs. Idempotent; never
+# logs the token. Server-side apply, so the value never lands in a
+# last-applied-configuration annotation.
 #
-# Usage (token from env, stdin, or a hidden prompt; default namespaces:
-# agents sandbox work tailscale):
-#   ./create-onepassword-service-account.sh [ns]...
-#   op read op://.../token | ./create-onepassword-service-account.sh [ns]...
+# Usage (token from env, stdin, or a hidden prompt; ESO must be installed):
+#   ./create-onepassword-service-account.sh
+#   op read op://.../token | ./create-onepassword-service-account.sh
 set -euo pipefail
+
+NAMESPACE=external-secrets
 
 tty_state=''
 token_file=''
@@ -20,6 +24,16 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+if [ "$#" -ne 0 ]; then
+  echo "usage: $0   (takes no arguments; the Secret goes only to namespace ${NAMESPACE})" >&2
+  exit 2
+fi
+
+if ! kubectl get namespace "${NAMESPACE}" >/dev/null 2>&1; then
+  echo "FATAL: namespace ${NAMESPACE} not found; install ESO first (kubectl apply --server-side -k deploy/eso/base)" >&2
+  exit 1
+fi
 
 TOKEN="${OP_SERVICE_ACCOUNT_TOKEN:-}"
 
@@ -41,21 +55,15 @@ case "${TOKEN}" in
   *) echo "FATAL: value does not look like a 1Password service-account token (expected the ops_... secret shown once at SA creation)" >&2; exit 1 ;;
 esac
 
-if [ "$#" -eq 0 ]; then
-  set -- agents sandbox work tailscale
-fi
-
 # Byte-exact token via a temp file: never in argv, the process list, or echoed
 # output. --from-file (not --from-literal) for the same reason.
 token_file=$(mktemp)
 printf '%s' "${TOKEN}" > "${token_file}"
 
-for ns in "$@"; do
-  kubectl create namespace "${ns}" --dry-run=client -o yaml | kubectl apply -f -
-  kubectl create secret generic onepassword-service-account \
-    --namespace "${ns}" \
-    --from-file=token="${token_file}" \
-    --dry-run=client -o yaml | kubectl apply -f -
-  echo "==> onepassword-service-account applied in namespace '${ns}'"
-done
-echo "==> done. Verify: kubectl get secretstore -A   (the onepassword stores must reach Ready)"
+kubectl create secret generic onepassword-service-account \
+  --namespace "${NAMESPACE}" \
+  --from-file=token="${token_file}" \
+  --dry-run=client -o yaml |
+  kubectl apply --server-side --field-manager=onepassword-bootstrap --force-conflicts -f - >/dev/null
+echo "==> onepassword-service-account applied in namespace '${NAMESPACE}'"
+echo "==> verify: kubectl get clustersecretstore onepassword   (READY True)"

@@ -15,22 +15,21 @@ spec:
     spec:
       automountServiceAccountToken: false
       securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
       initContainers:
+        # Homepage writes into its config dir, so it gets a copy rather than
+        # the read-only ConfigMap mount.
         - name: config-init
           image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
-          command:
-            [
-              "sh",
-              "-c",
-              "cp /cfg-source/* /app/config/ && chown -R 1000:1000 /app/config",
-            ]
+          command: ["sh", "-c", "cp /cfg-source/* /app/config/"]
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-              add: ["CHOWN", "FOWNER"]
           volumeMounts:
             - name: cfg-source
               mountPath: /cfg-source
@@ -53,11 +52,15 @@ spec:
             # Next.js rejects unknown Host headers; the tailnet gates access.
             - name: HOMEPAGE_ALLOWED_HOSTS
               value: "*"
+            # ConfigMap homepage-env is created on the cluster, never in git
+            # (deploy/tailscale/README.md). Optional, so homepage still starts
+            # without it; the links are then unresolved.
             - name: HOMEPAGE_VAR_TAILNET_NAME
               valueFrom:
                 configMapKeyRef:
                   name: homepage-env
                   key: tailnet-name
+                  optional: true
           volumeMounts:
             - name: config
               mountPath: /app/config
@@ -65,8 +68,10 @@ spec:
             requests:
               cpu: "50m"
               memory: 128Mi
+              ephemeral-storage: 32Mi
             limits:
               memory: 512Mi
+              ephemeral-storage: 512Mi
           startupProbe:
             httpGet:
               path: /

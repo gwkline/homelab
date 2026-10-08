@@ -57,24 +57,24 @@ spec:
                   key: admin-password
             - name: GF_USERS_ALLOW_SIGN_UP
               value: "false"
+            # Interpolated into the contact point; required, because Grafana
+            # without its pager is not a working Grafana.
+            - name: NTFY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-ntfy
+                  key: url
           volumeMounts:
             - name: data
               mountPath: /var/lib/grafana
             - name: provisioning-datasources
-              mountPath: /etc/grafana/provisioning/datasources/loki.yaml
-              subPath: loki.yaml
-              readOnly: true
-            - name: provisioning-datasources
-              mountPath: /etc/grafana/provisioning/datasources/victoriametrics.yaml
-              subPath: victoriametrics.yaml
+              mountPath: /etc/grafana/provisioning/datasources
               readOnly: true
             - name: provisioning-dashboards
-              mountPath: /etc/grafana/provisioning/dashboards/provider.yaml
-              subPath: provider.yaml
+              mountPath: /etc/grafana/provisioning/dashboards
               readOnly: true
             - name: provisioning-alerting
-              mountPath: /etc/grafana/provisioning/alerting/homelab-alerts.yaml
-              subPath: homelab-alerts.yaml
+              mountPath: /etc/grafana/provisioning/alerting
               readOnly: true
             - name: dashboards
               mountPath: /etc/grafana/dashboards
@@ -83,8 +83,10 @@ spec:
             requests:
               cpu: "100m"
               memory: 256Mi
+              ephemeral-storage: 64Mi
             limits:
               memory: 1Gi
+              ephemeral-storage: 1536Mi
           startupProbe:
             httpGet:
               path: /api/health
@@ -109,7 +111,7 @@ spec:
             name: grafana-dashboard-provider
         - name: provisioning-alerting
           configMap:
-            name: grafana-alert-rules
+            name: grafana-alerting
         - name: dashboards
           configMap:
             name: grafana-dashboards

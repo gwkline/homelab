@@ -26,5 +26,5 @@ COPY --from=build --chown=1000:1000 --chmod=0555 /src/apps/knowledge-ingest/dist
 USER node
 EXPOSE 3100
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
-  CMD node -e 'fetch(`http://127.0.0.1:${process.env.PORT ?? 3100}/healthz`).then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'
+  CMD ["node", "-e", "fetch(`http://127.0.0.1:${process.env.PORT ?? 3100}/healthz`).then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
 CMD ["node", "dist/index.js"]

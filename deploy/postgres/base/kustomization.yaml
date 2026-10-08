@@ -10,6 +10,7 @@ labels:
 resources:
   - cluster-image-catalog.yaml
   - cluster.yaml
+  - owner-secrets.yaml
   - databases.yaml
   - netpol.yaml
   - pdb.yaml

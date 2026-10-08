@@ -57,6 +57,7 @@ export interface K8sObject {
 
 // Spec of a k8s Job (the payload of a CronJob's jobTemplate and of createJob).
 export interface JobTemplateSpec {
+  ttlSecondsAfterFinished?: number;
   template?: {
     spec?: {
       containers?: { env?: EnvVar[] }[];
@@ -220,5 +221,3 @@ export const api = (cfg: K8sConfig) => ({
       "application/merge-patch+json"
     ),
 });
-
-export type K8sApi = ReturnType<typeof api>;

@@ -37,12 +37,9 @@ set -eu
 
 DEFAULT_SOURCE="https://github.com/gwkline/.agent-skills"
 
-# Secret-pattern scan, same pattern set as scripts/verify.sh. The two bare
-# prefix literals are assembled from parts so this file never contains a
-# scannable string itself (verify.sh's scan covers every other file).
-_sp_gh="github_pat"
-_sp_ts="tskey"
-SECRET_PATTERN="(${_sp_gh}_|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|${_sp_ts}-auth-)"
+# Fetched skills are scanned at install time, where gitleaks may not be
+# installed. Same set as apps/shared/skills-lib.sh.
+SECRET_PATTERN='(github_pat_[A-Za-z0-9_]{20,}|gh[oprsu]_[A-Za-z0-9]{20,}|xox[bp]-|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|tskey-[a-z]+-[A-Za-z0-9_-]{10,}|ops_eyJ[A-Za-z0-9+/]{100,}|sk-or-v1-[0-9a-f]{64}|sk-ant-[a-z]+[0-9]{2}-[A-Za-z0-9_-]{80,})'
 
 _source="${SKILLS_SOURCE:-${DEFAULT_SOURCE}}"
 _ref="${SKILLS_REF:-}"

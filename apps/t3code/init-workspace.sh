@@ -18,51 +18,23 @@ setup_gh_cli
 DATA_DIR="${DATA_DIR:-/data}"
 REPOS_DIR="${DATA_DIR}/repos"
 
-# Agent CLI state lives in the container; restore it from the PVC and write
-# changes back every 60s so logins and config survive rollouts. Caches, logs
-# and repo clones stay container-local:
-#   claude, codex          ~/.claude, ~/.codex
-#   opencode (stable+beta) ~/.config/opencode, ~/.local/share/opencode
-#                          (auth.json, opencode.db*; not log/ or repos/)
-#   cursor-agent           ~/.config/cursor/auth.json, ~/.cursor/cli-config.json
-#                          (not projects/)
-STATE_SRC="${DATA_DIR}/agent-state"
-OC_SHARE="/home/node/.local/share/opencode"
-
-# sync_dirs <from> <to> [excluded-names...]: merge-copy the children of
-# <from> into <to>, skipping the excluded top-level names.
-sync_dirs() {
-  _from="$1"; _to="$2"; shift 2
-  [ -d "${_from}" ] || return 0
-  mkdir -p "${_to}"
-  for _child in "${_from}"/* "${_from}"/.[!.]* "${_from}"/..?*; do
-    [ -e "${_child}" ] || continue
-    _name=${_child##*/}
-    for _x in "$@"; do
-      if [ "${_name}" = "${_x}" ]; then continue 2; fi
-    done
-    cp -a "${_child}" "${_to}/" 2>/dev/null || true
-  done
-}
-
-for _d in .claude .codex .config/opencode .config/cursor; do
-  sync_dirs "${STATE_SRC}/${_d}" "/home/node/${_d}"
-done
+# Agent CLI state (logins, config, the OpenCode database) lives on the data
+# PVC and is copied into $HOME here; agent-state.sh says what is kept and how.
+# It is saved back every 30s and on shutdown, below.
+. /usr/local/lib/agent-state.sh
+STATE_DIR="${DATA_DIR}/agent-state"
+HOME_DIR=/home/node
+OC_SHARE="${HOME_DIR}/.local/share/opencode"
 # Older images symlinked the whole opencode share dir onto the PVC.
 if [ -L "${OC_SHARE}" ]; then rm -f "${OC_SHARE}"; fi
-sync_dirs "${STATE_SRC}/opencode/share" "${OC_SHARE}" log repos
-sync_dirs "${STATE_SRC}/cursor" "/home/node/.cursor" projects
-(
-  while :; do
-    sleep 60
-    for _d in .claude .codex .config/opencode .config/cursor; do
-      sync_dirs "/home/node/${_d}" "${STATE_SRC}/${_d}"
-    done
-    sync_dirs "${OC_SHARE}" "${STATE_SRC}/opencode/share" log repos
-    sync_dirs "/home/node/.cursor" "${STATE_SRC}/cursor" projects
-  done
-) &
-echo "[t3code] agent-state sync started (${STATE_SRC})"
+rmdir /tmp/agent-state.lock 2>/dev/null || true
+# A failed restore must not be followed by saves, which would mirror the
+# partial copy over the good one on the PVC.
+STATE_SAVES=1
+if ! agent_state_restore "${HOME_DIR}" "${STATE_DIR}"; then
+  STATE_SAVES=0
+  echo "[t3code] WARNING: agent-state restore failed; state will NOT be saved this boot (${STATE_DIR} untouched)" >&2
+fi
 
 # Link the skills-sync init container's store into the CLIs' skill dirs.
 # This runs after the agent-state restore so a restored file can never write
@@ -71,10 +43,9 @@ echo "[t3code] agent-state sync started (${STATE_SRC})"
 SKILLS_STORE="${DATA_DIR}/skills-generated"
 SKILLS_STATUS="${DATA_DIR}/skills-sync/status.json"
 if [ -f "${SKILLS_STATUS}" ] && grep -q '"ok":true' "${SKILLS_STATUS}"; then
-  for _skills_dir in /home/node/.claude/skills; do
-    skills_link_generated "${SKILLS_STORE}" "${_skills_dir}" \
-      || echo "[t3code] WARNING: skills link into ${_skills_dir} incomplete" >&2
-  done
+  _skills_dir=/home/node/.claude/skills
+  skills_link_generated "${SKILLS_STORE}" "${_skills_dir}" \
+    || echo "[t3code] WARNING: skills link into ${_skills_dir} incomplete" >&2
   echo "[t3code] skills-sync: $(cat "${SKILLS_STATUS}")"
 else
   echo "[t3code] WARNING: skills-sync did not produce a healthy store this boot — running WITHOUT private skills (see ${SKILLS_STATUS})" >&2
@@ -158,4 +129,60 @@ json.dump(s, open(p, 'w'), indent=2)
 fi
 
 echo "[t3code] starting server on 0.0.0.0:3773"
-exec t3 serve --host 0.0.0.0 --port 3773
+t3 serve --host 0.0.0.0 --port 3773 &
+T3_PID=$!
+
+save_state() {
+  [ "${STATE_SAVES}" = 1 ] || return 0
+  agent_state_save "${HOME_DIR}" "${STATE_DIR}" || echo "[t3code] WARNING: agent-state save failed" >&2
+}
+
+# The periodic saver is asked to stop rather than killed, so it never leaves
+# a save half done.
+SAVER_STOP=/tmp/agent-state.stop
+rm -f "${SAVER_STOP}"
+SAVER_PID=''
+if [ "${STATE_SAVES}" = 1 ]; then
+  (
+    n=0
+    while [ ! -e "${SAVER_STOP}" ]; do
+      sleep 1
+      n=$((n + 1))
+      if [ "${n}" -ge 30 ]; then
+        n=0
+        save_state
+      fi
+    done
+  ) &
+  SAVER_PID=$!
+  echo "[t3code] agent-state saves every 30s and on shutdown (${STATE_DIR})"
+fi
+
+stop_saver() {
+  if [ -n "${SAVER_PID}" ]; then
+    touch "${SAVER_STOP}"
+    wait "${SAVER_PID}" 2>/dev/null || true
+    SAVER_PID=''
+  fi
+}
+
+# Kubernetes signals only this process. On TERM: save first, so nothing
+# written before the signal is lost even if t3 is slow to stop, then stop t3
+# and save again for what it wrote while exiting.
+# shellcheck disable=SC2329 # invoked by the trap
+on_term() {
+  trap - TERM INT
+  stop_saver
+  save_state
+  kill -TERM "${T3_PID}" 2>/dev/null || true
+  wait "${T3_PID}" 2>/dev/null || true
+  save_state
+  exit 143
+}
+trap on_term TERM INT
+
+wait "${T3_PID}"
+rc=$?
+stop_saver
+save_state
+exit "${rc}"

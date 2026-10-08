@@ -1,10 +1,10 @@
 # VictoriaMetrics
 
-Single-node VictoriaMetrics plus kube-state-metrics in `agents`: the metrics backend for Grafana ([ADR-005](../../docs/adr/adr-005-metrics-logging-stack.md)). Scrape interval 30s, retention 30 days, on a 15Gi PVC (the hard ceiling; the `homelab-pvc-nearly-full` alert fires first). It uses built-in promscrape: no vmagent, operators, or CRDs.
+Single-node VictoriaMetrics plus kube-state-metrics in `agents`: the metrics backend for Grafana ([ADR-005](../../docs/adr/adr-005-metrics-logging-stack.md)). Scrape interval 30s, retention 30 days. The 15Gi PVC is not a limit: local-path doesn't enforce sizes, so the data shares the node filesystem the `homelab-node-filesystem` alert watches. `-storage.minFreeDiskSpaceBytes=15GB` makes VictoriaMetrics refuse writes before the node reaches its disk eviction threshold ([ADR-005 D3](../../docs/adr/adr-005-metrics-logging-stack.md#d3-retention-and-disk-budget)). It uses built-in promscrape: no vmagent, operators, or CRDs.
 
 Scrape targets (ConfigMap `victoriametrics-scrape`):
 
-- kubelet `/metrics` and cAdvisor for every node, through the API-server proxy. The pod never dials node IPs.
+- kubelet `/metrics` and `/metrics/cadvisor` for every node, scraped directly at the node's InternalIP on port 10250 and verified against the cluster CA.
 - kube-state-metrics, limited by its `--resources` allowlist to nodes, pods, jobs/cronjobs, deployments/statefulsets, and PVCs.
 - VictoriaMetrics itself.
 
@@ -17,7 +17,7 @@ kubectl apply -k deploy/victoriametrics/base
 kubectl apply -k deploy/grafana/base   # datasource, dashboards, alerts
 ```
 
-There are no secrets: scraping uses the read-only `victoriametrics` ServiceAccount. Note that `nodes/proxy` get is a broad kubelet grant.
+There are no secrets: scraping uses the read-only `victoriametrics` ServiceAccount, which can read `nodes/metrics` and discover nodes. It has no `nodes/proxy`, so it cannot exec, attach, or read host logs through the kubelet.
 
 ## Verify
 
