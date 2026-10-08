@@ -6,5 +6,18 @@ resources:
   - eso.yaml
   - metrics.yaml
 
+# Every workload's credentials come through ESO, so its pods are platform
+# priority (deploy/policies/base/priorityclasses.yaml). The PriorityClass
+# must exist before this base is applied (docs/rebuild-runbook.md 3.2).
+patches:
+  - target:
+      group: apps
+      kind: Deployment
+      namespace: external-secrets
+    patch: |-
+      - op: add
+        path: /spec/template/spec/priorityClassName
+        value: homelab-platform
+
 components:
   - ../../components/labels

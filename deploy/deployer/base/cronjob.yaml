@@ -44,5 +44,6 @@ spec:
                 - { name: tmp, mountPath: /tmp }
                 - { name: script, mountPath: /opt/deployer, readOnly: true }
           volumes:
-            - { name: tmp, emptyDir: {} }
+            # The clone and render take about 10Mi.
+            - { name: tmp, emptyDir: { sizeLimit: 256Mi } }
             - { name: script, configMap: { name: deployer-script } }

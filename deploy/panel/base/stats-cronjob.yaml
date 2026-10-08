@@ -24,6 +24,7 @@ spec:
             app: factory-stats-snapshot
         spec:
           restartPolicy: Never
+          priorityClassName: homelab-batch
           automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true

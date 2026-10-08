@@ -18,6 +18,8 @@ operatorConfig:
       memory: 64Mi
     limits:
       memory: 256Mi
+  # Every UI is reached through it (deploy/policies/base/priorityclasses.yaml).
+  priorityClassName: homelab-platform
 
 proxyConfig:
   # The OAuth client and tailnet tagOwners must own this tag.

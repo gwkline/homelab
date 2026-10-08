@@ -71,6 +71,8 @@ end_stage() {
 
 # ---------------------------------------------------------------------------
 stage eso
+# ESO's pods are homelab-platform priority; the class must exist first.
+kubectl apply -f deploy/policies/base/priorityclasses.yaml
 kubectl apply --server-side -k deploy/eso/base
 kubectl wait --for=condition=Established \
   crd/externalsecrets.external-secrets.io crd/clustersecretstores.external-secrets.io \

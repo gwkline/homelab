@@ -32,9 +32,12 @@ for name in code-pr security; do
   # Every profile field is consumed (capabilities by run.sh's needs: check);
   # one nobody reads is drift.
   extra=$(jq -r '[keys[] | select(IN("name", "image", "serviceAccount", "activeDeadlineSeconds",
-    "backoffLimit", "ttlSecondsAfterFinished", "resources", "workSizeLimit", "capabilities") | not)] | join(",")' "$P")
+    "backoffLimit", "ttlSecondsAfterFinished", "priorityClassName", "resources", "workSizeLimit",
+    "capabilities") | not)] | join(",")' "$P")
   [ -z "${extra}" ] || fail "${name}: profile fields no Job reads: ${extra}"
   jq -e '(.capabilities | type) == "array"' "$P" > /dev/null || fail "${name}: profile declares no capabilities"
+  # Workers are retryable batch work: evicted first, never preempting.
+  jq -e '.priorityClassName == "homelab-batch"' "$P" > /dev/null || fail "${name}: profile is not homelab-batch"
 
   jq -e --slurpfile p "$P" '
     $p[0] as $p
@@ -42,6 +45,7 @@ for name in code-pr security; do
     and .spec.activeDeadlineSeconds == $p.activeDeadlineSeconds
     and .spec.backoffLimit == $p.backoffLimit
     and .spec.template.spec.serviceAccountName == $p.serviceAccount
+    and .spec.template.spec.priorityClassName == $p.priorityClassName
     and ([.spec.template.spec.initContainers[], .spec.template.spec.containers[]] | all(.image == $p.image))
     and .spec.template.spec.containers[0].resources == $p.resources
     and (.spec.template.spec.volumes[] | select(.name == "work") | .emptyDir.sizeLimit) == $p.workSizeLimit

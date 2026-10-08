@@ -2,6 +2,7 @@
 # orchestrator renders each worker Job from this (apps/factory/orchestrator/
 # worker-job.jq), so a change here applies from the next run.
 #   activeDeadlineSeconds  stay under the orchestrator's 3900s tick deadline
+#   priorityClassName      homelab-batch: evicted first under node pressure
 #   workSizeLimit          the /work emptyDir: clone, build output, scratch
 #   resources              the agent container; its ephemeral-storage limit
 #                          must cover workSizeLimit plus HOME and caches
@@ -24,6 +25,7 @@ data:
       "activeDeadlineSeconds": 3600,
       "backoffLimit": 0,
       "ttlSecondsAfterFinished": 86400,
+      "priorityClassName": "homelab-batch",
       "resources": {
         "requests": { "cpu": "500m", "memory": "512Mi", "ephemeral-storage": "2Gi" },
         "limits": { "cpu": "2", "memory": "12Gi", "ephemeral-storage": "16Gi" }

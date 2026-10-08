@@ -10,9 +10,10 @@ Secret `onepassword-service-account` (key `token`) in namespace `external-secret
 
 ## Apply
 
-Server-side is required because two CRDs exceed the client-side annotation limit. Apply before `clusters/home`:
+Server-side is required because two CRDs exceed the client-side annotation limit. Apply before `clusters/home`, after the PriorityClasses its pods use:
 
 ```sh
+kubectl apply -f deploy/policies/base/priorityclasses.yaml
 kubectl apply --server-side -k deploy/eso/base
 kubectl wait --for=condition=Established \
   crd/externalsecrets.external-secrets.io crd/clustersecretstores.external-secrets.io
