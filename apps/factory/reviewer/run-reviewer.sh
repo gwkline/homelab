@@ -70,9 +70,18 @@ printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
   if [ "${AUTO_MERGE}" = "true" ] && [ "$DRY" != "true" ]; then
     case "$CI/$DRAFT" in
       green/false)
-        echo "[reviewer] PR #${NUM}: auto-merge (squash) — CI green (auto mode)"
-        if ! gh pr merge "$NUM" -R "$REPO" --squash --delete-branch >/dev/null 2>&1; then
-          echo "[reviewer] PR #${NUM}: merge refused by GitHub — left open, see comment"
+        # The orchestrator never publishes a merge-gate path, but a PR can be
+        # pushed to after publish. Re-check what it changes; fail closed.
+        if ! FILES_JSON="$(gh api --paginate "repos/${REPO}/pulls/${NUM}/files?per_page=100")" \
+           || ! FILES="$(printf '%s' "$FILES_JSON" | jq -r '.[] | .filename, (.previous_filename // empty)')"; then
+          echo "[reviewer] PR #${NUM}: cannot list its changed files — not merging"
+        elif PROTECTED="$(printf '%s\n' "$FILES" | factory_protected_paths)" && [ -n "$PROTECTED" ]; then
+          echo "[reviewer] PR #${NUM}: changes merge-gate paths ($(printf '%s' "$PROTECTED" | tr '\n' ' ')) — not merging; a human must"
+        else
+          echo "[reviewer] PR #${NUM}: auto-merge (squash) — CI green (auto mode)"
+          if ! gh pr merge "$NUM" -R "$REPO" --squash --delete-branch >/dev/null 2>&1; then
+            echo "[reviewer] PR #${NUM}: merge refused by GitHub — left open, see comment"
+          fi
         fi
         ;;
       green/true)

@@ -55,6 +55,10 @@ The patch is the diff from the clone's base commit, agent commits included. Agen
 
 1. Admission (human): only issues a collaborator labels `factory` become Runs (the collector). That label is the one human decision before a merge.
 2. Merge (automated): the reviewer CronJob flips a green draft to ready and squash-merges it once `ci` is green. There is no approval step between the worker's patch and the draft PR.
+3. A factory PR never changes what admits or merges it. `factory_protected_paths` (`apps/factory/lib/factory.sh`) covers `.github/**`, the reviewer, the collector, the factory library and `renovate.json`. `pull_request` CI runs the workflow from the PR head, so without this an edited workflow could turn `ci` green.
+   - The orchestrator refuses to publish a patch touching those paths and parks the issue on `factory/stuck`.
+   - The reviewer re-checks the PR's files before every merge, failing closed.
+   - The collector also admits only issues authored by an `OWNER`, `MEMBER` or `COLLABORATOR`, since the body becomes the agent's task.
 
 ### D8–D9. HTTP/MCP surface and sequence (superseded)
 

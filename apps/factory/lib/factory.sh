@@ -72,6 +72,16 @@ factory_medic_marker() { # $1 = head sha, $2 = queued|failed
   printf 'factory:medic:%s:%s' "${1:?head sha}" "${2:?queued|failed}"
 }
 
+# ---- merge-gate paths ------------------------------------------------------------
+# Paths a factory PR may not change, because they decide what is admitted and
+# merged: CI definitions (pull_request CI runs them from the PR head), the
+# reviewer, the collector, this library, and Renovate's config. The
+# orchestrator refuses to publish them and the reviewer refuses to merge them;
+# a human makes those changes.
+factory_protected_paths() { # changed paths on stdin → the protected ones on stdout
+  grep -E '^(\.github/|apps/factory/(reviewer|collector|lib)/|renovate\.json$)' || true
+}
+
 # ---- checks and verification ---------------------------------------------------
 # classify_checks: verdict for a commit's check runs, from the check-runs API
 # JSON on stdin: red | pending | green | unknown. Empty or unreadable input is

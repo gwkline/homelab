@@ -58,6 +58,17 @@ case "$(verify_for gwkline/homelab)" in *"echo verify-ok") ;; *) fail "homelab v
 [ "$(factory_medic_marker abc123 failed)" = "factory:medic:abc123:failed" ] || fail "medic marker"
 echo "PASS: one verify table, one label list, one medic marker"
 
+protected="$(printf '%s\n' .github/workflows/ci.yaml apps/factory/reviewer/run-reviewer.sh \
+  apps/factory/collector/config.ts apps/factory/lib/labels.json renovate.json \
+  docs/renovate.json.md apps/factory/worker/entrypoint.sh README.md .githubx/y | factory_protected_paths)"
+[ "${protected}" = ".github/workflows/ci.yaml
+apps/factory/reviewer/run-reviewer.sh
+apps/factory/collector/config.ts
+apps/factory/lib/labels.json
+renovate.json" ] || fail "factory_protected_paths picked: ${protected}"
+[ -z "$(printf '' | factory_protected_paths)" ] || fail "empty input must yield nothing"
+echo "PASS: factory_protected_paths covers CI, reviewer, collector, the library and renovate.json"
+
 # --- gh shim: `auth status` fails until AUTH_FAILS calls have been made -----------
 mkdir -p "${FIX}/bin"
 cat > "${FIX}/bin/gh" << 'EOF'

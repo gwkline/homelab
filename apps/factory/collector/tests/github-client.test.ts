@@ -112,6 +112,20 @@ test("pagination follows Link rel=next and aggregates every page", async () => {
   assert.equal(requests.length, 2);
 });
 
+test("author_association is carried; a missing one reads as an outsider", async () => {
+  const { client: c } = client(() =>
+    listPage([
+      issue(1, "2026-09-01T00:00:00Z", { author_association: "OWNER" }),
+      issue(2, "2026-09-01T00:00:00Z"),
+    ])
+  );
+  const result = await c.listOpenIssues("o/r");
+  assert.deepEqual(
+    result.issues.map((i) => i.authorAssociation),
+    ["OWNER", "NONE"]
+  );
+});
+
 test("pagination dedupes an issue listed on two pages (newest wins)", async () => {
   const { client: c } = client((request) => {
     if (request.url.includes("page=2")) {
