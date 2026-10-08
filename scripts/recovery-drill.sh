@@ -120,6 +120,8 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
   --version "$TS_CHART_VERSION" \
   -f deploy/tailscale/values.yaml
 kubectl -n tailscale rollout status deploy/operator --timeout="$PROXY_TIMEOUT"
+# values.yaml makes this the default; no proxy starts until it exists.
+kubectl apply -f deploy/tailscale/proxyclass.yaml
 end_stage
 
 # ---------------------------------------------------------------------------

@@ -320,7 +320,7 @@ test("GET /api/devtools discovers the tailnet and reports catalog states", async
       res.writeHead(200, { "content-type": "application/json" }).end(
         JSON.stringify({
           metadata: { name: "homepage" },
-          spec: { ports: [{ port: 443 }], selector: { app: "homepage" } },
+          spec: { ports: [{ port: 80 }], selector: { app: "homepage" } },
         })
       );
       return;

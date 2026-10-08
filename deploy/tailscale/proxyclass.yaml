@@ -1,0 +1,18 @@
+# Default ProxyClass for every Ingress proxy (values.yaml
+# proxyConfig.defaultProxyClass): resource bounds. The proxy image is pinned in
+# values.yaml. Applied after the helm install, which ships the CRD; the
+# operator creates no proxies until this exists. Proxies use ~30-40Mi each.
+apiVersion: tailscale.com/v1alpha1
+kind: ProxyClass
+metadata:
+  name: homelab
+spec:
+  statefulSet:
+    pod:
+      tailscaleContainer:
+        resources:
+          requests:
+            cpu: 10m
+            memory: 48Mi
+          limits:
+            memory: 128Mi
