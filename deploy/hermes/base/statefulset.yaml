@@ -157,8 +157,10 @@ spec:
             requests:
               cpu: "500m"
               memory: 1Gi
+              ephemeral-storage: 256Mi
             limits:
               memory: 4Gi
+              ephemeral-storage: 4Gi
       volumes:
         - name: github-token
           secret:

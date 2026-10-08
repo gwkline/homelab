@@ -71,8 +71,10 @@ spec:
             requests:
               cpu: "1"
               memory: 2Gi
+              ephemeral-storage: 1Gi
             limits:
               memory: 6Gi
+              ephemeral-storage: 8Gi
           startupProbe:
             httpGet:
               path: /
@@ -130,13 +132,15 @@ spec:
           secret:
             secretName: github-token
             optional: true
-        # Standalone claim rather than a volumeClaimTemplate, which is
-        # immutable and so could never be resized.
+        # Standalone claim: volumeClaimTemplates are immutable, so a volume
+        # added to the existing StatefulSet has to be one. local-path can't
+        # resize it either way.
         - name: t3state
           persistentVolumeClaim:
             claimName: t3state-t3code-0
   volumeClaimTemplates:
-    # Repo workspaces; disposable, they re-clone.
+    # Repo clones (they re-clone) and the agent CLIs' saved state: logins,
+    # config and the OpenCode database. Losing it logs every CLI out.
     - metadata:
         name: data
       spec:

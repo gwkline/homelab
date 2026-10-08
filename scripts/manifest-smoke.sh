@@ -328,7 +328,7 @@ subjects:
 ---
 # Minimal admitted Job: proves the ServiceAccount resolves, the token is
 # projected, and a container actually runs and exits 0 in sandbox (PSA
-# baseline, default-deny ingress netpol).
+# restricted, default-deny ingress netpol).
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -347,6 +347,8 @@ spec:
       automountServiceAccountToken: true
       restartPolicy: Never
       securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: canary

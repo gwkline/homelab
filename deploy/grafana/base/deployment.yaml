@@ -83,8 +83,10 @@ spec:
             requests:
               cpu: "100m"
               memory: 256Mi
+              ephemeral-storage: 64Mi
             limits:
               memory: 1Gi
+              ephemeral-storage: 1536Mi
           startupProbe:
             httpGet:
               path: /api/health
