@@ -757,6 +757,11 @@ export interface GitTreeEntry {
 }
 
 export interface GitRepository {
+  /** One path's blob at a commit, or null when the path is absent. */
+  findBlob: (
+    commitSha: string,
+    filePath: string
+  ) => Promise<GitTreeEntry | null>;
   listBlobs: (commitSha: string) => Promise<GitTreeEntry[]>;
   readBlob: (blobHash: string) => Promise<Uint8Array>;
   resolveCommit: (ref: string) => Promise<string>;
@@ -1180,9 +1185,63 @@ export interface GitSyncReport extends GitSyncCounts {
   sourceKey: string;
 }
 
+/** Blobs read ahead of the write loop; caps how much blob text a sync holds. */
+export const SYNC_READ_CONCURRENCY = 4;
+
+type Settled<R> = { error: unknown; ok: false } | { ok: true; value: R };
+
 /**
- * Blob reads run concurrently, but writes follow the deterministic op order,
- * so the manifest and report are stable for a given commit.
+ * Maps `items` through `fn` with at most `limit` calls in flight. A finished
+ * result waits only for earlier ones, so no more than `limit` are held.
+ * Failures are settled, not left pending, so one that lands ahead of its turn
+ * is never an unhandled rejection.
+ * @yields {R} Each result in input order; rethrows the first failure in order.
+ */
+const mapInOrder = async function* mapInOrder<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): AsyncGenerator<R> {
+  const settle = async (item: T): Promise<Settled<R>> => {
+    try {
+      return { ok: true, value: await fn(item) };
+    } catch (error) {
+      return { error, ok: false };
+    }
+  };
+  const inFlight: Promise<Settled<R>>[] = [];
+  let next = 0;
+  const startNext = (): void => {
+    const item = items[next];
+    next += 1;
+    if (item !== undefined) {
+      inFlight.push(settle(item));
+    }
+  };
+  while (next < items.length && inFlight.length < limit) {
+    startNext();
+  }
+  for (;;) {
+    const head = inFlight.shift();
+    if (head === undefined) {
+      return;
+    }
+    const outcome = await head;
+    if (!outcome.ok) {
+      throw outcome.error;
+    }
+    if (next < items.length) {
+      startNext();
+    }
+    yield outcome.value;
+  }
+};
+
+/**
+ * Blobs are read a few ahead and each document is written as soon as it is
+ * built, so memory stays bounded however large the change. Writes follow the
+ * deterministic op order, so the manifest and report are stable for a given
+ * commit.
  */
 export const syncGitSource = async (
   repository: GitRepository,
@@ -1212,29 +1271,23 @@ export const syncGitSource = async (
     Object.entries(manifest.entries)
   );
   const tombstones: GitTombstone[] = [];
-  const examined = await Promise.all(
-    changed
-      .filter(
-        (
-          op
-        ): op is Extract<
-          GitSyncOp,
-          { kind: "added" | "modified" | "renamed" }
-        > => op.kind !== "deleted"
-      )
-      .map(async (op) => ({
-        assessment:
-          op.size !== null && op.size > resolved.maxBlobBytes
-            ? ({ kind: "too-large" } as const)
-            : assessBlob(
-                primaryPath(op),
-                await repository.readBlob(op.blobHash),
-                resolved.maxBlobBytes
-              ),
-        op,
-      }))
+  const reads = changed.filter(
+    (
+      op
+    ): op is Extract<GitSyncOp, { kind: "added" | "modified" | "renamed" }> =>
+      op.kind !== "deleted"
   );
-  const upserts: GitSourceDocument[] = [];
+  const examined = mapInOrder(reads, SYNC_READ_CONCURRENCY, async (op) => ({
+    assessment:
+      op.size !== null && op.size > resolved.maxBlobBytes
+        ? ({ kind: "too-large" } as const)
+        : assessBlob(
+            primaryPath(op),
+            await repository.readBlob(op.blobHash),
+            resolved.maxBlobBytes
+          ),
+    op,
+  }));
   const skipCount = (assessment: { kind: string }): void => {
     if (assessment.kind === "binary") {
       counts.skippedBinary += 1;
@@ -1246,7 +1299,7 @@ export const syncGitSource = async (
       counts.skippedTooLarge += 1;
     }
   };
-  for (const { assessment, op } of examined) {
+  for await (const { assessment, op } of examined) {
     if (assessment.kind !== "text") {
       skipCount(assessment);
       if (op.kind === "modified") {
@@ -1259,7 +1312,7 @@ export const syncGitSource = async (
       continue;
     }
     const document = buildGitDocument(resolved, op, assessment, commitSha);
-    upserts.push(document);
+    await store.upsertDocument(document);
     nextEntries.set(document.path, manifestEntryOf(document));
     if (op.kind === "renamed") {
       tombstones.push(
@@ -1289,10 +1342,9 @@ export const syncGitSource = async (
     nextEntries.delete(op.path);
     counts.deleted += 1;
   }
-  await Promise.all([
-    ...upserts.map((document) => store.upsertDocument(document)),
-    ...tombstones.map((tombstone) => store.tombstoneDocument(tombstone)),
-  ]);
+  for (const tombstone of tombstones) {
+    await store.tombstoneDocument(tombstone);
+  }
   await store.saveManifest({
     commitSha,
     entries: Object.fromEntries(nextEntries),
@@ -1477,6 +1529,23 @@ export const openGitRepository = async (
     }
   };
   return {
+    findBlob: async (commitSha, filePath) => {
+      if (filePath.length === 0 || filePath.includes("\0")) {
+        throw new TypeError(
+          `git-source: invalid path ${JSON.stringify(filePath)}`
+        );
+      }
+      // Literal pathspecs: a path is never read as a glob or pathspec magic.
+      const output = await execGit(
+        ["ls-tree", "-r", "--long", "-z", commitSha, "--", filePath],
+        { cwd: localDir, env: { ...env, GIT_LITERAL_PATHSPECS: "1" } }
+      );
+      return (
+        parseGitLsTree(output.toString("utf-8")).find(
+          (entry) => entry.path === filePath
+        ) ?? null
+      );
+    },
     listBlobs: async (commitSha) => {
       const output = await run(["ls-tree", "-r", "--long", "-z", commitSha]);
       return parseGitLsTree(output.toString("utf-8"));

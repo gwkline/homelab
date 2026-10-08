@@ -144,9 +144,17 @@ WHERE id IN (
 )
 RETURNING id, kind, payload, attempts, max_attempts, source_id, namespace, started_at`;
 
+/**
+ * A finished job keeps its metadata but not the document text it carried:
+ * the corpus already holds it, and payloads would otherwise grow without
+ * bound.
+ */
+const DROP_CONTENT = "payload #- '{documentVersion,content}'";
+
 /** Reset leases that expired; dead-letter jobs that already exhausted attempts. */
 export const RECOVER_STALE_SQL = `UPDATE ${INGEST_TABLE} SET
   status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'pending' END,
+  payload = CASE WHEN attempts >= max_attempts THEN ${DROP_CONTENT} ELSE payload END,
   worker_id = NULL,
   error = $2,
   heartbeat_at = NULL
@@ -156,6 +164,7 @@ RETURNING id`;
 /** Complete only if the caller still owns the claim (worker_id + running). */
 export const COMPLETE_SQL = `UPDATE ${INGEST_TABLE} SET
   status = 'succeeded',
+  payload = ${DROP_CONTENT},
   result = $2::jsonb,
   error = NULL,
   finished_at = now()
@@ -168,6 +177,7 @@ RETURNING id`;
  */
 export const FAIL_SQL = `UPDATE ${INGEST_TABLE} SET
   status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'retryable' END,
+  payload = CASE WHEN attempts >= max_attempts THEN ${DROP_CONTENT} ELSE payload END,
   error = $2,
   finished_at = CASE WHEN attempts >= max_attempts THEN now() ELSE finished_at END,
   available_at = CASE WHEN attempts >= max_attempts THEN available_at
@@ -175,6 +185,21 @@ export const FAIL_SQL = `UPDATE ${INGEST_TABLE} SET
   worker_id = NULL
 WHERE id = $1 AND worker_id = $4 AND status = 'running'
 RETURNING status`;
+
+/**
+ * Deletes finished jobs older than `$1` days, except each source's latest
+ * succeeded and dead job, which the source list reads for its last sync and
+ * last error.
+ */
+export const PRUNE_FINISHED_SQL = `DELETE FROM ${INGEST_TABLE}
+WHERE status IN ('succeeded', 'dead')
+  AND finished_at < now() - make_interval(days => $1)
+  AND id <> ALL (ARRAY(
+    SELECT DISTINCT ON (source_id, status) id FROM ${INGEST_TABLE}
+    WHERE status IN ('succeeded', 'dead')
+    ORDER BY source_id, status, finished_at DESC NULLS LAST, id
+  ))
+RETURNING id`;
 
 export const HEARTBEAT_SQL = `UPDATE ${INGEST_TABLE} SET heartbeat_at = now()
 WHERE id = ANY($1::text[]) AND worker_id = $2 AND status = 'running'`;

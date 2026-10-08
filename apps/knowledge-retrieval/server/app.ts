@@ -65,6 +65,8 @@ const bearerTokenMatches = (header: string, expected: string): boolean => {
 
 const roundScore = (value: number): number => Number(value.toFixed(6));
 
+const READY_TIMEOUT_MS = 2000;
+
 const getId = (candidate: RankedCandidate): string => candidate.chunk.chunkId;
 
 export interface AppDeps {
@@ -466,7 +468,23 @@ export const createApp = (deps: AppDeps): OpenAPIHono<AppEnv> => {
     tags: [{ description: "Cited chunk retrieval", name: "retrieval" }],
   });
 
+  // Liveness only; /readyz checks the database.
   app.get("/healthz", (c) => c.json({ status: "ok" }));
+
+  app.get("/readyz", async (c) => {
+    if (store.ping === undefined) {
+      return c.json({ status: "ok" }, 200);
+    }
+    try {
+      await withTimeout(store.ping(), READY_TIMEOUT_MS);
+      return c.json({ status: "ok" }, 200);
+    } catch (error) {
+      logger.warn("readiness check failed", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      return c.json({ status: "unavailable" }, 503);
+    }
+  });
 
   app.get("/metrics", async (c) => {
     let report: EmbeddingReport | null = null;

@@ -195,6 +195,13 @@ DROP INDEX IF EXISTS ingest_job_claim;`,
     sql: `UPDATE chunks SET embedding_model = 'fake/384'
 WHERE embedding IS NOT NULL AND embedding_model NOT LIKE 'fake/%';`,
   },
+  {
+    // Finished jobs now drop their document text; this clears the backlog.
+    id: 3,
+    name: "drop-finished-job-content",
+    sql: `UPDATE ingest_job SET payload = payload #- '{documentVersion,content}'
+WHERE status IN ('succeeded', 'dead') AND payload ? 'documentVersion';`,
+  },
 ];
 
 /** The schema version this build needs; recorded in eval provenance. */
@@ -211,10 +218,13 @@ const MIGRATION_LEDGER_SQL = `CREATE TABLE IF NOT EXISTS knowledge_schema_migrat
 /**
  * Applies pending migrations in one transaction. The transaction-scoped
  * advisory lock serializes concurrent ingest replicas; a waiter then finds
- * the winner's ledger rows and applies nothing. Returns the applied ids.
+ * the winner's ledger rows and applies nothing. Index builds and lock waits
+ * may outlast the pool's statement timeout, so it is lifted here. Returns
+ * the applied ids.
  */
 export const migrateKnowledgeSchema = (pool: PgPool): Promise<number[]> =>
   withTransaction(pool, async (client) => {
+    await client.query("SET LOCAL statement_timeout = 0", []);
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtext('knowledge_schema_migration'))",
       []

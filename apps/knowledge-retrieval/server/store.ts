@@ -84,6 +84,8 @@ export interface RetrievalStore {
   /** False when no real embedding model is configured: every search is BM25. */
   vectorSearch?: boolean;
   embeddingReport?: () => Promise<EmbeddingReport>;
+  /** Readiness: throws when the backing database cannot serve searches. */
+  ping?: () => Promise<void>;
 }
 
 export class StoreUnavailableError extends Error {

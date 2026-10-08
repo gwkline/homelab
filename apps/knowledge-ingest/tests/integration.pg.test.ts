@@ -10,7 +10,7 @@ import {
   readKnowledgeSchemaVersion,
 } from "../../knowledge/src/schema.ts";
 import { createFixtureHandler } from "../server/fixture-worker.ts";
-import { PgIngestStore, createPgPool } from "../server/pg-store.ts";
+import { PgIngestStore } from "../server/pg-store.ts";
 import type { QueueDbClient } from "../server/pg-store.ts";
 import { runWorkerCycle } from "../server/worker.ts";
 import { makeIngestInput, makeWorkerConfig, noopLogger } from "./helpers.ts";
@@ -22,6 +22,11 @@ import { makeIngestInput, makeWorkerConfig, noopLogger } from "./helpers.ts";
  */
 
 const hasLiveDb = Boolean(process.env["DATABASE_URL"]);
+
+const createPgPool = async (connectionString: string): Promise<Pool> => {
+  const { default: pg } = await import("pg");
+  return new pg.Pool({ connectionString });
+};
 
 const wrapClient = (pool: Pool): QueueDbClient => ({
   query: async (text, params) => {
@@ -314,6 +319,69 @@ test(
       assert.equal(entry.documentCount, 4);
       assert.ok((entry.chunkCount ?? 0) >= 4);
       assert.ok(entry.lastSyncAt !== null);
+    } finally {
+      await cleanupRun(pool, run);
+      await pool.end();
+    }
+  }
+);
+
+test(
+  "live postgres: finished jobs drop their text, and old ones are pruned",
+  { skip: hasLiveDb ? false : "DATABASE_URL is not set" },
+  async () => {
+    const databaseUrl = process.env["DATABASE_URL"] ?? "";
+    const run = randomUUID().slice(0, 8);
+    const pool = await createPgPool(databaseUrl);
+    try {
+      const store = new PgIngestStore(wrapClient(pool));
+      await migrateKnowledgeSchema(pool);
+      const sourceId = `${run}-source`;
+      const version = (n: number) => ({
+        content: `# Doc ${n}\n\nprivate body ${run}`,
+        documentId: `${run}-doc-${n}`,
+        externalId: `docs/${n}.md`,
+        namespace: `it-${run}`,
+        provenance: null,
+        source: "git",
+        versionId: `${run}-v${n}`,
+      });
+      const older = await store.enqueueDocumentVersion(version(1), sourceId);
+      const newer = await store.enqueueDocumentVersion(version(2), sourceId);
+      const claimed = await store.claim({ limit: 10, workerId: run });
+      for (const job of claimed) {
+        await store.complete(run, job.jobId, {
+          chunksIngested: 1,
+          documentsIngested: 1,
+        });
+      }
+      const ids = [older.job.jobId, newer.job.jobId];
+      const { rows } = await pool.query(
+        "SELECT payload FROM ingest_job WHERE id = ANY($1) ORDER BY id",
+        [ids]
+      );
+      assert.equal(rows.length, 2);
+      for (const row of rows) {
+        const documentVersion = row["payload"]?.documentVersion;
+        assert.equal(documentVersion?.content, undefined, "text is dropped");
+        assert.ok(documentVersion?.documentId, "metadata stays");
+      }
+
+      await pool.query(
+        "UPDATE ingest_job SET finished_at = now() - make_interval(days => $2) WHERE id = $1",
+        [older.job.jobId, 30]
+      );
+      await pool.query(
+        "UPDATE ingest_job SET finished_at = now() - make_interval(days => $2) WHERE id = $1",
+        [newer.job.jobId, 29]
+      );
+      await store.pruneFinished(14);
+      assert.equal(await store.getJob(older.job.jobId), null);
+      assert.equal(
+        (await store.getJob(newer.job.jobId))?.status,
+        "succeeded",
+        "the source's latest sync survives the prune"
+      );
     } finally {
       await cleanupRun(pool, run);
       await pool.end();

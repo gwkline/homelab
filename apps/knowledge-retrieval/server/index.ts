@@ -1,8 +1,10 @@
+import { once } from "node:events";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { serve } from "@hono/node-server";
 
 import { embeddingProviderFromEnv } from "../../knowledge/src/embedder.ts";
+import { createPgPool } from "../../knowledge/src/pg-pool.ts";
 import { createApp } from "./app.ts";
 import { configFromEnv } from "./config.ts";
 import { createJsonLogger } from "./log.ts";
@@ -13,6 +15,9 @@ import { PgRetrievalStore } from "./pg-store.ts";
 const logger = createJsonLogger();
 
 const EMBEDDING_CHECK_RETRY_MS = 10_000;
+
+// Kubernetes sends SIGKILL 30s after SIGTERM.
+const SHUTDOWN_DEADLINE_MS = 25_000;
 
 /** Logs once whether stored vectors match the query model, after ingest migrates. */
 const reportEmbeddingModels = async (
@@ -47,14 +52,20 @@ const reportEmbeddingModels = async (
 
 try {
   const config = configFromEnv(process.env);
-  const { databaseUrl } = config;
   const pool =
-    databaseUrl === undefined || databaseUrl === null
+    config.databaseUrl === null
       ? null
-      : await (async () => {
-          const pg = await import("pg");
-          return new pg.Pool({ connectionString: databaseUrl });
-        })();
+      : await createPgPool({
+          applicationName: "knowledge-retrieval",
+          connectionString: config.databaseUrl,
+          max: config.poolMax,
+          onError: (error) => {
+            logger.warn("idle postgres connection failed", {
+              reason: error.message,
+            });
+          },
+          statementTimeoutMs: config.requestTimeoutMs,
+        });
   let store;
   if (pool === null) {
     store = config.seedFile
@@ -83,13 +94,32 @@ try {
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     logger.info("listening", { port: info.port });
   });
-  const shutdown = (signal: string): void => {
+  let stopping = false;
+  const shutdown = async (signal: string): Promise<void> => {
+    if (stopping) {
+      return;
+    }
+    stopping = true;
     logger.info("shutdown", { signal });
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 5000).unref();
+    setTimeout(() => process.exit(1), SHUTDOWN_DEADLINE_MS).unref();
+    try {
+      server.close();
+      await once(server, "close");
+      await pool?.end();
+      process.exit(0);
+    } catch (error) {
+      logger.error("shutdown failed", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      process.exit(1);
+    }
   };
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => {
+    void shutdown("SIGTERM");
+  });
+  process.on("SIGINT", () => {
+    void shutdown("SIGINT");
+  });
 } catch (error) {
   logger.error("startup failed", {
     reason: error instanceof Error ? error.message : String(error),
