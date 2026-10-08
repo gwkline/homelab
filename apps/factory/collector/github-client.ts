@@ -11,6 +11,8 @@ export { GitHubApiError } from "./github-errors.ts";
 const defaultSleep = promisify(setTimeout) as (ms: number) => Promise<void>;
 
 export interface IssueRef {
+  /** The author's relation to the repo (OWNER, MEMBER, COLLABORATOR, NONE…). */
+  authorAssociation: string;
   isPullRequest: boolean;
   labels: string[];
   number: number;
@@ -46,6 +48,7 @@ export interface GitHubClientOptions {
 }
 
 interface RawIssue {
+  author_association?: unknown;
   labels?: unknown;
   number?: unknown;
   pull_request?: unknown;
@@ -83,6 +86,11 @@ const asIssueRef = (raw: RawIssue): IssueRef | null => {
     ? raw.labels.map(labelName).filter((name): name is string => name !== null)
     : [];
   return {
+    // Missing or malformed reads as an outsider, never as a collaborator.
+    authorAssociation:
+      typeof raw.author_association === "string"
+        ? raw.author_association
+        : "NONE",
     isPullRequest: raw.pull_request !== undefined && raw.pull_request !== null,
     labels,
     number: raw.number,

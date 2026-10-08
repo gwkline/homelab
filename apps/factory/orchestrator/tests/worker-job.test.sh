@@ -29,10 +29,12 @@ for name in code-pr security; do
   render "${FIX}/${name}.json" > "${FIX}/${name}-job.json"
   P="${FIX}/${name}.json" J="${FIX}/${name}-job.json"
 
-  # Every profile field is consumed; one nobody reads is drift.
+  # Every profile field is consumed (capabilities by run.sh's needs: check);
+  # one nobody reads is drift.
   extra=$(jq -r '[keys[] | select(IN("name", "image", "serviceAccount", "activeDeadlineSeconds",
-    "backoffLimit", "ttlSecondsAfterFinished", "resources", "workSizeLimit") | not)] | join(",")' "$P")
+    "backoffLimit", "ttlSecondsAfterFinished", "resources", "workSizeLimit", "capabilities") | not)] | join(",")' "$P")
   [ -z "${extra}" ] || fail "${name}: profile fields no Job reads: ${extra}"
+  jq -e '(.capabilities | type) == "array"' "$P" > /dev/null || fail "${name}: profile declares no capabilities"
 
   jq -e --slurpfile p "$P" '
     $p[0] as $p

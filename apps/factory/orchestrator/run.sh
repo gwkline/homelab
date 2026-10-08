@@ -43,7 +43,7 @@ STALE_HOURS="${FACTORY_STALE_HOURS:-2}"
 
 # Hard timeouts: a hung connection must fail the step, not burn the tick's
 # activeDeadline (gh's is in factory.sh).
-kubectl() { timeout 120 /usr/local/bin/kubectl "$@"; }
+kubectl() { timeout 120 "${KUBECTL_BIN:-/usr/local/bin/kubectl}" "$@"; }
 gitt() { timeout 300 /usr/bin/git "$@"; }
 timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # Redact the GitHub token from worker output destined for comments: an agent
@@ -67,6 +67,15 @@ update_status() {  # $1=status, $2=extra detail markdown
     gh api -X PATCH "repos/${REPO}/issues/comments/${MARKER_ID}" \
       -F body="$(factory_marker_body "${1}" "${2:-}" "$(timestamp)")" >/dev/null
   fi
+}
+
+# Hand the issue to a human: failed plus stuck, because the reclaimer would
+# only retry a run that must fail the same way. $1 = the label it leaves.
+park_for_human() {
+  gh label create "${LABEL_STUCK}" -R "${REPO}" --color ededed \
+    --description "factory: needs human review" >/dev/null 2>&1 || true
+  gh issue edit "${NUM}" -R "${REPO}" --remove-label "$1" \
+    --add-label "${LABEL_FAILED}" --add-label "${LABEL_STUCK}" >/dev/null
 }
 
 NUM=""
@@ -187,6 +196,19 @@ case "${WORKER_IMAGE:-}" in
     exit 1
     ;;
 esac
+
+# ---- 2b. capabilities ---------------------------------------------------------
+# An issue labelled needs:<capability> that its profile lacks (e.g.
+# needs:cluster on code-pr, which has no Kubernetes API) cannot succeed: park
+# it on the first pick instead of churning through retries.
+NEEDS=$(gh api "repos/${REPO}/issues/${NUM}" --jq '[.labels[].name | select(startswith("needs:")) | ltrimstr("needs:")] | join(" ")' 2>/dev/null || echo "")
+MISSING=$(printf '%s' "${PROFILE_JSON}" | jq -r --arg needs "${NEEDS}" '($needs | split(" ") | map(select(. != ""))) - (.capabilities // []) | join(", ")')
+if [ -n "${MISSING}" ]; then
+  park_for_human "${LABEL_QUEUED}"
+  gh issue comment "${NUM}" -R "${REPO}" --body "🚫 Not attemptable in profile \`${PROFILE}\`: this issue needs ${MISSING}, which the profile does not provide (it has: $(printf '%s' "${PROFILE_JSON}" | jq -r '(.capabilities // []) | join(", ")')). Parked on \`${LABEL_STUCK}\` instead of retrying: do it by hand, or relabel \`${LABEL_QUEUED}\` once a profile can." >/dev/null
+  echo "[orch] issue #${NUM}: needs ${MISSING}, which profile ${PROFILE} lacks — parked"
+  exit 0
+fi
 
 # ---- 3. swap labels + post marker comment --------------------------------
 gh issue edit "${NUM}" -R "${REPO}" \
@@ -322,6 +344,28 @@ for _i in $(seq 1 "${WAIT_TICKS}"); do
 done
 if [ "${WAIT_OK}" != "1" ]; then
   LOGTAIL=$(kubectl logs "job/${JOB_NAME}" -n sandbox --all-containers --tail=40 2>/dev/null | redact || true)
+  # Exit 78 from the clone step or the worker is "cannot attempt": a required
+  # input or setting is missing (private skills, the model key, the run brief),
+  # so a retry would fail the same way. Park it with the reason instead.
+  EXIT_CODES=$(kubectl get pods -n sandbox -l job-name="${JOB_NAME}" -o jsonpath='{.items[0].status.initContainerStatuses[*].state.terminated.exitCode} {.items[0].status.containerStatuses[*].state.terminated.exitCode}' 2>/dev/null || true)
+  case " ${EXIT_CODES} " in
+    *" 78 "*)
+      REASON=$(printf '%s\n' "${LOGTAIL}" | sed -n 's/.*CANNOT ATTEMPT: //p' | tail -n 1)
+      update_status "cannot attempt" "**Cannot attempt:** ${REASON:-the worker exited 78; see the log tail}.
+
+Fix that, then remove \`${LABEL_STUCK}\` and \`${LABEL_FAILED}\` and relabel \`${LABEL_QUEUED}\`. Not retried automatically: it would fail the same way.
+
+<details><summary>log tail</summary>
+
+\`\`\`
+${LOGTAIL}
+\`\`\`
+</details>"
+      park_for_human "${LABEL_WIP}"
+      echo "[orch] issue #${NUM}: cannot attempt (${REASON:-exit 78}) — parked, not retried"
+      exit 0
+      ;;
+  esac
   # Bounded auto-retry: one extra attempt for transient failures (flaky
   # provider, netpol blip). 2 run markers max, then park in failed for a human.
   ATTEMPTS=$(gh api "repos/${REPO}/issues/${NUM}/comments?per_page=100" --jq "[.[] | select(.body | contains(\"<!-- ${FACTORY_RUN_MARKER}\"))] | length" 2>/dev/null || echo 2)
@@ -397,15 +441,32 @@ update_status "publishing" "_Applying patch and opening draft PR..._"
 
 PUBLISH_DIR="/tmp/publish-${NUM}"
 rm -rf "${PUBLISH_DIR}"; mkdir -p "${PUBLISH_DIR}"; cd "${PUBLISH_DIR}"
-AUTH_CLONE="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+# FACTORY_PUBLISH_REMOTE lets the offline tests publish to a local repository.
+AUTH_CLONE="${FACTORY_PUBLISH_REMOTE:-https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git}"
 gitt clone -q "${AUTH_CLONE}" .
 echo "[orch] publish: cloned ${REPO} @ $(git rev-parse --short HEAD)"
 git config user.name "factory-bot"; git config user.email "factory@homelab.local"
 git checkout -qb "${BRANCH}"
 if gitt apply --whitespace=nowarn "/tmp/patch-${NUM}.diff" 2>/tmp/apply-err; then
+  git add -A
   echo "[orch] publish: patch applied ($(git diff --cached --stat | tail -1))"
+  # pull_request CI runs the workflow from the PR head and the reviewer merges
+  # on green, so a factory PR must never change what admits or merges it.
+  PROTECTED=$(git diff --cached --name-only --no-renames | factory_protected_paths)
+  if [ -n "${PROTECTED}" ]; then
+    update_status "not published" "This patch changes paths that gate admission or merge, which a factory PR may not touch; a human has to make this change:
+
+\`\`\`
+${PROTECTED}
+\`\`\`
+
+${REPORT_BLOCK}"
+    park_for_human "${LABEL_WIP}"
+    echo "[orch] issue #${NUM}: patch touches protected paths, not published: $(printf '%s' "${PROTECTED}" | tr '\n' ' ')"
+    exit 0
+  fi
   # shellcheck disable=SC3057 # ${WORKER_MODEL:+...} spans a newline; not indexing
-  git add -A && git commit -qm "factory: resolve #${NUM}
+  git commit -qm "factory: resolve #${NUM}
 
 Produced by homelab software factory (${PROFILE} profile).${WORKER_MODEL:+
 Model: ${WORKER_MODEL}}

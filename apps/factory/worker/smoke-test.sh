@@ -47,6 +47,17 @@ EOF
 
 [ -s /usr/local/share/worker/brief.schema.json ] || fail "brief.schema.json missing"
 
+# The OpenCode config the entrypoint generates (under `set -u`, from a model
+# key) must be valid JSON: an unescaped `$schema` once killed every run before
+# the agent started. With no brief the entrypoint stops right after writing it.
+SMOKE_HOME="$(mktemp -d)"
+HOME="${SMOKE_HOME}" TASK_DIR="${SMOKE_HOME}/task" OUT_DIR="${SMOKE_HOME}/out" WORK_DIR="${SMOKE_HOME}/work" \
+  OPENCODE_AUTH_B64="$(printf '{"openrouter":{"key":"sk-smoke"}}' | base64 -w0)" \
+  /usr/local/bin/entrypoint > /dev/null 2>&1 || true
+python3 -m json.tool "${SMOKE_HOME}/.config/opencode/opencode.jsonc" > /dev/null 2>&1 \
+  || fail "entrypoint did not write a valid OpenCode config"
+rm -rf "${SMOKE_HOME}"
+
 # The clone step is a separate initContainer; the image itself never carries
 # a GitHub credential into PID 1's environment.
 [ -x /usr/local/bin/prepare ] || fail "prepare (initContainer clone step) missing"

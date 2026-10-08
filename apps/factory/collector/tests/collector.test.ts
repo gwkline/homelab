@@ -13,6 +13,7 @@ import { collectTick, createTokenProvider } from "../run-collector.ts";
 import type { CollectorClient } from "../run-collector.ts";
 
 const issueRef = (number: number, extra: Partial<IssueRef> = {}): IssueRef => ({
+  authorAssociation: "OWNER",
   isPullRequest: false,
   labels: [],
   number,
@@ -153,6 +154,34 @@ test("eligibility label gates admission when configured", async () => {
   const added = calls.filter((c) => c.kind === "add").map((c) => c.number);
   assert.deepEqual(added, [1]);
   assert.equal(result.skipped["not-eligible-label"], 1);
+});
+
+test("a labelled issue whose author is not a collaborator is skipped", async () => {
+  const repos = new Map([
+    [
+      "o/r",
+      [
+        issueRef(1, { labels: ["factory"] }),
+        issueRef(2, { authorAssociation: "MEMBER", labels: ["factory"] }),
+        issueRef(3, { authorAssociation: "COLLABORATOR", labels: ["factory"] }),
+        issueRef(4, { authorAssociation: "NONE", labels: ["factory"] }),
+        issueRef(5, { authorAssociation: "CONTRIBUTOR", labels: ["factory"] }),
+        issueRef(6, {
+          authorAssociation: "FIRST_TIME_CONTRIBUTOR",
+          labels: ["factory"],
+        }),
+      ],
+    ],
+  ]);
+  const { calls, client } = fakeClient(repos);
+  const config = loadConfig({
+    ...baseEnv,
+    FACTORY_ELIGIBILITY_LABEL: "factory",
+  });
+  const result = await collectTick(config, client);
+  const added = calls.filter((c) => c.kind === "add").map((c) => c.number);
+  assert.deepEqual(added, [1, 2, 3]);
+  assert.equal(result.skipped["not-collaborator"], 3);
 });
 
 test("race narrowing: issue closed between list and write is skipped", async () => {

@@ -1,26 +1,60 @@
-#!/usr/bin/env bash
-# Launch a one-off loop job in `sandbox` without hand-writing YAML.
+#!/bin/sh
+# Launch a one-off loop job in `sandbox` without hand-writing YAML. The repo is
+# cloned and the command runs inside it, so `npm test` means the repo's tests.
 #
 # Usage:
-#   ./new-job.sh [--print] <name> '<command>'
+#   ./new-job.sh [--print] [--repo <owner/name>] <name> '<command>'
 #
 # Examples:
 #   ./new-job.sh smoke-test 'echo hello'
-#   ./new-job.sh pr-check 'git -C /data/repos/launchpad log --oneline -5'
+#   ./new-job.sh --repo gwkline/launchpad pr-check 'git log --oneline -5'
+#   ./new-job.sh build 'npm ci
+#   npm test'
 #
 # --print writes the manifest to stdout instead of applying.
+# --repo  clones that GitHub repo instead of gwkline/homelab.
 #
 # Ad-hoc jobs get Chromium and node; there is no Docker.
 # Follow logs with:
 #   kubectl logs job/<name> -n sandbox -f
-set -euo pipefail
+set -eu
+
+usage() {
+  echo "usage: $0 [--print] [--repo <owner/name>] <name> '<command>'" >&2
+  exit 2
+}
 
 PRINT=0
-if [[ "${1:-}" == "--print" ]]; then PRINT=1; shift; fi
-
-NAME="${1:?usage: $0 [--print] <name> '<command>'}"
+REPO=gwkline/homelab
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --print) PRINT=1; shift ;;
+    --repo) [ $# -ge 2 ] || usage; REPO=$2; shift 2 ;;
+    --) shift; break ;;
+    -*) usage ;;
+    *) break ;;
+  esac
+done
+[ $# -ge 2 ] || usage
+NAME=$1
 shift
-COMMAND="${*:?usage: $0 [--print] <name> '<command>'}"
+COMMAND=$*
+case "$REPO" in
+  */*) ;;
+  *) usage ;;
+esac
+REPO_DIR="/data/repos/${REPO#*/}"
+
+# The command, prefixed with a cd into the clone, as one YAML double-quoted
+# scalar: backslashes, quotes, tabs and newlines escaped, so a command of any
+# shape (several lines, quotes, colons) stays one valid value.
+yaml_quote() {
+  printf '%s' "$1" | awk '
+    { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t") }
+    { printf "%s%s", (NR > 1 ? "\\n" : ""), $0 }'
+}
+LOOP_COMMAND=$(yaml_quote "cd ${REPO_DIR} || exit 1
+${COMMAND}")
 
 MANIFEST=$(cat <<EOF
 apiVersion: batch/v1
@@ -58,11 +92,9 @@ spec:
             - name: GITHUB_TOKEN_FILE
               value: /secrets/token
             - name: WORKSPACE_REPOS
-              value: |
-                https://github.com/gwkline/homelab.git
+              value: https://github.com/${REPO}.git
             - name: LOOP_COMMAND
-              value: |
-                ${COMMAND}
+              value: "${LOOP_COMMAND}"
             - name: HOME
               value: /tmp
           volumeMounts:
@@ -88,7 +120,7 @@ spec:
 EOF
 )
 
-if [[ "$PRINT" == 1 ]]; then
+if [ "$PRINT" = 1 ]; then
   printf '%s\n' "$MANIFEST"
 else
   printf '%s\n' "$MANIFEST" | kubectl apply -f -

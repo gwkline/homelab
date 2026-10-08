@@ -54,6 +54,7 @@ const check = (spec, result) => {
 
 const k8sApi = process.env.KUBERNETES_SERVICE_HOST || "10.43.0.1";
 const lanHost = process.env.EGRESS_SMOKE_LAN_TARGET || "192.168.1.1";
+const lanPort = Number(process.env.EGRESS_SMOKE_LAN_PORT || 443);
 const gw = defaultGateway();
 
 const tcpSpecs = [
@@ -78,8 +79,8 @@ const tcpSpecs = [
   },
   {
     expect: "open",
-    host: "api.openrouter.ai",
-    name: "api.openrouter.ai:443 (model API)",
+    host: "openrouter.ai",
+    name: "openrouter.ai:443 (model API)",
     port: 443,
   },
   // --- negative: cluster + private-network targets -------------------------
@@ -125,7 +126,12 @@ const tcpSpecs = [
     name: "panel service (agents ns) blocked",
     port: 3000,
   },
-  { expect: "closed", host: lanHost, name: "LAN target blocked", port: 443 },
+  {
+    expect: "closed",
+    host: lanHost,
+    name: `LAN target ${lanHost}:${lanPort} blocked`,
+    port: lanPort,
+  },
 ];
 
 const results = [];

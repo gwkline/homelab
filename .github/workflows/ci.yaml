@@ -21,7 +21,9 @@ permissions: {}
 
 env:
   # BuildKit runs every build and, in `publish`, holds the push credential.
+  # renovate: datasource=docker depName=moby/buildkit
   BUILDKIT_IMAGE: moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+  # renovate: datasource=docker depName=docker/buildkit-syft-scanner
   SBOM_GENERATOR: docker/buildkit-syft-scanner:1.12.0@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9
 
 jobs:
@@ -131,6 +133,7 @@ jobs:
       actions: read
     outputs:
       images: ${{ steps.diff.outputs.images }}
+      renovate: ${{ steps.diff.outputs.renovate }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -155,6 +158,43 @@ jobs:
           done | jq -Rnc '[inputs | {dir: ., name: sub("^(apps|images)/"; "")}]' > images.json
           cat images.json
           echo "images=$(cat images.json)" >> "$GITHUB_OUTPUT"
+          if $all || ! git diff --quiet "$BASE" HEAD -- renovate.json; then
+            echo "renovate=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # renovate.json changed: validate it, then list every dependency the
+  # managers extract and the update each would get.
+  renovate:
+    needs: [changes]
+    if: needs.changes.outputs.renovate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      # renovate: datasource=npm depName=renovate
+      RENOVATE_VERSION: 44.145.1
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: npx --yes --package "renovate@${RENOVATE_VERSION}" -- renovate-config-validator --strict
+      - name: Dry run
+        env:
+          # Read-only token for GitHub release and tag lookups.
+          GITHUB_COM_TOKEN: ${{ github.token }}
+          LOG_LEVEL: warn
+        run: |
+          npx --yes --package "renovate@${RENOVATE_VERSION}" -- renovate \
+            --platform=local --dry-run=lookup --onboarding=false \
+            --report-type=file --report-path="${RUNNER_TEMP}/renovate.json"
+          jq -r '.repositories[].packageFiles | to_entries[] | .key as $m | .value[] | .packageFile as $f
+            | .deps[] | select(.skipReason == null)
+            | [$m, $f, .depName, (.currentValue // .currentDigest // "-"), ([.updates[]? | .newValue // .newDigest] | join(" ") | if . == "" then "-" else . end)]
+            | @tsv' "${RUNNER_TEMP}/renovate.json" | sort | column -t -s "$(printf '\t')"
 
   # Pull requests and branch runs: build and smoke-test with no registry
   # credential. Reads main's build cache and never writes it.
@@ -287,7 +327,15 @@ jobs:
   # succeeded or was legitimately skipped.
   ci:
     if: always()
-    needs: [check, validate, panel-e2e, manifest-smoke, changes, build, publish]
+    needs:
+      - check
+      - validate
+      - panel-e2e
+      - manifest-smoke
+      - changes
+      - renovate
+      - build
+      - publish
     runs-on: ubuntu-latest
     steps:
       - run: test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false

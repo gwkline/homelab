@@ -5,6 +5,9 @@
 #   workSizeLimit          the /work emptyDir: clone, build output, scratch
 #   resources              the agent container; its ephemeral-storage limit
 #                          must cover workSizeLimit plus HOME and caches
+#   capabilities           what a run can use. An issue labelled
+#                          needs:<capability> outside this list (needs:cluster,
+#                          needs:docker, needs:registry) is parked, not run
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -26,7 +29,8 @@ data:
         "requests": { "cpu": "500m", "memory": "512Mi", "ephemeral-storage": "2Gi" },
         "limits": { "cpu": "2", "memory": "12Gi", "ephemeral-storage": "16Gi" }
       },
-      "workSizeLimit": "12Gi"
+      "workSizeLimit": "12Gi",
+      "capabilities": ["git", "node", "rust", "python", "public-https"]
     }
 ---
 # Worker egress: HTTPS to the public internet (GitHub, the model provider,
