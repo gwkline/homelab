@@ -1,0 +1,12 @@
+# The server node's address: the Kubernetes API endpoint that NetworkPolicies
+# must allow, since kube-router matches after DNAT. It is a DHCP reservation
+# (docs/rebuild-runbook.md); scripts/rebuild-check.sh fails when the live API
+# endpoint disagrees. local-config: a replacement source, never applied.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homelab-node
+  annotations:
+    config.kubernetes.io/local-config: "true"
+data:
+  ip: 192.168.1.2

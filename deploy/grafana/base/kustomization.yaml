@@ -11,6 +11,7 @@ labels:
 resources:
   - deployment.yaml
   - service.yaml
+  - ingress.yaml
   - netpol.yaml
   - admin-secret.yaml
   - ntfy-secret.yaml

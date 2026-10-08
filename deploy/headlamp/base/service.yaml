@@ -3,19 +3,11 @@ kind: Service
 metadata:
   name: headlamp
   namespace: agents
-  annotations:
-    tailscale.com/hostname: headlamp # -> https://headlamp.<tailnet>.ts.net
-    tailscale.com/tags: tag:k8s-operator
 spec:
-  type: LoadBalancer
-  loadBalancerClass: tailscale
+  type: ClusterIP
   selector:
     app: headlamp
   ports:
-    - name: https
-      port: 443
-      targetPort: http
-    # The panel's Dev Tools health probe expects port 80.
     - name: http
       port: 80
       targetPort: http

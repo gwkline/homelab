@@ -25,9 +25,11 @@ spec:
         - protocol: TCP
           port: 3773
 ---
-# t3code runs agents on repo content, so its egress is an allowlist: DNS, the
-# read-only Kubernetes API (rbac.yaml), Executor, knowledge retrieval and the
-# public internet. No LAN, tailnet, link-local or other in-cluster services.
+# t3code runs agents on repo content, so its egress is an allowlist: DNS,
+# Executor, knowledge retrieval and the public internet, plus the read-only
+# Kubernetes API (rbac.yaml) from t3code-kube-api
+# (deploy/policies/base/kube-api-egress.yaml). No LAN, tailnet, link-local or
+# other in-cluster services.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -49,16 +51,6 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    # kube-router filters after DNAT, so the API is matched by both its
-    # ClusterIP and the node's real endpoint.
-    - to:
-        - ipBlock:
-            cidr: 10.43.0.1/32
-        - ipBlock:
-            cidr: 192.168.1.2/32
-      ports:
-        - { protocol: TCP, port: 443 }
-        - { protocol: TCP, port: 6443 }
     - to:
         - podSelector:
             matchLabels:

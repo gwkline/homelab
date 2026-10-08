@@ -16,6 +16,7 @@ import type {
 } from "../server/pipeline-worker.ts";
 import {
   createPipelineHandler,
+  DEFAULT_MAX_CONTENT_BYTES,
   parseDocumentVersionPayload,
   sha256Hex,
 } from "../server/pipeline-worker.ts";
@@ -401,4 +402,56 @@ test("non-git source_sync is a clean no-op in phase one", async () => {
   assert.equal(done?.documentsIngested, 0);
   assert.equal(done?.chunksIngested, 0);
   assert.equal(sink.calls.length, 0, "no crawler ran");
+});
+
+/** An endless body that counts what the reader actually pulled. */
+const endlessBody = (): {
+  body: ReadableStream<Uint8Array>;
+  pulled: () => number;
+} => {
+  const chunk = new Uint8Array(64 * 1024).fill(97);
+  let pulled = 0;
+  return {
+    body: new ReadableStream<Uint8Array>({
+      pull: (controller) => {
+        pulled += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    }),
+    pulled: () => pulled,
+  };
+};
+
+test("an oversized url body is cut off at the cap, never buffered whole", async () => {
+  const { deps, sink, store } = rig();
+  const stream = endlessBody();
+  const fetchImpl: typeof fetch = () =>
+    Promise.resolve(new Response(stream.body, { status: 200 }));
+  const { job } = await store.enqueueIngest(urlIngestInput());
+  const cycle = await runWorkerCycle(deps({ fetchImpl }));
+  assert.equal(cycle.failed, 1);
+  assert.equal(sink.calls.length, 0);
+  const failed = await store.getJob(job.jobId);
+  assert.match(failed?.error ?? "", /above the 1048576 byte cap/u);
+  assert.ok(
+    stream.pulled() <= DEFAULT_MAX_CONTENT_BYTES + 4 * 64 * 1024,
+    `read ${stream.pulled()} bytes of an endless body`
+  );
+});
+
+test("a declared Content-Length over the cap fails before the body is read", async () => {
+  const { deps, store } = rig();
+  const stream = endlessBody();
+  const fetchImpl: typeof fetch = () =>
+    Promise.resolve(
+      new Response(stream.body, {
+        headers: { "content-length": String(DEFAULT_MAX_CONTENT_BYTES * 8) },
+        status: 200,
+      })
+    );
+  const { job } = await store.enqueueIngest(urlIngestInput());
+  await runWorkerCycle(deps({ fetchImpl }));
+  const failed = await store.getJob(job.jobId);
+  assert.match(failed?.error ?? "", /byte cap/u);
+  assert.ok(stream.pulled() <= 64 * 1024, `read ${stream.pulled()} bytes`);
 });

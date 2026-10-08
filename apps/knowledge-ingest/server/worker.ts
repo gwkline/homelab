@@ -116,19 +116,34 @@ export interface RunningWorker {
 }
 
 /**
- * Continuous worker: recover → claim → process, napping only when a cycle
- * found no work. `stop()` halts after the in-flight cycle settles.
+ * Continuous worker: prune (hourly) → recover → claim → process, napping only
+ * when a cycle found no work. `stop()` halts after the in-flight cycle settles.
  */
 export const startWorker = (deps: WorkerDeps): RunningWorker => {
   const workerId = deps.workerId ?? `worker_${randomUUID()}`;
   let stopped = false;
   let settled: Promise<void> = Promise.resolve();
+  let prunedAt = Number.NEGATIVE_INFINITY;
+  const prune = async (): Promise<void> => {
+    if (Date.now() - prunedAt < deps.config.pruneIntervalMs) {
+      return;
+    }
+    prunedAt = Date.now();
+    const pruned = await deps.store.pruneFinished(deps.config.jobRetentionDays);
+    if (pruned > 0) {
+      deps.logger.info("pruned finished jobs", {
+        pruned,
+        retentionDays: deps.config.jobRetentionDays,
+      });
+    }
+  };
   const loop = async (): Promise<void> => {
     for (;;) {
       if (stopped) {
         return;
       }
       try {
+        await prune();
         const cycle = await runWorkerCycle({ ...deps, workerId });
         if (cycle.recovered > 0) {
           deps.logger.info("recovered stale claims", {

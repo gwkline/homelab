@@ -42,6 +42,8 @@ git clone https://github.com/gwkline/homelab.git && cd homelab
 
 Fetch the kubeconfig to the driver ([runbook-server-cluster.md](runbook-server-cluster.md) step 4) and confirm `kubectl get nodes` is Ready. Join agent nodes now or later.
 
+The server must come back on the address in `clusters/home/node/node.yaml` (its DHCP reservation). Otherwise update that file before the core set, or the API allowances in the NetworkPolicies point at the old address: `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes` shows the live one. `scripts/rebuild-check.sh` (3.8) compares them.
+
 ### 3.2 External Secrets Operator
 
 Server-side apply (two CRDs exceed the client-side annotation limit):
@@ -99,7 +101,8 @@ helm repo add tailscale https://pkgs.tailscale.com/helmcharts
 helm upgrade --install tailscale-operator tailscale/tailscale-operator \
   --version 1.102.3 -n tailscale --create-namespace \
   -f deploy/tailscale/values.yaml
-kubectl get ingress -A   # t3code-0, work-t3code-0, panel get <host>.<tailnet>.ts.net
+kubectl apply -f deploy/tailscale/proxyclass.yaml   # default ProxyClass; proxies wait for it
+kubectl get ingress -A   # every UI gets <host>.<tailnet>.ts.net
 ```
 
 Every operator namespace now exists, so apply their default-deny ingress policies (webhook ports stay open to the API server):
@@ -135,6 +138,7 @@ Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart &&
 | t3code | pairing URL from `kubectl logs t3code-0 -n agents \| head`; pair from desktop/phone; repos re-clone |
 | hermes | `kubectl exec -it hermes-0 -n agents -- hermes setup --portal`, then `kubectl rollout restart statefulset hermes -n agents`; message it and get a reply |
 | CLI logins (Claude, Codex) | log in again inside hermes/t3code (PVC homes start empty) |
+| homepage tailnet links | `kubectl -n agents create configmap homepage-env --from-literal=tailnet-name=<tailnet>.ts.net` ([deploy/tailscale/README.md](../deploy/tailscale/README.md#tailnet-dns-suffix)) |
 | panel, homepage | open both over HTTPS; links resolve |
 
 ## 4. Timed drill

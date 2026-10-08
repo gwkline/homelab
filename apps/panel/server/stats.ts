@@ -189,7 +189,7 @@ export const sumWeekStats = (repos: RepoWeekStats[]): StatsTotals => {
   return totals;
 };
 
-// History beyond 2 years is dead weight for a trend view; trim the oldest.
+// History beyond 10 years is dead weight for a trend view; trim the oldest.
 const MAX_WEEKS = 520;
 
 // Corrupt or missing files degrade to an empty store; the next upsert rewrites it.

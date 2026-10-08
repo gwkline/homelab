@@ -8,7 +8,7 @@
 // - The panel links out; it never iframes tools or proxies credentials.
 import type { K8sObject } from "./k8s.js";
 
-export interface ToolHealth {
+interface ToolHealth {
   service: string;
   namespace: string;
   port: number;
@@ -93,9 +93,7 @@ export const DEV_TOOLS: ToolDef[] = [
     dependsOn: "deploy/homepage/base",
     description: "Tailnet-wide dashboard for every service.",
     enabled: true,
-    // 443 is the only port declared on the tailscale LoadBalancer Service;
-    // it forwards to the container's plain HTTP port.
-    health: { namespace: "agents", path: "/", port: 443, service: "homepage" },
+    health: { namespace: "agents", path: "/", port: 80, service: "homepage" },
     icon: "LayoutDashboard",
     name: "Homepage",
     noEmbed: true,
@@ -136,7 +134,7 @@ export const DEV_TOOLS: ToolDef[] = [
   },
 ];
 
-export type ToolStatus = "healthy" | "unhealthy" | "unconfigured" | "disabled";
+type ToolStatus = "healthy" | "unhealthy" | "unconfigured" | "disabled";
 
 export interface ToolState {
   name: string;

@@ -32,6 +32,7 @@ import {
   resolveGitSourceTokenFromEnv,
   sha256Hex,
   sniffBinary,
+  SYNC_READ_CONCURRENCY,
   syncGitRepository,
   syncGitSource,
 } from "../src/git-source.ts";
@@ -1064,5 +1065,86 @@ test("empty and missing refs fail loudly", async (t) => {
   assert.equal(
     Buffer.from(blob).toString("utf-8").startsWith("# Fixture repo"),
     true
+  );
+});
+
+test("findBlob resolves one path, literally, without listing the tree", async (t) => {
+  const fixture = await createFixtureRepository();
+  t.after(fixture.cleanup);
+  const repository = await openGitRepository({
+    cacheDir: fixture.cacheDir,
+    repositoryUrl: fixture.repoDir,
+  });
+  const commit = await repository.resolveCommit("main");
+  const nested = await repository.findBlob(commit, "src/app.ts");
+  const listed = (await repository.listBlobs(commit)).find(
+    (entry) => entry.path === "src/app.ts"
+  );
+  assert.deepEqual(nested, listed);
+  assert.equal(await repository.findBlob(commit, "src/missing.ts"), null);
+  assert.equal(
+    await repository.findBlob(commit, "src/*.ts"),
+    null,
+    "glob characters are part of the path, not a pattern"
+  );
+  assert.equal(
+    await repository.findBlob(commit, "src"),
+    null,
+    "a directory is not a blob"
+  );
+});
+
+test("a large change streams through a bounded read window", async () => {
+  // 96 changed files of 768 KiB each: ~72 MiB if read all at once.
+  const files = 96;
+  const blobBytes = 768 * 1024;
+  let held = 0;
+  let peakHeld = 0;
+  const repository: GitRepository = {
+    findBlob: () => Promise.resolve(null),
+    listBlobs: () =>
+      Promise.resolve(
+        Array.from({ length: files }, (_, index) => ({
+          blobHash: createHash("sha1").update(String(index)).digest("hex"),
+          path: `docs/${String(index).padStart(3, "0")}.md`,
+          size: blobBytes,
+        }))
+      ),
+    readBlob: async () => {
+      held += 1;
+      peakHeld = Math.max(peakHeld, held);
+      await new Promise((resolve) => {
+        setImmediate(resolve);
+      });
+      return Buffer.alloc(blobBytes, "a");
+    },
+    resolveCommit: () => Promise.resolve("c".repeat(40)),
+  };
+  const written: string[] = [];
+  const store = createInMemoryGitSourceStore();
+  const report = await syncGitSource(
+    repository,
+    {
+      ...store,
+      upsertDocument: async (document) => {
+        await new Promise((resolve) => {
+          setImmediate(resolve);
+        });
+        written.push(document.path);
+        held -= 1;
+      },
+    },
+    { namespace: NAMESPACE, ref: "main", repositoryUrl: "/repo" }
+  );
+  assert.equal(report.added, files);
+  assert.equal(written.length, files);
+  assert.deepEqual(
+    written,
+    written.toSorted(),
+    "writes keep the deterministic op order"
+  );
+  assert.ok(
+    peakHeld <= SYNC_READ_CONCURRENCY + 1,
+    `held ${peakHeld} blobs at once; the window is ${SYNC_READ_CONCURRENCY}`
   );
 });

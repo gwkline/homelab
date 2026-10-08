@@ -3,16 +3,11 @@ kind: Service
 metadata:
   name: cloudbeaver
   namespace: agents
-  annotations:
-    tailscale.com/hostname: cloudbeaver
-    tailscale.com/tags: tag:k8s-operator
 spec:
-  type: LoadBalancer
-  loadBalancerClass: tailscale
+  type: ClusterIP
   selector:
     app: cloudbeaver
   ports:
-    # The panel's Dev Tools health probe expects port 80.
     - name: http
       port: 80
       targetPort: http

@@ -17,17 +17,17 @@ data:
         - Factory Panel:
             icon: mdi-view-dashboard
             description: launch runs, watch jobs
-            href: https://panel.${HOMEPAGE_VAR_TAILNET_NAME}
+            href: https://panel.{{HOMEPAGE_VAR_TAILNET_NAME}}
             siteMonitor: http://panel-http.agents.svc.cluster.local:3000
         - T3 Code:
             icon: mdi-console
             description: Interactive agent servers
-            href: https://t3code-0.${HOMEPAGE_VAR_TAILNET_NAME}
+            href: https://t3code-0.{{HOMEPAGE_VAR_TAILNET_NAME}}
             siteMonitor: http://t3code-headless.agents.svc.cluster.local:3773
         - Work T3 Code:
             icon: mdi-briefcase
             description: Work code runner - isolated namespace, scoped token
-            href: https://work-t3code-0.${HOMEPAGE_VAR_TAILNET_NAME}
+            href: https://work-t3code-0.{{HOMEPAGE_VAR_TAILNET_NAME}}
             siteMonitor: http://work-t3code-headless.work.svc.cluster.local:3773
         - Hermes:
             icon: mdi-brain
@@ -39,12 +39,3 @@ data:
         cpu: true
         memory: true
         expanded: true
----
-# Set tailnet-name on the cluster, never in git (see deploy/tailscale/README.md).
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: homepage-env
-  namespace: agents
-data:
-  tailnet-name: "<tailnet>"

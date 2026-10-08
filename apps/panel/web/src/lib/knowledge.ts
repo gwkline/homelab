@@ -1,57 +1,9 @@
-// Knowledge-API types and view helpers shared by the card and the explorer.
-
-export interface SourceJob {
-  jobId: string;
-  startedAt: string | null;
-  status: string;
-}
-
-export interface SourceRow {
-  chunkCount: number;
-  currentJob: SourceJob | null;
-  documentCount: number;
-  kind: string;
-  lastError: { at: string | null; message: string } | null;
-  lastSyncAt: string | null;
-  namespace: string;
-  path: string | null;
-  ref: string | null;
-  repo: string | null;
-  sourceId: string;
-  url: string | null;
-}
-
-export interface SyncJob {
-  attempts: number | null;
-  chunksIngested: number | null;
-  documentsIngested: number | null;
-  error: string | null;
-  finishedAt: string | null;
-  jobId: string;
-  sourceId: string | null;
-  startedAt: string | null;
-  status: string;
-}
-
-export interface SearchHit {
-  anchors: { start: number | null; type: string; value: string | null }[];
-  chunkId: string;
-  namespace: string;
-  scores: {
-    bm25: { rank: number; score: number } | null;
-    fused: { rank: number; score: number };
-    vector: { rank: number; score: number } | null;
-  };
-  source: {
-    kind: string;
-    path: string | null;
-    sourceId: string;
-    url: string | null;
-  };
-  text: string;
-  title: string;
-  version: { commit: string | null; createdAt: string; status: string };
-}
+// View helpers shared by the knowledge card and the explorer. The response
+// types are the server's own (server/knowledge.ts normalizes every payload).
+import type {
+  KnowledgeSearchHit,
+  KnowledgeSource,
+} from "../../../server/knowledge";
 
 export const EXCERPT_MAX = 240;
 
@@ -78,7 +30,7 @@ export const ago = (iso: string | null): string => {
   return `${Math.floor(h / 24)}d ago`;
 };
 
-export const sourceLabel = (s: SourceRow): string => {
+export const sourceLabel = (s: KnowledgeSource): string => {
   if (s.repo !== null) {
     return s.ref === null ? s.repo : `${s.repo}@${s.ref}`;
   }
@@ -87,7 +39,7 @@ export const sourceLabel = (s: SourceRow): string => {
 
 // Prefer the source URL; otherwise rebuild a GitHub blob link, anchored at
 // the cited line.
-export const withLineAnchor = (url: string, hit: SearchHit): string => {
+const withLineAnchor = (url: string, hit: KnowledgeSearchHit): string => {
   if (!url.startsWith("https://github.com/") || !url.includes("/blob/")) {
     return url;
   }
@@ -100,7 +52,7 @@ export const withLineAnchor = (url: string, hit: SearchHit): string => {
   return `${url}#L${offset.start + 1}`;
 };
 
-export const citationUrl = (hit: SearchHit): string | null => {
+export const citationUrl = (hit: KnowledgeSearchHit): string | null => {
   if (hit.source.url !== null && hit.source.url !== "") {
     return withLineAnchor(hit.source.url, hit);
   }
@@ -114,7 +66,7 @@ export const citationUrl = (hit: SearchHit): string | null => {
   return null;
 };
 
-export const sourceBadge = (s: SourceRow): string => {
+export const sourceBadge = (s: KnowledgeSource): string => {
   if (s.currentJob !== null) {
     return s.currentJob.status;
   }
