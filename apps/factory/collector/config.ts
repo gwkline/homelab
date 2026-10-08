@@ -1,5 +1,6 @@
 // Collector configuration, read entirely from CronJob env (see README).
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 export class ConfigError extends Error {
   readonly exitCode = 78;
@@ -23,18 +24,13 @@ export interface CollectorConfig {
 }
 
 // Every factory lifecycle label. An issue carrying any of these already maps
-// to a logical Run.
-export const FACTORY_LIFECYCLE_LABELS: readonly string[] = [
-  "factory/queued",
-  "factory/in-progress",
-  "factory/pending-approval",
-  "factory/draft-pr",
-  "factory/needs-review",
-  "factory/approved",
-  "factory/failed",
-  "factory/cancelled",
-  "factory/stuck",
-];
+// to a logical Run. One list for the whole factory: the shell components read
+// the same file (apps/factory/lib/factory.sh).
+export const FACTORY_LIFECYCLE_LABELS: readonly string[] = Object.values(
+  JSON.parse(
+    readFileSync(new URL("../lib/labels.json", import.meta.url), "utf-8")
+  ) as Record<string, string>
+);
 
 const REPO_SHAPE = /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/u;
 

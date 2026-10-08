@@ -1,15 +1,13 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
 import type { DevToolsK8s, ToolDef, ToolState } from "../server/devtools.ts";
 import { DEV_TOOLS } from "../server/devtools.ts";
 import type { K8sObject } from "../server/k8s.ts";
+import { startPanel } from "./helpers.ts";
 
 const root = path.join(import.meta.dirname, "..");
 
@@ -353,42 +351,12 @@ test("GET /api/devtools discovers the tailnet and reports catalog states", async
   await new Promise<void>((r) => mock.listen(0, "127.0.0.1", r));
   const mockPort = (mock.address() as AddressInfo).port;
 
-  const stage = mkdtempSync(path.join(tmpdir(), "panel-devtools-"));
-  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
-  for (const f of ["index.js", "jobs.js", "k8s.js"]) {
-    copyFileSync(path.join(root, "dist", f), path.join(stage, f));
-  }
-  copyFileSync(
-    path.join(root, "web", "dist", "index.html"),
-    path.join(stage, "web", "dist", "index.html")
-  );
-
-  const port = 3961;
-  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
-    env: {
-      ...process.env,
-      PANEL_K8S_BASE: `http://127.0.0.1:${mockPort}`,
-      PANEL_K8S_TOKEN: "test-token",
-      PANEL_ROOT: stage,
-      PORT: String(port),
-    },
-    stdio: "pipe",
+  const panel = await startPanel({
+    PANEL_K8S_BASE: `http://127.0.0.1:${mockPort}`,
+    PANEL_K8S_TOKEN: "test-token",
   });
-  child.stderr.on("data", (d) => process.stderr.write(d));
   try {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(
-        () => reject(new Error("server did not start")),
-        5000
-      ) as unknown as ReturnType<typeof setTimeout>;
-      child.stdout.on(
-        "data",
-        (d) =>
-          d.toString().includes("listening") && (clearTimeout(t), resolve())
-      );
-    });
-
-    const r = await fetch(`http://127.0.0.1:${port}/api/devtools`);
+    const r = await fetch(`${panel.base}/api/devtools`);
     assert.equal(r.status, 200);
     const body = (await r.json()) as {
       tailnet: { configured: boolean; name: string | null };
@@ -427,7 +395,7 @@ test("GET /api/devtools discovers the tailnet and reports catalog states", async
     assert.equal(card("Grafana").dependsOn, "deploy/grafana/base");
     assert.equal(card("Homepage").noEmbed, true);
   } finally {
-    child.kill();
+    panel.stop();
     mock.close();
   }
 });

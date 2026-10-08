@@ -1,0 +1,13 @@
+# Not in clusters/home: its namespaces come from the operator installs (ESO,
+# CNPG, policy-controller), so apply it after them (docs/rebuild-runbook.md).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: homelab
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false
+
+resources:
+  - netpol.yaml

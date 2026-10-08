@@ -45,8 +45,7 @@ data:
     in the homelab repo) are:
 
     - `code-pr` — coding worker: issue → tested change → draft PR
-    - `reviewer` — agent review of an open draft PR (read-only)
-    - `security` — scheduled security sweep
+    - `security` — deterministic security scan of a repository (no model)
 
     Requests with unknown profile names, raw Kubernetes fields, or profile
     overrides are rejected by admission policy. That rejection is final —

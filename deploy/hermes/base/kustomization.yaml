@@ -16,3 +16,4 @@ resources:
   - skills-sync.yaml
   - statefulset.yaml
   - service.yaml
+  - netpol.yaml

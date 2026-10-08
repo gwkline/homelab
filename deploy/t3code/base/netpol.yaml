@@ -24,3 +24,60 @@ spec:
       ports:
         - protocol: TCP
           port: 3773
+---
+# t3code runs agents on repo content, so its egress is an allowlist: DNS, the
+# read-only Kubernetes API (rbac.yaml), Executor, knowledge retrieval and the
+# public internet. No LAN, tailnet, link-local or other in-cluster services.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: t3code-egress
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: t3code
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # kube-router filters after DNAT, so the API is matched by both its
+    # ClusterIP and the node's real endpoint.
+    - to:
+        - ipBlock:
+            cidr: 10.43.0.1/32
+        - ipBlock:
+            cidr: 192.168.1.2/32
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+    - to:
+        - podSelector:
+            matchLabels:
+              app: executor
+      ports:
+        - { protocol: TCP, port: 4788 }
+    - to:
+        - podSelector:
+            matchLabels:
+              app: knowledge-retrieval
+      ports:
+        - { protocol: TCP, port: 3000 }
+    # Model APIs, GitHub, package registries.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16 # node/LAN
+              - 169.254.0.0/16 # link-local metadata
+              - 100.64.0.0/10 # tailnet

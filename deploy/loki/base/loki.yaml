@@ -115,22 +115,10 @@ spec:
         seccompProfile:
           type: RuntimeDefault
         fsGroup: 10001
-      initContainers:
-        # Root only to chown the local-path volume for uid 10001.
-        - name: volume-init
-          image: busybox:1.36
-          command: ["chown", "-R", "10001:10001", "/var/lib/loki"]
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-              add: ["CHOWN", "FOWNER"]
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/loki
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: loki
-          image: grafana/loki:3.4.2
+          image: grafana/loki:3.4.2@sha256:58a6c186ce78ba04d58bfe2a927eff296ba733a430df09645d56cdc158f3ba08
           args: ["-config.file=/etc/loki/config/loki.yaml"]
           ports:
             - name: http

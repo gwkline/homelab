@@ -7,15 +7,15 @@ The [Tailscale Kubernetes operator](https://tailscale.com/kb/1236/kubernetes-ope
 | File | Purpose |
 | --- | --- |
 | `namespace.yaml` | `tailscale` namespace (operator + its `ts-*` proxy pods) |
-| `secretstore.yaml`, `operator-oauth.yaml` | 1Password SecretStore + ExternalSecret producing Secret `operator-oauth` |
+| `operator-oauth.yaml` | ExternalSecret (via `ClusterSecretStore` `onepassword`) producing Secret `operator-oauth` |
 | `values.yaml` | pinned helm values for the operator chart |
 
 ## Install the operator
 
-Prerequisite: External Secrets Operator is running and the hand-entered `onepassword-service-account` Secret exists in this namespace.
+Prerequisite: External Secrets Operator is running and `ClusterSecretStore` `onepassword` (in `clusters/home`) is Ready.
 
 ```sh
-kubectl apply -k deploy/tailscale # namespace + SecretStore + ExternalSecret -> Secret operator-oauth
+kubectl apply -k deploy/tailscale # namespace + ExternalSecret -> Secret operator-oauth
 helm repo add tailscale https://pkgs.tailscale.com/helmcharts
 helm upgrade --install tailscale-operator tailscale/tailscale-operator \
   --version 1.102.3 \
@@ -26,6 +26,7 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
 - OAuth values are never passed to helm. With `oauth.clientId`/`clientSecret` empty, the chart mounts the pre-created Secret `operator-oauth` at `/oauth`.
 - `proxyConfig.defaultTags` sets the operator's `PROXY_TAGS` to `tag:k8s-operator`. Do not set `PROXY_TAGS` via `operatorConfig.extraEnv` — it duplicates the env entry and the release fails.
 - The chart creates the `tailscale` IngressClass by default.
+- `values.yaml` pins the operator and proxy images by digest to the chart's appVersion. Bump the tags and digests with `--version`, then re-run the `helm upgrade`.
 
 1Password item: vault `homelab`, item `tailscale-operator-oauth`, fields `client_id` and `client_secret`. Scopes: Devices/Core + Auth Keys read-or-modify, Routes read. The OAuth client must be created **with** `tag:k8s-operator` (it cannot be added later).
 

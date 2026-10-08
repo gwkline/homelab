@@ -2,7 +2,7 @@
 # toolchain installers; differs by having no t3 serve, no pairing, no
 # persistent volumes, and explicit /task (input) and /out (output) dirs.
 
-FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS worker-base
+FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -32,9 +32,6 @@ RUN curl -fsSL "https://codeload.github.com/${PSTACK_REPO}/tar.gz/${PSTACK_REF}"
   && grep -q "License" /opt/pstack/LICENSE \
   && rm /tmp/pstack.tar.gz
 
-# Floating CLIs re-resolve on every CI build: CI passes a unique CACHEBUST so
-# the layer cache cannot replay an old resolution.
-ARG CACHEBUST=1
 COPY apps/shared/install-agent-clis.sh /usr/local/lib/install-agent-clis.sh
 RUN sh /usr/local/lib/install-agent-clis.sh
 
@@ -43,13 +40,18 @@ RUN sh /usr/local/lib/install-agent-clis.sh
 COPY apps/factory/worker/brief.schema.json /usr/local/share/worker/brief.schema.json
 COPY apps/factory/worker/skills /usr/local/share/worker/skills
 
-# node:24 already ships the non-root node user (uid 1000).
-RUN mkdir -p /task /out /work && chown -R node:node /task /out /work
+# node:24 already ships the non-root node user (uid 1000). The agent runs
+# untrusted text, so nothing in the image may raise privilege: strip every
+# setuid/setgid bit the base image and packages ship (su, mount, ssh-keysign…).
+RUN mkdir -p /task /out /work && chown -R node:node /task /out /work \
+  && find / -xdev -type f -perm /6000 -exec chmod ug-s {} +
 USER node
 WORKDIR /work
 
 COPY --chmod=755 --chown=node:node apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
 COPY --chmod=755 --chown=node:node apps/factory/worker/entrypoint.sh /usr/local/bin/entrypoint
+# The Job's initContainer: clone + skills sync, the only step with a GitHub token.
+COPY --chmod=755 --chown=node:node apps/factory/worker/prepare.sh /usr/local/bin/prepare
 # Private skills the entrypoint syncs before the agent runs. A Job may
 # override SKILLS_REF (full SHA, verified by the sync) or SKILLS_ALLOWLIST.
 ENV SKILLS_REF=445e4255288732efb00c8878151610c2669f5e93 \
@@ -59,20 +61,3 @@ ENV SKILLS_REF=445e4255288732efb00c8878151610c2669f5e93 \
 COPY --chmod=755 --chown=node:node apps/factory/worker/smoke-test.sh /usr/local/bin/smoke-test
 
 ENTRYPOINT ["/usr/local/bin/entrypoint"]
-
-# Optional capability targets (--target worker-browser / worker-container-build).
-# Both stay unprivileged: no docker socket, no privileged mode, no extra caps.
-FROM worker-base AS worker-browser
-USER root
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends chromium fonts-liberation \
-  && rm -rf /var/lib/apt/lists/*
-ENV CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage"
-USER node
-
-FROM worker-base AS worker-container-build
-USER root
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends podman fuse-overlayfs uidmap \
-  && rm -rf /var/lib/apt/lists/*
-USER node

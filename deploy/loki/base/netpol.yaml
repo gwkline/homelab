@@ -1,4 +1,6 @@
-# Reached only from inside `agents` (alloy, Grafana, port-forward).
+# Alloy pushes and Grafana queries; nothing else in the cluster reaches Loki,
+# which runs without auth. kubectl port-forward enters through the kubelet and
+# still works.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -11,7 +13,12 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        - podSelector: {}
+        - podSelector:
+            matchLabels:
+              app: alloy
+        - podSelector:
+            matchLabels:
+              app: grafana
       ports:
         - protocol: TCP
           port: 3100

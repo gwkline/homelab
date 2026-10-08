@@ -2,7 +2,7 @@
 # Factory worker entrypoint.
 # Contract (ADR-003):
 #   /task/brief.json   input: run_id, repository, issue, profile, verify_command
-#   /work/<repo>       clone, make changes here
+#   /work/repo         clone (by the `prepare` initContainer), make changes here
 #   /out/patch.diff    git diff of the change
 #   /out/report.json   structured result {success, summary, tests, base_sha, run_id, profile}
 #   exit 0             success; non-zero = failed attempt
@@ -37,6 +37,11 @@ if [ -f /usr/local/lib/skills-lib.sh ]; then
   SKILLS_LIB=/usr/local/lib/skills-lib.sh
 else
   SKILLS_LIB="${_ENTRYPOINT_DIR}/../../shared/skills-lib.sh"
+fi
+if [ -f /usr/local/bin/prepare ]; then
+  PREPARE=/usr/local/bin/prepare
+else
+  PREPARE="${_ENTRYPOINT_DIR}/prepare.sh"
 fi
 # Above this, a patch is runaway output (vendored trees, caches), not a change.
 PATCH_MAX_BYTES="${WORKER_PATCH_MAX_BYTES:-524288}"
@@ -191,11 +196,19 @@ for _state_dir in "${HOME}" "${XDG_CONFIG_HOME:-}" "${XDG_DATA_HOME:-}" "${XDG_S
   esac
 done
 
-# --- credentials: runtime-only mounts/exports --------------------------------
-# GITHUB_TOKEN_FILE is used only when GH_TOKEN is unset.
-if [ -z "${GH_TOKEN:-}" ] && [ -n "${GITHUB_TOKEN_FILE:-}" ] && [ -r "${GITHUB_TOKEN_FILE}" ]; then
-  GH_TOKEN="$(tr -d '[:space:]' < "${GITHUB_TOKEN_FILE}")"
-  export GH_TOKEN
+# --- GitHub credential boundary ---------------------------------------------
+# The Job's initContainer normally ran `prepare` (apps/factory/worker/prepare.sh):
+# the repo is already cloned and this container must hold no GitHub
+# credential, since the agent reads untrusted text and runs as PID 1's child.
+# A Job spec without that initContainer hands the token here instead; the
+# clone below then runs `prepare` itself and drops the token first.
+PREPARED=0
+if [ -d "${WORK_DIR}/repo/.git" ]; then
+  PREPARED=1
+  if [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}${GITHUB_TOKEN_FILE:-}" ]; then
+    echo "[worker] FATAL: repo was cloned by the initContainer, but this container still holds a GitHub credential" >&2
+    exit 78
+  fi
 fi
 
 # opencode auth + config: raw JSON or base64(JSON) from env or mounted file.
@@ -253,22 +266,6 @@ fi
 # --- typed run input ----------------------------------------------------------
 BRIEF="${TASK_DIR}/brief.json"
 export BRIEF # write_report reads its knowledge section
-
-# Pinned private skills (apps/shared/skills-lib.sh). On failure the run
-# continues without them; the status lands in /out/skills-sync.json.
-# shellcheck source=apps/shared/skills-lib.sh
-. "${SKILLS_LIB}"
-SKILLS_SYNC_RC=0
-skills_sync || SKILLS_SYNC_RC=$?
-if [ "$SKILLS_SYNC_RC" -eq 0 ]; then
-  for _skills_dir in /home/node/.claude/skills; do
-    skills_link_generated "${SKILLS_TARGET}" "${_skills_dir}" \
-      || echo "[worker] WARNING: skills link into ${_skills_dir} incomplete" >&2
-  done
-  echo "[worker] skills-sync: $(cat "${SKILLS_STATUS_FILE}")"
-else
-  echo "[worker] WARNING: skills sync FAILED (rc=${SKILLS_SYNC_RC}) — continuing WITHOUT private skills (see ${SKILLS_STATUS_FILE:-the log above})" >&2
-fi
 
 # Brief arrives via env (base64 JSON) or mounted file — support both.
 if [ -n "${FACTORY_BRIEF_B64:-}" ] && [ ! -f "${BRIEF}" ]; then
@@ -360,10 +357,6 @@ PROFILE=$(python3 -c "import json;print(json.load(open('${BRIEF}')).get('profile
 echo "[worker] run=${RUN_ID} repo=${REPO} issue=#${ISSUE_NUM}"
 
 # --- clone ---------------------------------------------------------------------
-# The authenticated URL is built here so the token never rides in the Job spec
-# (ADR D6); origin is reset after clone.
-GITGUARD="-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30"
-CLONE_URL="${CLONE_URL:-https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git}"
 mkdir -p "${WORK_DIR}"
 cd "${WORK_DIR}"
 # The rootfs is read-only and the CLI sandbox denies writes outside the work
@@ -375,17 +368,29 @@ mkdir -p "${WORK_DIR}/scratch" || {
   exit 1
 }
 export TMPDIR="${WORK_DIR}/scratch" TEMP="${WORK_DIR}/scratch" TMP="${WORK_DIR}/scratch"
-# shellcheck disable=SC2086  # word-splitting is intended: GITGUARD is two -c flags
-git ${GITGUARD} clone --depth 20 "${CLONE_URL}" repo || {
-  echo "[worker] FATAL: clone failed (or stalled >30s)" >&2
-  write_report "clone-failed" "clone failed or stalled"
-  emit_artifacts
-  exit 1
-}
-git -C repo remote set-url origin "https://github.com/${REPO}.git"
-# The clone was the only authenticated step: drop the token before the agent
-# runs. Publishing happens in the orchestrator.
-unset GH_TOKEN GITHUB_TOKEN CLONE_URL
+if [ "${PREPARED}" = "0" ]; then
+  FACTORY_REPO="${REPO}" sh "${PREPARE}" || {
+    echo "[worker] FATAL: clone failed (or stalled >30s)" >&2
+    write_report "clone-failed" "clone failed or stalled"
+    emit_artifacts
+    exit 1
+  }
+  # The clone was the only authenticated step: drop the token before the
+  # agent runs. Publishing happens in the orchestrator.
+  unset GH_TOKEN GITHUB_TOKEN GITHUB_TOKEN_FILE CLONE_URL
+fi
+
+# Pinned private skills, synced by `prepare`; on failure the run continues
+# without them.
+# shellcheck source=apps/shared/skills-lib.sh
+. "${SKILLS_LIB}"
+if [ -s "${SKILLS_STATUS_FILE:-}" ] && grep -q '"ok":true' "${SKILLS_STATUS_FILE}"; then
+  skills_link_generated "${SKILLS_TARGET}" "${HOME}/.claude/skills" \
+    || echo "[worker] WARNING: skills link into ${HOME}/.claude/skills incomplete" >&2
+  echo "[worker] skills-sync: $(cat "${SKILLS_STATUS_FILE}")"
+else
+  echo "[worker] WARNING: skills sync FAILED — continuing WITHOUT private skills (see ${SKILLS_STATUS_FILE:-the log above})" >&2
+fi
 
 # Checkpoint: SIGTERM while cloning → bail out gracefully from here.
 [ "${SHUTDOWN}" = "0" ] || interrupted_exit

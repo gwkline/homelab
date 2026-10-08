@@ -8,7 +8,7 @@ metadata:
 spec:
   refreshInterval: 1h
   secretStoreRef:
-    kind: SecretStore
+    kind: ClusterSecretStore
     name: onepassword
   target:
     name: github-token-writer

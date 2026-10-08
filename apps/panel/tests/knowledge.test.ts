@@ -1,15 +1,9 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { test } from "node:test";
 
-import { jsonAs, writeAuthDir } from "./helpers.ts";
-
-const root = path.join(import.meta.dirname, "..");
+import { jsonAs, startPanel } from "./helpers.ts";
 
 const iso = (msAgo: number): string =>
   new Date(Date.now() - msAgo).toISOString();
@@ -18,7 +12,6 @@ const TOKEN = "knowledge-test-token";
 const minute = 60_000;
 const hour = 60 * minute;
 const day = 24 * hour;
-const PORT = 3963;
 
 const SOURCES = [
   {
@@ -225,47 +218,6 @@ const knowledgeMock = () => {
   };
 };
 
-const stageFor = (label: string): string => {
-  const stage = mkdtempSync(path.join(tmpdir(), `panel-${label}-`));
-  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
-  copyFileSync(
-    path.join(root, "dist", "index.js"),
-    path.join(stage, "index.js")
-  );
-  copyFileSync(
-    path.join(root, "web", "dist", "index.html"),
-    path.join(stage, "web", "dist", "index.html")
-  );
-  return stage;
-};
-
-const startPanel = async (
-  stage: string,
-  port: number,
-  extraEnv: Record<string, string>
-) => {
-  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
-    env: {
-      ...process.env,
-      PANEL_AUTH_DIR: writeAuthDir(),
-      PANEL_K8S_BASE: "http://127.0.0.1:1",
-      PANEL_ROOT: stage,
-      PORT: String(port),
-      ...extraEnv,
-    },
-    stdio: "pipe",
-  });
-  child.stderr.on("data", (d) => process.stderr.write(d));
-  await new Promise<void>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error("server did not start")), 5000);
-    child.stdout.on(
-      "data",
-      (d) => d.toString().includes("listening") && (clearTimeout(t), resolve())
-    );
-  });
-  return child;
-};
-
 // Boots the mock knowledge API and a panel wired to it, runs `fn`, then checks
 // no panel response leaked the token and every upstream call carried it.
 const withPanel = async (
@@ -273,12 +225,11 @@ const withPanel = async (
 ): Promise<void> => {
   const mock = knowledgeMock();
   await new Promise<void>((r) => mock.server.listen(0, "127.0.0.1", r));
-  const stage = stageFor("knowledge");
-  const child = await startPanel(stage, PORT, {
+  const panel = await startPanel({
     KNOWLEDGE_API_BASE: mock.url(),
     KNOWLEDGE_API_TOKEN: TOKEN,
   });
-  const base = `http://127.0.0.1:${PORT}`;
+  const { base } = panel;
   const bodies: string[] = [];
   const record = async (res: Response) => {
     const body = await res.text();
@@ -309,7 +260,7 @@ const withPanel = async (
       "panel attached the bearer token server-side on every upstream call"
     );
   } finally {
-    child.kill();
+    panel.stop();
     mock.server.close();
   }
 };
@@ -520,11 +471,9 @@ test("superseded content is only exposed when explicitly requested", async () =>
 });
 
 test("knowledge card degrades explicitly when the knowledge API is not configured", async () => {
-  const stage = stageFor("knowledge-off");
-  const port = 3962;
-  const child = await startPanel(stage, port, {});
+  const panel = await startPanel();
   try {
-    const base = `http://127.0.0.1:${port}`;
+    const { base } = panel;
     const src = await fetch(`${base}/api/knowledge/sources`);
     assert.equal(src.status, 200);
     const srcJson = (await src.json()) as {
@@ -548,6 +497,6 @@ test("knowledge card degrades explicitly when the knowledge API is not configure
     });
     assert.equal(sync.status, 503);
   } finally {
-    child.kill();
+    panel.stop();
   }
 });

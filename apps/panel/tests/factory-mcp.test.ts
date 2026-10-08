@@ -1,16 +1,14 @@
 // Contract + integration tests for the factory MCP surface; the spec lives in
 // deploy/executor/factory-openapi.json.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { jsonAs, writeAuthDir } from "./helpers.ts";
+import { jsonAs, startPanel } from "./helpers.ts";
 
 const root = path.join(import.meta.dirname, "..");
 const repoRoot = path.join(root, "..", "..");
@@ -393,45 +391,16 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
   await new Promise<void>((r) => k8sMock.listen(0, "127.0.0.1", r));
   const k8sPort = (k8sMock.address() as AddressInfo).port;
 
-  const stage = mkdtempSync(path.join(tmpdir(), "panel-factory-"));
-  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
-  for (const f of ["index.js", "jobs.js", "k8s.js"]) {
-    copyFileSync(path.join(root, "dist", f), path.join(stage, f));
-  }
-  copyFileSync(
-    path.join(root, "web", "dist", "index.html"),
-    path.join(stage, "web", "dist", "index.html")
-  );
-  const port = 3954;
-  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
-    env: {
-      ...process.env,
-      // Hermetic defaults: the hosting pod may inject FACTORY_REPO/PROFILE.
-      FACTORY_PROFILE: "code-pr",
-      FACTORY_REPO: "gwkline/launchpad",
-      GH_API_BASE: `http://127.0.0.1:${ghPort}`,
-      GH_TOKEN: "test-token",
-      PANEL_AUTH_DIR: writeAuthDir(),
-      PANEL_K8S_BASE: `http://127.0.0.1:${k8sPort}`,
-      PANEL_ROOT: stage,
-      PORT: String(port),
-    },
-    stdio: "pipe",
+  const panel = await startPanel({
+    // Hermetic defaults: the hosting pod may inject FACTORY_REPO/PROFILE.
+    FACTORY_PROFILE: "code-pr",
+    FACTORY_REPO: "gwkline/launchpad",
+    GH_API_BASE: `http://127.0.0.1:${ghPort}`,
+    GH_TOKEN: "test-token",
+    PANEL_K8S_BASE: `http://127.0.0.1:${k8sPort}`,
   });
-  child.stderr.on("data", (d) => process.stderr.write(d));
   try {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(
-        () => reject(new Error("server did not start")),
-        5000
-      );
-      child.stdout.on(
-        "data",
-        (d) =>
-          d.toString().includes("listening") && (clearTimeout(t), resolve())
-      );
-    });
-    const base = `http://127.0.0.1:${port}`;
+    const { base } = panel;
 
     // ── Contract: every spec operation exists on the server (route probing) ──
     const profiles = await fetch(`${base}/api/factory/profiles`);
@@ -757,11 +726,14 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     );
     const retryJob = created.at(-1) as {
       metadata: { labels: Record<string, string> };
+      spec: { ttlSecondsAfterFinished?: number };
     };
     assert.equal(
       retryJob.metadata.labels["factory.gwkline.io/requested-by"],
       "t3code"
     );
+    // The mocked CronJob template has no TTL; the cloned Job still gets one.
+    assert.equal(retryJob.spec.ttlSecondsAfterFinished, 86_400);
     assert.equal(
       retryJob.metadata.labels["factory.gwkline.io/profile"],
       "security"
@@ -801,7 +773,7 @@ test("factory MCP surface: denied, idempotent, and successful lifecycle", async 
     });
     assert.equal(noIssue.status, 400);
   } finally {
-    child.kill();
+    panel.stop();
     gh.close();
     k8sMock.close();
   }

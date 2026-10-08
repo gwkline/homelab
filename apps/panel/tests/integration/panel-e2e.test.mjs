@@ -2,10 +2,11 @@
 // panel lists sandbox state and that its remaining write routes work as the
 // production ServiceAccount:
 //   1. GET /api/state returns the seeded Job and CronJob
-//   2. mutations without a bearer token are refused (401)
-//   3. PATCH /api/cronjobs/:name suspends and resumes the seeded CronJob
-//   4. DELETE /api/jobs/:name removes the seeded Job
-//   5. POST /api/jobs no longer exists and creates nothing
+//   2. GET /api/cluster lists nodes and pods cluster-wide
+//   3. mutations without a bearer token are refused (401)
+//   4. PATCH /api/cronjobs/:name suspends and resumes the seeded CronJob
+//   5. DELETE /api/jobs/:name removes the seeded Job
+//   6. POST /api/jobs no longer exists and creates nothing
 //
 // Talks to the panel over PANEL_E2E_URL and reads live state with kubectl.
 // Standalone usage (see docs/panel-e2e.md):
@@ -45,7 +46,7 @@ const call = async (path, init) => {
     console.error(`panel ${res.status} on ${path}: ${body}`);
     if (/forbidden|cannot /iu.test(body)) {
       console.error(
-        "hint: RBAC — check the panel ServiceAccount RoleBindings (deploy/panel/base/rbac.yaml, Roles panel-sandbox-runs in sandbox + panel-agents-viewer in agents)"
+        "hint: RBAC — check the panel ServiceAccount bindings (deploy/panel/base/rbac.yaml and cluster-reader.yaml)"
       );
     }
     if (/certificate|tls|ssl|self-signed/iu.test(body)) {
@@ -88,6 +89,23 @@ test(
     );
     assert.equal(cronjob.schedule, seedSchedule);
     assert.equal(cronjob.suspended, true);
+  }
+);
+
+test(
+  "GET /api/cluster lists nodes and pods cluster-wide",
+  { skip },
+  async () => {
+    const { body, status } = await call("/api/cluster");
+    assert.equal(status, 200, `/api/cluster failed: ${body}`);
+    const cluster = JSON.parse(body);
+    const nodes = kubectlJson("get", "nodes").items.map((n) => n.metadata.name);
+    assert.deepEqual(
+      cluster.nodes.map((n) => n.name).toSorted(),
+      nodes.toSorted()
+    );
+    assert.ok(cluster.podCount > 0, "no pods listed");
+    assert.ok(cluster.podsByNs["kube-system"] > 0, "kube-system pods missing");
   }
 );
 

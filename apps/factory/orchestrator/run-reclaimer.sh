@@ -12,29 +12,19 @@
 # Every GitHub read is fail-closed: an unavailable API never mutates labels.
 set -eu
 
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+FACTORY_LIB_DIR="${FACTORY_LIB_DIR:-/usr/local/lib/factory}"
+[ -f "${FACTORY_LIB_DIR}/factory.sh" ] || FACTORY_LIB_DIR="${SCRIPT_DIR}/../lib"
+# shellcheck source=apps/factory/lib/factory.sh
+. "${FACTORY_LIB_DIR}/factory.sh"
+
 REPOS="${FACTORY_REPOS:?FACTORY_REPOS required (comma-separated owner/name)}"
 DRY_RUN="${FACTORY_RECLAIM_DRY_RUN:-false}"
-GH_BIN="${GH_BIN:-/usr/local/bin/gh}"
 MAX_ATTEMPTS="${RECLAIMER_MAX_ATTEMPTS:-4}"
 COOLDOWN_H="${RECLAIMER_COOLDOWN_H:-24}"
-LABEL_FAILED="factory/failed"
-LABEL_QUEUED="factory/queued"
-LABEL_WIP="factory/in-progress"
-LABEL_DONE="factory/draft-pr"
-LABEL_STUCK="factory/stuck"
 PROFILE="code-pr"
 
-gh() {
-  if command -v timeout >/dev/null 2>&1; then
-    timeout 60 "$GH_BIN" "$@"
-  else
-    "$GH_BIN" "$@"
-  fi
-}
-
-if [ -z "${GH_AUTH_SKIP:-}" ]; then
-  gh auth status >/dev/null 2>&1 || { echo "[reclaimer] gh auth failed" >&2; exit 1; }
-fi
+factory_gh_auth || { echo "[reclaimer] gh auth failed" >&2; exit 1; }
 
 now_epoch() { date -u +%s; }
 
@@ -64,7 +54,7 @@ run_markers() {
     rm -f "$comments_file"
     return 2
   fi
-  if ! markers="$(jq -r '[.[].body // "" | capture("factory:run:[0-9]+:(?<ts>[0-9T:Z-]+)")? | .ts // empty] | "\(length) \(.[-1] // empty)"' "$comments_file" 2>/dev/null)"; then
+  if ! markers="$(jq -r --arg m "${FACTORY_RUN_MARKER}" '[.[].body // "" | capture($m + "[0-9]+:(?<ts>[0-9T:Z-]+)")? | .ts // empty] | "\(length) \(.[-1] // empty)"' "$comments_file" 2>/dev/null)"; then
     rm -f "$comments_file"
     return 2
   fi

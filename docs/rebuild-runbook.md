@@ -49,7 +49,7 @@ Server-side apply (two CRDs exceed the client-side annotation limit):
 ```sh
 kubectl apply --server-side -k deploy/eso/base
 kubectl wait --for=condition=Established \
-  crd/externalsecrets.external-secrets.io crd/secretstores.external-secrets.io
+  crd/externalsecrets.external-secrets.io crd/clustersecretstores.external-secrets.io
 kubectl -n external-secrets rollout status deploy/external-secrets-webhook
 kubectl -n external-secrets rollout status deploy/external-secrets
 ```
@@ -58,7 +58,7 @@ kubectl -n external-secrets rollout status deploy/external-secrets
 
 ```sh
 kubectl apply -k deploy/namespaces
-./scripts/create-onepassword-service-account.sh   # agents, sandbox, work, tailscale
+./scripts/create-onepassword-service-account.sh   # external-secrets only; the ClusterSecretStore reads it
 ```
 
 Postgres owner-role Secrets in `database` (generate fresh passwords, then set the `knowledge-db` 1Password item's password to match): see [deploy/postgres/README.md](../deploy/postgres/README.md#prerequisites).
@@ -102,6 +102,12 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
 kubectl get ingress -A   # t3code-0, work-t3code-0, panel get <host>.<tailnet>.ts.net
 ```
 
+Every operator namespace now exists, so apply their default-deny ingress policies (webhook ports stay open to the API server):
+
+```sh
+kubectl apply -k deploy/operator-policies/base
+```
+
 ### 3.8 Verify
 
 ```sh
@@ -118,7 +124,6 @@ kubectl apply -k deploy/loki/base
 kubectl apply -k deploy/grafana/base      # needs Secret grafana-admin
 kubectl apply -k deploy/executor/base     # optional Secret executor-admin
 kubectl apply -k deploy/knowledge/base    # needs 1Password knowledge-db / knowledge-api-token
-kubectl apply -k deploy/cloudbeaver/base  # then ./scripts/create-cloudbeaver-secret.sh
 ```
 
 Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart && scripts/pg-smoke.sh verify`.
