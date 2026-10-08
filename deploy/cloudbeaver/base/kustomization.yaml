@@ -13,3 +13,4 @@ resources:
   - initial-datasources.yaml
   - statefulset.yaml
   - service.yaml
+  - ingress.yaml

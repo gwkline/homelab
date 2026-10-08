@@ -32,9 +32,6 @@ RUN curl -fsSL "https://codeload.github.com/${PSTACK_REPO}/tar.gz/${PSTACK_REF}"
   && grep -q "License" /opt/pstack/LICENSE \
   && rm /tmp/pstack.tar.gz
 
-# Floating CLIs re-resolve on every CI build: CI passes a unique CACHEBUST so
-# the layer cache cannot replay an old resolution.
-ARG CACHEBUST=1
 COPY apps/shared/install-agent-clis.sh /usr/local/lib/install-agent-clis.sh
 RUN sh /usr/local/lib/install-agent-clis.sh
 

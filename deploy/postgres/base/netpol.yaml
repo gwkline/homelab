@@ -27,8 +27,8 @@ spec:
         - { protocol: TCP, port: 8000 }
         - { protocol: TCP, port: 9187 }
 ---
-# SQL clients from agents and sandbox (sandbox pods also need their own egress
-# rule), plus same-namespace peers for replication.
+# Named SQL clients in agents, plus same-namespace peers for replication. A
+# new client is added here and gets its own egress rule to pg-primary.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -44,14 +44,17 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: agents
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: sandbox
+          podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [cloudbeaver, knowledge-ingest, knowledge-retrieval]
         - podSelector: {}
       ports:
         - { protocol: TCP, port: 5432 }
 ---
-# Instance egress: DNS, the Kubernetes API, and peers for replication.
+# Instance egress: DNS and peers for replication. The Kubernetes API comes
+# from pg-primary-kube-api in deploy/policies/base/kube-api-egress.yaml.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -73,16 +76,6 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    # kube-router filters after DNAT, so the API is matched by both its
-    # ClusterIP and the node's real endpoint. Update if the node IP changes.
-    - to:
-        - ipBlock:
-            cidr: 10.43.0.1/32
-        - ipBlock:
-            cidr: 192.168.1.2/32
-      ports:
-        - { protocol: TCP, port: 443 }
-        - { protocol: TCP, port: 6443 }
     - to:
         - podSelector: {}
       ports:

@@ -108,8 +108,15 @@ digest_problems="$(rendered_check '
   | "\($ref): \(.) is not pinned by digest"')"
 if [[ -n "$digest_problems" ]]; then
   echo "$digest_problems"
-  # TODO(#342): fail once every third-party image is digest-pinned.
-  echo '  WARN: third-party image without a digest'
+  fail 'third-party image without a digest'
+fi
+
+echo '==> node IP replacement'
+# deploy/policies/base/kube-api-egress.yaml carries a 127.0.0.1 placeholder
+# that clusters/home/node replaces; a leftover means a policy lost its label or
+# its [ClusterIP, node] rule shape.
+if grep -n 'cidr: 127\.0\.0\.1/32' "$work/render/clusters_home.yaml"; then
+  fail 'node IP placeholder left in the rendered NetworkPolicies'
 fi
 
 echo '==> factory CronJob schedule collision lint'

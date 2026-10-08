@@ -28,6 +28,7 @@ export default {
       files: [
         "apps/factory/collector/*.ts",
         "apps/knowledge/src/embedder.ts",
+        "apps/knowledge/src/git-source.ts",
         "apps/knowledge/src/ingest.ts",
         "apps/knowledge/src/schema.ts",
         "apps/knowledge-ingest/server/worker.ts",

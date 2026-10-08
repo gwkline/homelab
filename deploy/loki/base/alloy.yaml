@@ -141,7 +141,7 @@ spec:
         fsGroup: 65534
       containers:
         - name: alloy
-          image: grafana/alloy:v1.5.1
+          image: grafana/alloy:v1.5.1@sha256:01a63f4e032ce54ee94b22049bc27f597e74f85566478c377f4b5c7f020c1eb3
           args:
             - run
             - /etc/alloy/config.alloy
@@ -168,9 +168,11 @@ spec:
             requests:
               cpu: 50m
               memory: 128Mi
+              ephemeral-storage: 64Mi
             limits:
               cpu: 500m
               memory: 512Mi
+              ephemeral-storage: 1536Mi
           volumeMounts:
             - name: config
               mountPath: /etc/alloy
@@ -183,7 +185,10 @@ spec:
         - name: config
           configMap:
             name: alloy-config
+        # Read positions and the write-ahead buffer.
         - name: data
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 1Gi
         - name: tmp
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 256Mi

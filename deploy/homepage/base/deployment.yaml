@@ -52,11 +52,15 @@ spec:
             # Next.js rejects unknown Host headers; the tailnet gates access.
             - name: HOMEPAGE_ALLOWED_HOSTS
               value: "*"
+            # ConfigMap homepage-env is created on the cluster, never in git
+            # (deploy/tailscale/README.md). Optional, so homepage still starts
+            # without it; the links are then unresolved.
             - name: HOMEPAGE_VAR_TAILNET_NAME
               valueFrom:
                 configMapKeyRef:
                   name: homepage-env
                   key: tailnet-name
+                  optional: true
           volumeMounts:
             - name: config
               mountPath: /app/config
@@ -64,8 +68,10 @@ spec:
             requests:
               cpu: "50m"
               memory: 128Mi
+              ephemeral-storage: 32Mi
             limits:
               memory: 512Mi
+              ephemeral-storage: 512Mi
           startupProbe:
             httpGet:
               path: /

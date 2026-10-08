@@ -206,10 +206,12 @@ test("migrate applies pending migrations under an advisory lock in one transacti
   assert.ok(calls.every((call) => call.checkout === 1));
   const texts = calls.map((call) => call.text);
   assert.equal(texts[0], "BEGIN");
-  assert.match(texts[1] ?? "", /pg_advisory_xact_lock/u);
-  assert.match(texts[2] ?? "", /knowledge_schema_migration/u);
-  assert.equal(texts[4], KNOWLEDGE_MIGRATIONS[0]?.sql);
-  assert.match(texts[5] ?? "", /^INSERT INTO knowledge_schema_migration/u);
+  // Index builds and lock waits must not hit the pool's statement timeout.
+  assert.equal(texts[1], "SET LOCAL statement_timeout = 0");
+  assert.match(texts[2] ?? "", /pg_advisory_xact_lock/u);
+  assert.match(texts[3] ?? "", /knowledge_schema_migration/u);
+  assert.equal(texts[5], KNOWLEDGE_MIGRATIONS[0]?.sql);
+  assert.match(texts[6] ?? "", /^INSERT INTO knowledge_schema_migration/u);
   assert.equal(texts.at(-1), "COMMIT");
   assert.deepEqual(releases, [{ checkout: 1, error: undefined }]);
 });
@@ -942,7 +944,7 @@ test(
 );
 
 test(
-  "integration: adopting a pre-ledger database re-tags its fake vectors",
+  "integration: adopting a pre-ledger database re-tags fake vectors and clears finished job text",
   { skip: !hasLiveDb },
   async () => {
     const schema = "knowledge_retag_test";
@@ -984,6 +986,15 @@ VALUES ($1, 'd1', 'd1-v1', 'retag', $1, $2, 'v1', $3::vector, $4)`;
         "BAAI/bge-small-en-v1.5",
       ]);
       await pool.query(insertChunk, ["c-unembedded", sha256("c2"), null, null]);
+      const insertJob = `INSERT INTO ingest_job
+  (id, kind, idempotency_key, source_id, namespace, payload, status)
+VALUES ($1, 'document-version', $1, 's', 'retag', $2::jsonb, $3)`;
+      const jobPayload = JSON.stringify({
+        documentVersion: { content: "private body", documentId: "d1" },
+        kind: "document-version",
+      });
+      await pool.query(insertJob, ["job-done", jobPayload, "succeeded"]);
+      await pool.query(insertJob, ["job-pending", jobPayload, "pending"]);
 
       assert.deepEqual(
         await migrateKnowledgeSchema(pool),
@@ -995,6 +1006,13 @@ VALUES ($1, 'd1', 'd1-v1', 'retag', $1, $2, 'v1', $3::vector, $4)`;
       assert.deepEqual(rows, [
         { chunk_id: "c-real-tag", embedding_model: "fake/384" },
         { chunk_id: "c-unembedded", embedding_model: null },
+      ]);
+      const jobs = await pool.query(
+        "SELECT id, payload -> 'documentVersion' ->> 'content' AS content FROM ingest_job ORDER BY id"
+      );
+      assert.deepEqual(jobs.rows, [
+        { content: null, id: "job-done" },
+        { content: "private body", id: "job-pending" },
       ]);
       await pool.query(`DROP SCHEMA ${schema} CASCADE`);
     } finally {
