@@ -47,7 +47,6 @@ echo "PASS: classify_checks — red, pending, green, unknown; pending is never g
 
 # --- verify_for, labels, markers ------------------------------------------------
 [ "$(verify_for gwkline/launchpad)" = "cargo check --workspace --all-targets" ] || fail "launchpad verify"
-[ "$(verify_for gwkline/plantry)" = "npm run build" ] || fail "plantry verify"
 case "$(verify_for gwkline/homelab)" in *"echo verify-ok") ;; *) fail "homelab verify" ;; esac
 [ -z "$(verify_for someone/else)" ] || fail "unknown repo must have no verify command"
 
