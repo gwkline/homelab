@@ -17,7 +17,8 @@ spec:
         - protocol: TCP
           port: 4466
 ---
-# Egress: DNS and the Kubernetes API only.
+# Egress: DNS, plus the Kubernetes API from headlamp-kube-api in
+# deploy/policies/base/kube-api-egress.yaml.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -39,15 +40,3 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    # kube-router filters after DNAT, so the API is matched by both its
-    # ClusterIP and the node's real endpoint.
-    - to:
-        - ipBlock:
-            cidr: 10.43.0.1/32
-        - ipBlock:
-            cidr: 192.168.1.2/32
-      ports:
-        - protocol: TCP
-          port: 443
-        - protocol: TCP
-          port: 6443

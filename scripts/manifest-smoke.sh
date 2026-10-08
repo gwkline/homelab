@@ -162,6 +162,26 @@ server_minor="$(printf '%s' "$server_version" | sed -E 's/^v([0-9]+\.[0-9]+).*/\
   fail "API server is v${server_minor}.x; the pinned node image must be v${KUBE_MINOR}.x (production k3s)"
 echo "  cluster up: API server $server_version"
 
+# NetworkPolicies allow the Kubernetes API by production's Service ClusterIP
+# and node IP (clusters/home/node). kind enforces NetworkPolicy too, so point
+# those allowances at this cluster's API, or API clients such as
+# kube-state-metrics crash-loop behind the real policies.
+prod_node_ip="$(sed -n 's/^  ip: *//p' clusters/home/node/node.yaml)"
+prod_api_ip=10.43.0.1
+kind_node_ip="$(kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes \
+  -o jsonpath='{.items[0].endpoints[0].addresses[0]}')"
+kind_api_ip="$(kubectl get service kubernetes -n default -o jsonpath='{.spec.clusterIP}')"
+[ -n "$prod_node_ip" ] && [ -n "$kind_node_ip" ] && [ -n "$kind_api_ip" ] ||
+  fail "cannot resolve API endpoints (node.yaml '${prod_node_ip}', kind node '${kind_node_ip}', kind ClusterIP '${kind_api_ip}')"
+re() { printf '%s' "$1" | sed 's/\./\\./g'; }
+sed -e "s#cidr: $(re "$prod_node_ip")/32#cidr: ${kind_node_ip}/32#" \
+  -e "s#cidr: $(re "$prod_api_ip")/32#cidr: ${kind_api_ip}/32#" \
+  "$WORKDIR/apply.yaml" >"$WORKDIR/apply-kind.yaml"
+api_rules="$(grep -c "cidr: ${kind_node_ip}/32" "$WORKDIR/apply-kind.yaml" || true)"
+[ "${api_rules:-0}" -gt 0 ] || fail "no NetworkPolicy allowance for the node IP ${prod_node_ip} to retarget"
+mv "$WORKDIR/apply-kind.yaml" "$WORKDIR/apply.yaml"
+echo "  API allowances retargeted: ${prod_api_ip} -> ${kind_api_ip}, ${prod_node_ip} -> ${kind_node_ip} (${api_rules} rules)"
+
 echo "==> [4/7] submitting ${docs:-0} objects + ${crd_count:-0} CRDs to the real API server"
 kubectl apply --server-side --field-manager=manifest-smoke -f "$crds_file" >/dev/null ||
   fail "vendored CRD apply failed (see kubectl error above)"

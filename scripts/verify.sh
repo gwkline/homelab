@@ -111,6 +111,14 @@ if [[ -n "$digest_problems" ]]; then
   fail 'third-party image without a digest'
 fi
 
+echo '==> node IP replacement'
+# deploy/policies/base/kube-api-egress.yaml carries a 127.0.0.1 placeholder
+# that clusters/home/node replaces; a leftover means a policy lost its label or
+# its [ClusterIP, node] rule shape.
+if grep -n 'cidr: 127\.0\.0\.1/32' "$work/render/clusters_home.yaml"; then
+  fail 'node IP placeholder left in the rendered NetworkPolicies'
+fi
+
 echo '==> factory CronJob schedule collision lint'
 # Two factory CronJobs whose schedules expand to the same minute/hour pattern
 # hit the GitHub API at the same instant; fail on any such pair.
