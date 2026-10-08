@@ -30,8 +30,8 @@ esac
 # Namespaces this repo owns; a workload anywhere in them must come from git.
 HOMELAB_NS="agents sandbox work database"
 # Bases applied outside clusters/home: the server-side operators (3.2, 3.5),
-# the operator-namespace policies (3.7) and the optional components (3.9) in
-# docs/rebuild-runbook.md. Their objects are expected live, so they count as
+# the operator-namespace policies (3.7), knowledge and executor (3.9) in
+# docs/rebuild-runbook.md. Their objects may be live, so they count as
 # rendered.
 EXTRA_BASES="deploy/eso/base deploy/cnpg/base deploy/operator-policies/base deploy/knowledge/base deploy/executor/base"
 DEPLOYER_MAX_AGE=900

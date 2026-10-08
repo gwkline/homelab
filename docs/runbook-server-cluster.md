@@ -11,7 +11,7 @@ From bare machines to Ready k3s nodes, plus the one-time external accounts. One 
 
 ## 0. Prerequisites
 
-- 1+ x86_64 (or arm64) machines, 8 GB+ RAM, a spare 16 GB+ disk each; Ethernet preferred
+- 1+ x86_64 (or arm64) machines; Ethernet preferred. For sizing: the current server has 32 CPUs, 64 GB of RAM and a root filesystem of about 60 GB, and its pods request about 5 CPUs, 10 GiB of memory and 19 GiB of ephemeral storage (`kubectl describe node`). PVCs share that filesystem ([ADR-005 D3](adr/adr-005-metrics-logging-stack.md#d3-retention-and-disk-budget)).
 - A 4 GB+ USB stick, and a laptop to drive everything from
 
 ## 1. BIOS (per machine, monitor attached)
@@ -79,7 +79,7 @@ The API certificate covers the node's tailnet name and IP (bootstrap writes them
 | --- | --- | --- |
 | 1Password | Vault `homelab`; a service account that can read only that vault (its `ops_…` token is shown once) | [secrets-inventory.md](secrets-inventory.md) |
 | Tailscale | MagicDNS + HTTPS certs on; `tagOwners` owns `tag:k8s-operator`; OAuth client created **with** that tag (Devices/Core + Auth Keys write, Routes read), stored as item `tailscale-operator-oauth` | [deploy/tailscale/README.md](../deploy/tailscale/README.md) |
-| GitHub | Fine-grained PAT, Contents read-only → item `github-readonly`; optional writer PAT → `github-writer` | [deploy/github-tokens/README.md](../deploy/github-tokens/README.md) |
+| GitHub | Fine-grained PAT → item `github-readonly`. Despite the name the factory writes with it, so it needs Contents, Issues and Pull requests write on the factory repos | [deploy/github-tokens/README.md](../deploy/github-tokens/README.md) |
 | GHCR | After CI's first push, make each `ghcr.io/<github-user>/homelab/*` package public (Packages → Package settings → visibility), or create `ghcr-pull` Secrets | `ImagePullBackOff` means this step was skipped |
 
 Then continue with [rebuild-runbook.md](rebuild-runbook.md) section 3.2; 3.1 is the bootstrap above.

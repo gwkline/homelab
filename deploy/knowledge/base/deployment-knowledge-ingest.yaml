@@ -27,7 +27,7 @@ spec:
                 secretKeyRef:
                   name: knowledge-db
                   key: databaseUrl
-            # Read-only PAT for private git sources; used for clone/fetch only.
+            # The github-token PAT, for private git sources; used for clone/fetch only.
             - name: GIT_SOURCE_TOKEN_FILE
               value: /secrets-github/token
             - name: KNOWLEDGE_INGEST_TOKEN_FILE

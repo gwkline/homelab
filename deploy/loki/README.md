@@ -1,6 +1,6 @@
 # Loki
 
-Cluster logs, kept for 30 days: well past the 7-day TTL on sandbox Jobs, so finished runs stay debuggable after `kubectl logs` stops working. Loki runs single-binary on a 10Gi PVC. One Grafana Alloy replica reads every pod's logs through the API (`pods/log`; no hostPath, no privilege) and pushes them to Loki. Grafana queries it (`deploy/grafana`). Loki is ClusterIP-only.
+Cluster logs, kept for 30 days: well past the 24-hour TTL on sandbox Jobs, so finished runs stay debuggable after `kubectl logs` stops working. Loki runs single-binary on a 10Gi PVC. One Grafana Alloy replica reads every pod's logs through the API (`pods/log`; no hostPath, no privilege) and pushes them to Loki. Grafana queries it (`deploy/grafana`). Loki is ClusterIP-only.
 
 ## Apply
 
@@ -18,7 +18,7 @@ kubectl apply -k deploy/loki/base
 | `job_name`         | pod label `batch.kubernetes.io/job-name` (the run id)  |
 | `pod`, `container` | names                                                  |
 
-Pod env is never read, so commands, issue text, and secrets can't become labels. Cardinality is capped in Loki (`max_global_streams_per_user: 50000`, `ingestion_rate_mb: 4`).
+Pod env is never read, so commands, issue text, and secrets can't become labels. Cardinality and volume are capped in Loki (`max_global_streams_per_user: 50000`, `ingestion_rate_mb: 1` with a burst of 4).
 
 ## Redaction
 

@@ -6,7 +6,7 @@
 
 Agents run under several harnesses here — T3 Code, Hermes, Cursor, Claude Code, Codex, OpenCode, and the factory workers (which ship the T3 Code CLIs). Personal skills (communication preferences, house conventions, private project context) are re-taught to each by hand, drift, and cannot live in this public repo.
 
-Prior art: `deploy/hermes/base/skills-sync.yaml` already clones a private repo into `$HERMES_HOME/skills` with an allowlist, secret scan, pinned ref, and a degrade-never-fail `status.json`. This ADR generalizes that to every harness.
+Prior art: hermes' `skills-sync` init container (`apps/shared/skills-lib.sh`, pinned by `deploy/hermes/base/skills-sync.yaml`) clones a private repo into `$HERMES_HOME` with an allowlist, secret scan, pinned ref, and a degrade-never-fail `status.json`. This ADR generalizes that to every harness.
 
 Constraints: personal content stays private; one skill reaches every harness without re-authoring; fetched content cannot steer agents into running unreviewed code; the same pin always installs the same bytes.
 
@@ -91,7 +91,7 @@ Remaining work to make this functional — wire a consumer (e.g. t3code or herme
 ```yaml
 env:
   - name: SKILLS_SOURCE
-    value: https://github.com/gwkline/.agent-skills
+    value: https://github.com/gwkline/.dotfiles # once it has a skills.yaml (D2)
   - name: SKILLS_REF # tag or full SHA, never main
     value: "<tag>"
   - name: SKILLS_ALLOWLIST

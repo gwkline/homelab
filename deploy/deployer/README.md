@@ -15,7 +15,7 @@ Continuous delivery for this repo's workloads. A CronJob in `agents` runs [deplo
 
 A failed pass fails its Job. Failed passes page through the generic Grafana rule `CronJob has not succeeded in two intervals` (`deploy/grafana/base/provisioning/alerting/rules.yaml`), about 20 minutes after the last success, and not while the deployer is suspended. A single failure doesn't page, because the next pass retries 5 minutes later and many failures are transient: an API hiccup, a rollout still going past 150s. The Job log says which step failed.
 
-CI pushes `sha-<short>` before it signs. So a CI run that fails after pushing can leave a green commit's tag on an unsigned image. A scheduled rebuild whose smoke test fails is one example. The dry run then rejects that image and every pass fails until a green run rebuilds it. Re-run the failed run.
+CI pushes each image by digest and tags it `sha-<short>` only after signing it, so a run that fails midway leaves no tag on an unsigned image.
 
 ## Applied by hand
 

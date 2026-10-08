@@ -13,7 +13,7 @@ Only documented sources; anything else you need is a drill finding (section 6).
 | Clean Ubuntu 24.04 host (or a VM running the same scripts) | [runbook-server-cluster.md](runbook-server-cluster.md) steps 1–4 |
 | `kubectl` and `helm` on the driver | same, step 4 |
 | `OP_SERVICE_ACCOUNT_TOKEN` | 1Password; read-only on vault `homelab`. Entered via env or stdin only |
-| Everything else (GitHub tokens and App, Tailscale OAuth, model key, Postgres role passwords, Grafana, knowledge credentials) | synced from vault `homelab` by ESO. Every item in [secrets-inventory.md](secrets-inventory.md) must exist before 3.6, or its ExternalSecret stays not Ready and 3.8 fails |
+| Everything else (GitHub tokens and App, Tailscale OAuth, model key, Postgres role passwords, Grafana, panel, CloudBeaver and knowledge credentials) | synced from vault `homelab` by ESO. Every item in [secrets-inventory.md](secrets-inventory.md) must exist before 3.6, or its ExternalSecret stays not Ready and 3.8 fails |
 
 ## 2. Pinned versions
 
@@ -133,16 +133,17 @@ It fails on any of these:
 
 It also lists live objects the repo doesn't define, as a report rather than a failure. After 3.10, `./scripts/rebuild-check.sh` (all phases) adds the checks that need the manual steps.
 
-### 3.9 Components outside the core set
+### 3.9 Knowledge
 
-Apply as needed; each README lists its prerequisites:
+Outside the core set; once applied, the deployer keeps its Deployments and NetworkPolicies current ([deploy/knowledge/README.md](../deploy/knowledge/README.md)):
 
 ```sh
-kubectl apply -k deploy/executor/base     # optional Secret executor-admin
 kubectl apply -k deploy/knowledge/base    # needs 1Password knowledge-db / knowledge-api-token
 ```
 
 Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart && scripts/pg-smoke.sh verify`.
+
+`deploy/executor` is not deployed: its tailnet Service is still a LoadBalancer, whose privileged proxy the `tailscale` namespace rejects ([deploy/tailscale/README.md](../deploy/tailscale/README.md#how-exposure-works)).
 
 ### 3.10 Recreated state
 
@@ -176,4 +177,4 @@ No completed runs yet. After two clean runs, set **target RTO = median × 1.5, r
 
 ## 6. Manual interventions
 
-Every undocumented step during a drill becomes a step in this runbook or a tracked issue before the next run. Known manual steps: the 1Password token (3.3), and hermes portal setup, t3code pairing and CLI logins (3.10). CloudBeaver's read-only connection credentials are typed into its UI ([deploy/cloudbeaver/README.md](../deploy/cloudbeaver/README.md)), and Executor (3.9) lists its admin and client tokens in its README.
+Every undocumented step during a drill becomes a step in this runbook or a tracked issue before the next run. Known manual steps: the 1Password token (3.3), and hermes portal setup, t3code pairing and CLI logins (3.10). CloudBeaver's read-only connection credentials are typed into its UI ([deploy/cloudbeaver/README.md](../deploy/cloudbeaver/README.md)).

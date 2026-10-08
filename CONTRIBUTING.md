@@ -8,7 +8,7 @@ npm run lint && npm run format:check && npm run typecheck && npm test
 ./scripts/verify.sh    # shell/Dockerfile/workflow lint, manifest builds and references, gitleaks
 ```
 
-CI runs the same checks, plus every `apps/**/tests/*.test.sh` and `deploy/*/tests/*.test.sh` fixture test and the panel e2e against a kind cluster.
+CI runs the same checks, plus the knowledge suites against a real Postgres, the retrieval eval, every `apps/**/tests/*.test.sh` and `deploy/*/tests/*.test.sh` fixture test, and the panel e2e and a rendered-manifest smoke test on kind clusters.
 
 ## Conventions
 

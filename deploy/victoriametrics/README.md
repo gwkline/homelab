@@ -6,6 +6,7 @@ Scrape targets (ConfigMap `victoriametrics-scrape`):
 
 - kubelet `/metrics` and `/metrics/cadvisor` for every node, scraped directly at the node's InternalIP on port 10250 and verified against the cluster CA.
 - kube-state-metrics, limited by its `--resources` allowlist to nodes, pods, jobs/cronjobs, deployments/statefulsets, and PVCs.
+- The ESO controller, through Service `external-secrets/external-secrets-metrics` (`deploy/eso/base/metrics.yaml`), for ExternalSecret readiness.
 - VictoriaMetrics itself.
 
 k3s metrics-server is not scraped; nothing consumes its series.

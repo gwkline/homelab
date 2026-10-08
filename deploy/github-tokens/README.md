@@ -6,11 +6,11 @@ ExternalSecrets that sync GitHub PATs from the `homelab` 1Password vault, plus `
 
 | Item | Field(s) | Secret | Namespaces | PAT scope |
 | --- | --- | --- | --- | --- |
-| `github-readonly` | `token` | `github-token` | agents, sandbox | Contents: read on private repos agents read |
+| `github-readonly` | `token` | `github-token` | agents, sandbox | Despite the name, the factory pushes branches, opens and merges PRs and edits issues with it: Contents, Issues and Pull requests read/write on the factory repos, plus read on the private repos agents clone |
 | `work-github-writer` | `token`, `repos` | `work-github-token` | work | Contents + Pull requests: read/write on selected work repos only. `repos` holds clone URLs, one per line |
 | `factory-github-app` | `app-id`, `installation-id`, `private-key` | `github-app` | sandbox | GitHub App, not a PAT ([docs/github-app.md](../../docs/github-app.md)). The collector mints short-lived installation tokens with it |
 
-The read-only and work tokens are separate items with separate permissions.
+The personal and work tokens are separate items with separate permissions.
 
 ## Prerequisites
 
