@@ -16,7 +16,8 @@ USER 0
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG PG_MAJOR=18
-# timescale/pg_textsearch release: tag + release-asset hash.
+# timescale/pg_textsearch release: tag + release-asset hash. Bump both together.
+# renovate: datasource=github-releases depName=timescale/pg_textsearch extractVersion=^v(?<version>.+)$
 ARG EXT_VERSION=1.4.0
 ARG EXT_SHA256=313c231136f19ded24a7d6f4de3ca96f3840b10c55adbfc839cd0068042e2e40
 
