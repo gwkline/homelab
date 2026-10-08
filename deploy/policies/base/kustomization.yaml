@@ -9,3 +9,7 @@ labels:
 
 resources:
   - networkpolicy.yaml
+  - kube-api-egress.yaml
+
+components:
+  - ../../../clusters/home/node

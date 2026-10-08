@@ -1,0 +1,123 @@
+# Kubernetes API egress for workloads behind an egress policy. These live in
+# one file because they carry the node IP: kube-router filters after DNAT, so
+# the API matches by the node's endpoint as well as its ClusterIP. The node IP
+# comes from clusters/home/node; the 127.0.0.1 below is the placeholder it
+# replaces. Keep each policy's first rule as [ClusterIP, node].
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: headlamp-kube-api
+  namespace: agents
+  labels:
+    homelab.gwkline.io/kube-api-egress: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app: headlamp
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.43.0.1/32
+        - ipBlock:
+            cidr: 127.0.0.1/32
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+---
+# CNPG instance manager.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pg-primary-kube-api
+  namespace: database
+  labels:
+    homelab.gwkline.io/kube-api-egress: "true"
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: pg-primary
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.43.0.1/32
+        - ipBlock:
+            cidr: 127.0.0.1/32
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+---
+# Workloads in agents-egress-default (networkpolicy.yaml) that call the API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agents-egress-kube-api
+  namespace: agents
+  labels:
+    homelab.gwkline.io/kube-api-egress: "true"
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - alloy
+          - deployer
+          - kube-state-metrics
+          - panel
+          - victoriametrics
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.43.0.1/32
+        - ipBlock:
+            cidr: 127.0.0.1/32
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hermes-kube-api
+  namespace: agents
+  labels:
+    homelab.gwkline.io/kube-api-egress: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app: hermes
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.43.0.1/32
+        - ipBlock:
+            cidr: 127.0.0.1/32
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: t3code-kube-api
+  namespace: agents
+  labels:
+    homelab.gwkline.io/kube-api-egress: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app: t3code
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.43.0.1/32
+        - ipBlock:
+            cidr: 127.0.0.1/32
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }

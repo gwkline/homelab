@@ -1,0 +1,25 @@
+# Writes the node IP into every NetworkPolicy labelled
+# homelab.gwkline.io/kube-api-egress=true: the first rule's second ipBlock.
+# Include it from exactly one base (deploy/policies/base). Kustomize passes the
+# local-config source up to the parent, so two bases including it collide in
+# clusters/home.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - node.yaml
+
+replacements:
+  - source:
+      kind: ConfigMap
+      name: homelab-node
+      fieldPath: data.ip
+    targets:
+      - select:
+          kind: NetworkPolicy
+          labelSelector: homelab.gwkline.io/kube-api-egress=true
+        fieldPaths:
+          - spec.egress.0.to.1.ipBlock.cidr
+        options:
+          delimiter: /
+          index: 0
