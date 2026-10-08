@@ -10,5 +10,5 @@ labels:
 resources:
   - secretstore.yaml
   - github-token.yaml
-  - github-token-writer.yaml
+  - github-app.yaml
   - work-github-token.yaml

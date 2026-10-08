@@ -4,11 +4,10 @@ Grafana 13.2.1 in `agents`: anonymous Viewer over the tailnet at `https://grafan
 
 ## Prerequisites
 
-```sh
-kubectl -n agents create secret generic grafana-admin --from-literal=admin-password='<pw>'
-```
+1Password items (vault `homelab`), synced by ExternalSecrets of the same name; Grafana doesn't start without them:
 
-1Password item `grafana-ntfy`, field `url`: `https://ntfy.sh/<topic>` with an unguessable topic (`openssl rand -hex 16`). ExternalSecret `grafana-ntfy` syncs it, and Grafana doesn't start without it. Subscribe to the topic in the ntfy app on your phone.
+- `grafana-admin`, field `admin-password`: the `admin` login. The database is an emptyDir, so a rotated password applies at the next pod start.
+- `grafana-ntfy`, field `url`: `https://ntfy.sh/<topic>` with an unguessable topic (`openssl rand -hex 16`). Subscribe to the topic in the ntfy app on your phone.
 
 Deploy `deploy/victoriametrics/base` and `deploy/loki/base` first so the datasources resolve.
 
