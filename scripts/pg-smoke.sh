@@ -34,11 +34,21 @@ usage() {
   exit 2
 }
 
-# SQL runs as the application owner over TCP+SCRAM using the out-of-band
-# basic-auth Secret — this exercises the credential workflow end to end.
+# SQL runs as the application owner over TCP+SCRAM using the owner-role
+# basic-auth Secret, which exercises the credential workflow end to end.
+# psql_exec [psql options]: SQL on stdin. The password travels as the first
+# stdin line, never in argv, where ps would show it on the laptop and in the
+# pod.
 psql_exec() {
-  kubectl exec -i -n "$NS" "$POD" -- env PGPASSWORD="$PASSWORD" \
-    psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U "$DB_USER" -d "$DB" "$@"
+  { printf '%s\n' "$PASSWORD"; cat; } |
+    kubectl exec -i -n "$NS" "$POD" -- sh -c \
+      'IFS= read -r PGPASSWORD && export PGPASSWORD && exec psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 "$@"' \
+      psql -U "$DB_USER" -d "$DB" "$@"
+}
+
+# psql_query <sql>: one statement, unaligned tuples-only output.
+psql_query() {
+  printf '%s\n' "$1" | psql_exec -At
 }
 
 load_credentials() {
@@ -54,7 +64,7 @@ check_cluster_healthy() {
 }
 
 check_preload() {
-  libs="$(psql_exec -At -c 'SHOW shared_preload_libraries;')"
+  libs="$(psql_query 'SHOW shared_preload_libraries;')"
   case "$libs" in
     *pg_textsearch*) printf 'PASS: shared_preload_libraries = %s\n' "$libs" ;;
     *) fail "pg_textsearch missing from shared_preload_libraries (got: $libs)" ;;
@@ -62,13 +72,13 @@ check_preload() {
 }
 
 check_extensions() {
-  count="$(psql_exec -At -c \
+  count="$(psql_query \
     "SELECT count(*) FROM pg_extension WHERE extname IN ('vector','pg_textsearch');")"
   assert_eq "$count" "2" "both extensions installed (vector, pg_textsearch)"
 }
 
 check_indexes() {
-  count="$(psql_exec -At -c \
+  count="$(psql_query \
     "SELECT count(*) FROM pg_indexes
      WHERE schemaname = 'smoke'
        AND indexname IN ('smoke_docs_vec_idx','smoke_docs_bm25_idx');")"
@@ -76,14 +86,14 @@ check_indexes() {
 }
 
 check_vector_query() {
-  top="$(psql_exec -At -c \
+  top="$(psql_query \
     "SELECT id FROM smoke.docs
      ORDER BY embedding <=> '[0.9,0.1,0,0]' LIMIT 1;")"
   assert_eq "$top" "1" "vector similarity ranks the postgres doc first"
 }
 
 check_bm25_query() {
-  top="$(psql_exec -At -c \
+  top="$(psql_query \
     "SELECT id FROM smoke.docs
      ORDER BY content <@> to_bm25query('bm25 ranked search','smoke_docs_bm25_idx')
      LIMIT 1;")"
@@ -145,7 +155,7 @@ cmd_restart() {
 cmd_verify() {
   check_cluster_healthy
   load_credentials
-  rows="$(psql_exec -At -c 'SELECT count(*) FROM smoke.docs;')"
+  rows="$(psql_query 'SELECT count(*) FROM smoke.docs;')"
   assert_eq "$rows" "$EXPECTED_ROWS" "test rows survived the restart"
   check_extensions
   check_preload
