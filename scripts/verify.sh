@@ -106,6 +106,42 @@ if [[ -n "$profile_problems" ]]; then
   echo "$profile_problems"
   fail 'factory profile without its own NetworkPolicy'
 fi
+# A sandbox pod with its own, narrower egress policy (a factory profile or the
+# orchestrators, which carry a component label instead of a profile) must be
+# excluded from sandbox-egress-public-only: NetworkPolicies are additive, so
+# the baseline would widen the narrower policy back to all-public.
+egress_overlap_problems="$(rendered_check '
+  def matchexpr($e; $labels):
+    ($labels[$e.key] // null) as $v
+    | if $e.operator == "In" then ($v != null and (($e.values // []) | index($v)) != null)
+      elif $e.operator == "NotIn" then ($v == null or (($e.values // []) | index($v)) == null)
+      elif $e.operator == "Exists" then ($v != null)
+      elif $e.operator == "DoesNotExist" then ($v == null)
+      else false end;
+  def selects($sel; $labels):
+    ([($sel.matchLabels // {}) | to_entries[]
+        | { key: .key, operator: "In", values: [.value] }]
+      + ($sel.matchExpressions // []))
+    | all(.[]; matchexpr(.; $labels));
+  def factory_policy:
+    .spec.podSelector as $s
+    | any(($s.matchLabels // {} | keys[]), ($s.matchExpressions // [])[].key;
+        startswith("factory.gwkline.io/"));
+  ([.[] | select(.kind == "NetworkPolicy" and ns == "sandbox"
+      and ((.spec.policyTypes // []) | index("Egress")))] as $pol
+  | [$pol[] | select(.metadata.name == "sandbox-egress-public-only")] as $general
+  | [$pol[] | select(.metadata.name != "sandbox-egress-public-only" and factory_policy)] as $factory
+  | .[] | ref as $ref | ns as $ns
+  | select($ns == "sandbox")
+  | pod_template | (.metadata.labels // {}) as $labels
+  | select(any($general[]; selects(.spec.podSelector; $labels)))
+  | select(any($factory[]; selects(.spec.podSelector; $labels)))
+  | "\($ref): selected by both sandbox-egress-public-only and a factory egress policy")'
+)"
+if [[ -n "$egress_overlap_problems" ]]; then
+  echo "$egress_overlap_problems"
+  fail 'sandbox pod selected by both the baseline and a factory egress policy'
+fi
 # Admission does not verify third-party images, so the digest is their only
 # integrity pin (docs/adr/adr-004-cosign-admission-verification.md).
 digest_problems="$(rendered_check '

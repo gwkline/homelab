@@ -132,9 +132,11 @@ spec:
   podSelector: {}
   policyTypes: [Egress]
 ---
-# Excludes factory profile pods: policies are additive, and their own
-# stricter netpols would otherwise widen to all-public. Also excludes the
-# egress canary, which must have no egress at all.
+# Excludes factory pods with their own, stricter netpols: policies are
+# additive, and this baseline would otherwise widen them back to all-public.
+# That is the profile pods (excluded by profile) and the orchestrators, which
+# are labeled by component only. Also excludes the egress canary, which must
+# have no egress at all.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -145,6 +147,9 @@ spec:
     matchExpressions:
       - key: factory.gwkline.io/profile
         operator: DoesNotExist
+      - key: factory.gwkline.io/component
+        operator: NotIn
+        values: [orchestrator]
       - key: app.kubernetes.io/name
         operator: NotIn
         values: [egress-canary]
