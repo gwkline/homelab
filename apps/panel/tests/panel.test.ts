@@ -1,13 +1,10 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { jsonAs, writeAuthDir } from "./helpers.ts";
+import { jsonAs, startPanel } from "./helpers.ts";
 
 const root = path.join(import.meta.dirname, "..");
 
@@ -91,16 +88,6 @@ test("jobs sort newest-first by creation epoch, not lexical age text", async () 
 });
 
 test("GET /api/factory/prs lists open factory PRs with CI + review status", async () => {
-  const stage = mkdtempSync(path.join(tmpdir(), "panel-prs-"));
-  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
-  for (const f of ["index.js", "jobs.js", "k8s.js"]) {
-    copyFileSync(path.join(root, "dist", f), path.join(stage, f));
-  }
-  copyFileSync(
-    path.join(root, "web", "dist", "index.html"),
-    path.join(stage, "web", "dist", "index.html")
-  );
-
   // Mock GitHub API server: pull list + per-PR enrichment
   const ghCalls: string[] = [];
   const gh = createServer((req, res) => {
@@ -164,39 +151,16 @@ test("GET /api/factory/prs lists open factory PRs with CI + review status", asyn
   await new Promise<void>((r) => gh.listen(0, "127.0.0.1", r));
   const ghPort = (gh.address() as AddressInfo).port;
 
-  const port = 3941;
-  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
-    env: {
-      ...process.env,
-      GH_API_BASE: `http://127.0.0.1:${ghPort}`,
-      GH_TOKEN: "test-token",
-      PANEL_K8S_BASE: "http://127.0.0.1:1",
-      PANEL_ROOT: stage,
-      PORT: String(port),
-    },
-    stdio: "pipe",
+  const panel = await startPanel({
+    GH_API_BASE: `http://127.0.0.1:${ghPort}`,
+    GH_TOKEN: "test-token",
   });
-  child.stderr.on("data", (d) => process.stderr.write(d));
   try {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(
-        () => reject(new Error("server did not start")),
-        5000
-      );
-      child.stdout.on(
-        "data",
-        (d) =>
-          d.toString().includes("listening") && (clearTimeout(t), resolve())
-      );
-    });
-
-    const badRepo = await fetch(
-      `http://127.0.0.1:${port}/api/factory/prs?repo=evil/repo`
-    );
+    const badRepo = await fetch(`${panel.base}/api/factory/prs?repo=evil/repo`);
     assert.equal(badRepo.status, 400);
 
     const r = await fetch(
-      `http://127.0.0.1:${port}/api/factory/prs?repo=gwkline/launchpad`
+      `${panel.base}/api/factory/prs?repo=gwkline/launchpad`
     );
     assert.equal(r.status, 200);
     const j = (await r.json()) as {
@@ -221,22 +185,12 @@ test("GET /api/factory/prs lists open factory PRs with CI + review status", asyn
     assert.equal(pr.checks.state, "success");
     assert.equal(pr.linkedIssue, 6);
   } finally {
-    child.kill();
+    panel.stop();
     gh.close();
   }
 });
 
 test("GET /api/factory/stats aggregates queue, output and merge trend", async () => {
-  const stage = mkdtempSync(path.join(tmpdir(), "panel-stats-"));
-  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
-  for (const f of ["index.js", "jobs.js", "k8s.js"]) {
-    copyFileSync(path.join(root, "dist", f), path.join(stage, f));
-  }
-  copyFileSync(
-    path.join(root, "web", "dist", "index.html"),
-    path.join(stage, "web", "dist", "index.html")
-  );
-
   const day = 86_400_000;
 
   // Counts upstream requests to verify the second stats hit is cached.
@@ -384,39 +338,18 @@ test("GET /api/factory/stats aggregates queue, output and merge trend", async ()
   await new Promise<void>((r) => gh.listen(0, "127.0.0.1", r));
   const ghPort = (gh.address() as AddressInfo).port;
 
-  const port = 3942;
-  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
-    env: {
-      ...process.env,
-      GH_API_BASE: `http://127.0.0.1:${ghPort}`,
-      GH_TOKEN: "test-token",
-      PANEL_K8S_BASE: "http://127.0.0.1:1",
-      PANEL_ROOT: stage,
-      PORT: String(port),
-    },
-    stdio: "pipe",
+  const panel = await startPanel({
+    GH_API_BASE: `http://127.0.0.1:${ghPort}`,
+    GH_TOKEN: "test-token",
   });
-  child.stderr.on("data", (d) => process.stderr.write(d));
   try {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(
-        () => reject(new Error("server did not start")),
-        5000
-      );
-      child.stdout.on(
-        "data",
-        (d) =>
-          d.toString().includes("listening") && (clearTimeout(t), resolve())
-      );
-    });
-
     const badRepo = await fetch(
-      `http://127.0.0.1:${port}/api/factory/stats?repo=evil/repo`
+      `${panel.base}/api/factory/stats?repo=evil/repo`
     );
     assert.equal(badRepo.status, 400);
 
     const r = await fetch(
-      `http://127.0.0.1:${port}/api/factory/stats?repo=gwkline/launchpad`
+      `${panel.base}/api/factory/stats?repo=gwkline/launchpad`
     );
     assert.equal(r.status, 200);
     const j = (await r.json()) as {
@@ -468,28 +401,18 @@ test("GET /api/factory/stats aggregates queue, output and merge trend", async ()
     const hitsAfterFirst = ghHits;
     assert.ok(hitsAfterFirst > 0);
     const r2 = await fetch(
-      `http://127.0.0.1:${port}/api/factory/stats?repo=gwkline/launchpad`
+      `${panel.base}/api/factory/stats?repo=gwkline/launchpad`
     );
     assert.equal(r2.status, 200);
     assert.equal(((await r2.json()) as { cached: boolean }).cached, true);
     assert.equal(ghHits, hitsAfterFirst);
   } finally {
-    child.kill();
+    panel.stop();
     gh.close();
   }
 });
 
 test("POST /api/factory/review + /merge guard and forward (write path)", async () => {
-  const stage = mkdtempSync(path.join(tmpdir(), "panel-rev-"));
-  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
-  for (const f of ["index.js", "jobs.js", "k8s.js"]) {
-    copyFileSync(path.join(root, "dist", f), path.join(stage, f));
-  }
-  copyFileSync(
-    path.join(root, "web", "dist", "index.html"),
-    path.join(stage, "web", "dist", "index.html")
-  );
-
   interface GhCall {
     body: unknown;
     method: string | undefined;
@@ -570,33 +493,12 @@ test("POST /api/factory/review + /merge guard and forward (write path)", async (
   await new Promise<void>((r) => gh.listen(0, "127.0.0.1", r));
   const ghPort = (gh.address() as AddressInfo).port;
 
-  const port = 3951;
-  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
-    env: {
-      ...process.env,
-      GH_API_BASE: `http://127.0.0.1:${ghPort}`,
-      GH_TOKEN: "test-token",
-      PANEL_AUTH_DIR: writeAuthDir(),
-      PANEL_K8S_BASE: "http://127.0.0.1:1",
-      PANEL_ROOT: stage,
-      PORT: String(port),
-    },
-    stdio: "pipe",
+  const panel = await startPanel({
+    GH_API_BASE: `http://127.0.0.1:${ghPort}`,
+    GH_TOKEN: "test-token",
   });
-  child.stderr.on("data", (d) => process.stderr.write(d));
   try {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(
-        () => reject(new Error("server did not start")),
-        5000
-      );
-      child.stdout.on(
-        "data",
-        (d) =>
-          d.toString().includes("listening") && (clearTimeout(t), resolve())
-      );
-    });
-    const base = `http://127.0.0.1:${port}`;
+    const { base } = panel;
 
     // validation guards
     assert.equal(
@@ -717,7 +619,7 @@ test("POST /api/factory/review + /merge guard and forward (write path)", async (
       "squash"
     );
   } finally {
-    child.kill();
+    panel.stop();
     gh.close();
   }
 });
@@ -819,48 +721,12 @@ test("server serves SPA and lists sandbox state; no route launches commands", as
   await new Promise<void>((r) => mock.listen(0, "127.0.0.1", r));
   const mockPort = (mock.address() as AddressInfo).port;
 
-  const stage = mkdtempSync(path.join(tmpdir(), "panel-"));
-  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
-  copyFileSync(
-    path.join(root, "dist", "index.js"),
-    path.join(stage, "index.js")
-  );
-  copyFileSync(path.join(root, "dist", "jobs.js"), path.join(stage, "jobs.js"));
-  copyFileSync(path.join(root, "dist", "k8s.js"), path.join(stage, "k8s.js"));
-  copyFileSync(
-    path.join(root, "web", "dist", "index.html"),
-    path.join(stage, "web", "dist", "index.html")
-  );
-
-  const port = 3931;
-  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
-    env: {
-      ...process.env,
-      PANEL_AUTH_DIR: writeAuthDir(),
-      PANEL_K8S_BASE: `http://127.0.0.1:${mockPort}`,
-      PANEL_K8S_TOKEN: "test-token",
-      PANEL_ROOT: stage,
-      PORT: String(port),
-    },
-    stdio: "pipe",
+  const panel = await startPanel({
+    PANEL_K8S_BASE: `http://127.0.0.1:${mockPort}`,
+    PANEL_K8S_TOKEN: "test-token",
   });
-  child.stderr.on("data", (d) => process.stderr.write(d));
   try {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(
-        () => reject(new Error("server did not start")),
-        5000
-      );
-      child.stdout.on(
-        "data",
-        (d) =>
-          d.toString().includes("listening") && (clearTimeout(t), resolve())
-      );
-    });
-
-    const state = (await (
-      await fetch(`http://127.0.0.1:${port}/api/state`)
-    ).json()) as {
+    const state = (await (await fetch(`${panel.base}/api/state`)).json()) as {
       jobs: { name: string; status: string; age: string }[];
       cronjobs: { schedule: string }[];
     };
@@ -886,7 +752,7 @@ test("server serves SPA and lists sandbox state; no route launches commands", as
     }
     assert.equal(state.cronjobs[0]?.schedule, "0 9 * * *");
 
-    const launch = await fetch(`http://127.0.0.1:${port}/api/jobs`, {
+    const launch = await fetch(`${panel.base}/api/jobs`, {
       body: JSON.stringify({ command: "node check.mjs", issue: "9" }),
       headers: jsonAs(),
       method: "POST",
@@ -894,10 +760,10 @@ test("server serves SPA and lists sandbox state; no route launches commands", as
     assert.equal(launch.status, 404);
     assert.equal(created.length, 0, "no Job created from command text");
 
-    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    const html = await (await fetch(`${panel.base}/`)).text();
     assert.ok(html.includes("homelab factory"));
   } finally {
-    child.kill();
+    panel.stop();
     mock.close();
   }
 });
@@ -918,43 +784,13 @@ test("PATCH /api/cronjobs/:name applies real schedules and refuses malformed one
     });
   });
   await new Promise<void>((r) => k8s.listen(0, "127.0.0.1", r));
-  const stage = mkdtempSync(path.join(tmpdir(), "panel-cron-"));
-  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
-  copyFileSync(
-    path.join(root, "dist", "index.js"),
-    path.join(stage, "index.js")
-  );
-  copyFileSync(
-    path.join(root, "web", "dist", "index.html"),
-    path.join(stage, "web", "dist", "index.html")
-  );
-  const port = 3932;
-  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
-    env: {
-      ...process.env,
-      PANEL_AUTH_DIR: writeAuthDir(),
-      PANEL_K8S_BASE: `http://127.0.0.1:${(k8s.address() as AddressInfo).port}`,
-      PANEL_ROOT: stage,
-      PORT: String(port),
-    },
-    stdio: "pipe",
+  const panel = await startPanel({
+    PANEL_K8S_BASE: `http://127.0.0.1:${(k8s.address() as AddressInfo).port}`,
   });
-  child.stderr.on("data", (d) => process.stderr.write(d));
   try {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(
-        () => reject(new Error("server did not start")),
-        5000
-      );
-      child.stdout.on(
-        "data",
-        (d) =>
-          d.toString().includes("listening") && (clearTimeout(t), resolve())
-      );
-    });
     const edit = async (schedule: unknown): Promise<number> =>
       (
-        await fetch(`http://127.0.0.1:${port}/api/cronjobs/factory-medic`, {
+        await fetch(`${panel.base}/api/cronjobs/factory-medic`, {
           body: JSON.stringify({ schedule }),
           headers: jsonAs(),
           method: "PATCH",
@@ -1010,7 +846,7 @@ test("PATCH /api/cronjobs/:name applies real schedules and refuses malformed one
     }
     assert.deepEqual(patches, [], "a malformed schedule reached Kubernetes");
   } finally {
-    child.kill();
+    panel.stop();
     k8s.close();
   }
 });
@@ -1067,44 +903,13 @@ test("POST /api/factory/ready un-drafts a factory PR through GraphQL", async () 
     });
   });
   await new Promise<void>((r) => gh.listen(0, "127.0.0.1", r));
-  const stage = mkdtempSync(path.join(tmpdir(), "panel-ready-"));
-  mkdirSync(path.join(stage, "web", "dist"), { recursive: true });
-  copyFileSync(
-    path.join(root, "dist", "index.js"),
-    path.join(stage, "index.js")
-  );
-  copyFileSync(
-    path.join(root, "web", "dist", "index.html"),
-    path.join(stage, "web", "dist", "index.html")
-  );
-  const port = 3952;
-  const child = spawn(process.execPath, [path.join(stage, "index.js")], {
-    env: {
-      ...process.env,
-      GH_API_BASE: `http://127.0.0.1:${(gh.address() as AddressInfo).port}`,
-      GH_TOKEN: "test-token",
-      PANEL_AUTH_DIR: writeAuthDir(),
-      PANEL_K8S_BASE: "http://127.0.0.1:1",
-      PANEL_ROOT: stage,
-      PORT: String(port),
-    },
-    stdio: "pipe",
+  const panel = await startPanel({
+    GH_API_BASE: `http://127.0.0.1:${(gh.address() as AddressInfo).port}`,
+    GH_TOKEN: "test-token",
   });
-  child.stderr.on("data", (d) => process.stderr.write(d));
   try {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(
-        () => reject(new Error("server did not start")),
-        5000
-      );
-      child.stdout.on(
-        "data",
-        (d) =>
-          d.toString().includes("listening") && (clearTimeout(t), resolve())
-      );
-    });
     const ready = async (pr: number) =>
-      await fetch(`http://127.0.0.1:${port}/api/factory/ready`, {
+      await fetch(`${panel.base}/api/factory/ready`, {
         body: JSON.stringify({ pr, repo: "gwkline/launchpad" }),
         headers: jsonAs(),
         method: "POST",
@@ -1127,7 +932,7 @@ test("POST /api/factory/ready un-drafts a factory PR through GraphQL", async () 
     assert.equal((await ready(11)).status, 404);
     assert.equal(mutations.length, 1);
   } finally {
-    child.kill();
+    panel.stop();
     gh.close();
   }
 });
