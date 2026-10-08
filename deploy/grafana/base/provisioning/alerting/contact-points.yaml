@@ -1,0 +1,24 @@
+# Every alert goes to one ntfy topic. NTFY_URL (https://ntfy.sh/<topic>) comes
+# from Secret grafana-ntfy; the topic name is the credential, since anyone who
+# knows it can read and post. ntfy's built-in grafana template renders the
+# webhook payload as a readable title and message.
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: ntfy
+    receivers:
+      - uid: homelab-ntfy
+        type: webhook
+        settings:
+          url: ${NTFY_URL}?template=grafana
+          httpMethod: POST
+
+# One notification per rule: a rule's instances (one per node device, Deployment,
+# ExternalSecret...) are batched, and different rules never share one.
+policies:
+  - orgId: 1
+    receiver: ntfy
+    group_by: [grafana_folder, alertname]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 12h

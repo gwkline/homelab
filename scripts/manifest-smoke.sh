@@ -167,9 +167,9 @@ kubectl apply --server-side --field-manager=manifest-smoke -f "$crds_file" >/dev
   fail "vendored CRD apply failed (see kubectl error above)"
 kubectl apply --server-side --field-manager=manifest-smoke -f "$WORKDIR/apply.yaml" >/dev/null ||
   fail "manifest apply failed (see kubectl error above)"
-echo "SKIP: ESO controller — only its vendored CRDs are installed, so ExternalSecret/SecretStore specs are schema-validated; the controller and the 1Password sync stay external (no token Secrets exist)"
+echo "SKIP: ESO controller — only its vendored CRDs are installed, so ExternalSecret/ClusterSecretStore specs are schema-validated; the controller and the 1Password sync stay external (no token Secret exists)"
 echo "SKIP: CNPG operator — only its vendored CRDs are installed; postgres pods need the operator and storage, so the Cluster is not waited on"
-echo "SKIP: tailscale operator — helm-installed in production against the tailnet; only its rendered Namespace/SecretStore/ExternalSecret are submitted (LoadBalancer Services stay pending)"
+echo "SKIP: tailscale operator — helm-installed in production against the tailnet; only its rendered Namespace/ExternalSecret are submitted (LoadBalancer Services stay pending)"
 
 echo "==> [5/7] runtime RBAC integrity (roleRef targets + referenced ServiceAccounts)"
 graph="$WORKDIR/rbac-graph.tsv"
@@ -240,21 +240,24 @@ awk -F'\t' -v managed="$MANAGED_NS" '
 ' "$graph" || fail "RBAC integrity check failed (see BROKEN/MISSING lines above)"
 
 echo "==> [6/7] ServiceAccount permission probes (kubectl auth can-i)"
+# can <sa> <verb> <resource> <namespace> <expect> [subresource]
+# A subresource goes in $6: `can-i get nodes/proxy` would ask about a node
+# named "proxy".
 can() {
   # tail -1: the answer is the last line; kubectl prints namespace-scope
   # warnings on stderr for cluster-scoped resources.
-  can_got="$(kubectl auth can-i "$2" "$3" ${4:+-n "$4"} --as="system:serviceaccount:$1" 2>&1 || true)"
+  can_got="$(kubectl auth can-i "$2" "$3" ${4:+-n "$4"} ${6:+--subresource="$6"} --as="system:serviceaccount:$1" 2>&1 || true)"
   can_got="$(printf '%s\n' "$can_got" | tail -n 1)"
-  printf '  can-i %-8s %-16s as %-34s -> %s (expect %s)\n' "$2" "$3" "$1" "$can_got" "$5"
+  printf '  can-i %-8s %-16s as %-34s -> %s (expect %s)\n' "$2" "$3${6:+/$6}" "$1" "$can_got" "$5"
   [ "$can_got" = "$5" ] || CAN_FAIL=1
 }
 CAN_FAIL=0
-can "sandbox:chaos-monkey" delete pods sandbox yes
-can "sandbox:chaos-monkey" delete pods agents yes
-can "sandbox:chaos-monkey" create secrets sandbox no
 can "agents:deployer" patch cronjobs agents yes
 can "agents:deployer" patch statefulsets work yes
+can "agents:deployer" watch statefulsets work yes
 can "agents:deployer" create secrets agents no
+can "agents:deployer" escalate roles sandbox no
+can "agents:deployer" patch rolebindings sandbox no
 can "agents:panel" create jobs sandbox yes
 can "agents:panel" list pods "" yes
 can "agents:panel" list secrets sandbox no
@@ -264,7 +267,10 @@ can "agents:t3code-readonly" list pods "" yes
 can "agents:t3code-readonly" create pods agents no
 can "sandbox:factory-orchestrator" create jobs sandbox yes
 can "agents:kube-state-metrics" list deployments "" yes
-can "agents:victoriametrics" get nodes/proxy "" yes
+can "agents:victoriametrics" get nodes "" yes metrics
+can "agents:victoriametrics" get nodes "" no proxy
+can "agents:headlamp" list configmaps "" no
+can "agents:t3code-readonly" list configmaps "" no
 [ "$CAN_FAIL" -eq 0 ] || fail "permission probes failed (see output above)"
 
 echo "==> [7/7] runtime fixtures"

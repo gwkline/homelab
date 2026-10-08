@@ -8,7 +8,7 @@
 #   2. Swap label to factory/in-progress + post run marker comment
 #   3. Spawn a worker Job from the profile
 #   4. Watch it to completion; extract /out artifacts from pod logs
-#   5. Publish: apply patch → push branch → approval gate → draft PR
+#   5. Publish: apply patch → push branch → draft PR
 #   6. Converge labels on every exit path (success, failure, crash)
 #
 # Stop conditions (why every path terminates):
@@ -20,6 +20,13 @@
 #     issue in factory/failed for a human.
 set -eu
 
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+# Shared gh wrapper, labels, markers, check and verify rules.
+FACTORY_LIB_DIR="${FACTORY_LIB_DIR:-/usr/local/lib/factory}"
+[ -f "${FACTORY_LIB_DIR}/factory.sh" ] || FACTORY_LIB_DIR="${SCRIPT_DIR}/../lib"
+# shellcheck source=apps/factory/lib/factory.sh
+. "${FACTORY_LIB_DIR}/factory.sh"
+
 REPO="${FACTORY_REPO:?FACTORY_REPO required (owner/name)}"
 # Repo allowlist (mirrors the panel's /api/factory/run allowlist).
 WHITELIST="${FACTORY_REPOS:-gwkline/homelab,gwkline/launchpad,gwkline/plantry,gwkline/personal-site,gwkline/kline-services-bot,gwkline/discord-bot,gwkline/pr-czar}"
@@ -27,10 +34,6 @@ case ",${WHITELIST}," in
   *",${REPO},"*) ;;
   *) echo "[orch] repo ${REPO} not whitelisted for factory runs" >&2; exit 78 ;;
 esac
-LABEL_QUEUED="factory/queued"
-LABEL_WIP="factory/in-progress"
-LABEL_DONE="factory/draft-pr"
-LABEL_FAILED="factory/failed"
 PROFILE="${FACTORY_PROFILE:-${PROFILE:-code-pr}}"
 # Workflow identity recorded on the run (marker comment + worker brief):
 # profile@version pins which orchestrator behavior stack produced the Run.
@@ -39,8 +42,7 @@ WORKFLOW_VERSION="${FACTORY_WORKFLOW_VERSION:-v1}"
 STALE_HOURS="${FACTORY_STALE_HOURS:-2}"
 
 # Hard timeouts: a hung connection must fail the step, not burn the tick's
-# activeDeadline.
-gh() { timeout 60 /usr/local/bin/gh "$@"; }
+# activeDeadline (gh's is in factory.sh).
 kubectl() { timeout 120 /usr/local/bin/kubectl "$@"; }
 gitt() { timeout 300 /usr/bin/git "$@"; }
 timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -54,9 +56,6 @@ redact() {
   fi
 }
 
-# Durable approval gates: policy table, record I/O, publish gate, resume.
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-. "${SCRIPT_DIR}/approval.sh"
 # Run marker comment template (one comment per Run, edited in place).
 . "${SCRIPT_DIR}/marker.sh"
 
@@ -87,13 +86,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# DNS/netpol warm-up can fail the first auth probe; retry briefly.
-AUTH_OK=0
-for _a in 1 2 3 4 5 6; do
-  if timeout 10 gh auth status >/dev/null 2>&1; then AUTH_OK=1; break; fi
-  sleep 3
-done
-[ "${AUTH_OK}" = "1" ] || { echo "[orch] no gh auth" >&2; exit 1; }
+factory_gh_auth || { echo "[orch] no gh auth" >&2; exit 1; }
 
 # ---- 0. reclaim stranded in-progress issues --------------------------------
 # A tick that died between the label swap and the Job spawn orphans the
@@ -112,8 +105,8 @@ for LNUM in $(gh api "repos/${REPO}/issues?labels=${LABEL_WIP}&state=open&per_pa
     gh issue edit "${LNUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" >/dev/null 2>&1 || true
     continue
   fi
-  MARK_TS=$(gh api "repos/${REPO}/issues/${LNUM}/comments?per_page=100" --jq '[.[] | select(.body | contains("<!-- factory:run:"))] | last | .body // ""' 2>/dev/null \
-    | sed -n 's/.*factory:run:[0-9]*:\([0-9T:Z-]*\).*/\1/p' || true)
+  MARK_TS=$(gh api "repos/${REPO}/issues/${LNUM}/comments?per_page=100" --jq "[.[] | select(.body | contains(\"<!-- ${FACTORY_RUN_MARKER}\"))] | last | .body // \"\"" 2>/dev/null \
+    | sed -n "s/.*${FACTORY_RUN_MARKER}[0-9]*:\([0-9T:Z-]*\).*/\1/p" || true)
   AGE_H=$(python3 - "${MARK_TS}" << 'PY'
 import sys, datetime
 ts = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
@@ -132,11 +125,6 @@ PY
   fi
 done
 [ "${RECLAIMED}" = "0" ] || echo "[orch] reclaimed ${RECLAIMED} stranded issue(s)"
-
-# ---- 0b. resolve durable approval gates -----------------------------------
-# Issues on factory/pending-approval carry their approval record on the issue,
-# so any tick resolves a decision a human made in the panel.
-approval_resume "${REPO}" || true
 
 # ---- 1. find ONE queued issue ----------------------------------------------
 # One issue per tick so each run gets the full tick budget. The panel's
@@ -173,32 +161,28 @@ if [ "${EXISTING}" != "0" ]; then
   exit 0
 fi
 
-# ---- 2. resolve profile stack (image/SA/resources) ------------------------
-case "${PROFILE}" in
-  security)
-    PROFILE_CM="factory-profile-security"
-    WORKER_SA="factory-security"
-    WORKER_CPU="500m"; WORKER_MEM="4Gi"
-    ;;
-  code-pr|*)
-    PROFILE_CM="factory-profile-code-pr"
-    WORKER_SA="factory-worker"
-    WORKER_CPU="500m"; WORKER_MEM="12Gi"
-    ;;
-esac
-
-# Worker image comes from the profile ConfigMap; WORKER_IMAGE_OVERRIDE wins
-# (tests, manual dispatches). An unresolvable image parks the issue.
-if [ -n "${WORKER_IMAGE_OVERRIDE:-}" ]; then
-  WORKER_IMAGE="${WORKER_IMAGE_OVERRIDE}"
-else
-  WORKER_IMAGE=$(kubectl get configmap "${PROFILE_CM}" -n sandbox -o jsonpath='{.data.profile\.json}' 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['image'])") || WORKER_IMAGE=""
-fi
+# ---- 2. resolve the RunProfile ---------------------------------------------
+# The profile ConfigMap renders the whole worker Job (worker-job.jq);
+# WORKER_IMAGE_OVERRIDE swaps only its image (tests, manual dispatches). An
+# unknown profile or an incomplete one parks the issue.
+PROFILE_CM="factory-profile-${PROFILE}"
+PROFILE_JSON=$(kubectl get configmap "${PROFILE_CM}" -n sandbox -o jsonpath='{.data.profile\.json}' 2>/dev/null) || PROFILE_JSON=""
+WORKER_IMAGE=$(printf '%s' "${PROFILE_JSON}" | jq -r --arg name "${PROFILE}" --arg override "${WORKER_IMAGE_OVERRIDE:-}" '
+  select(.name == $name
+    and (.serviceAccount | type) == "string"
+    and (.activeDeadlineSeconds | type) == "number"
+    and (.backoffLimit | type) == "number"
+    and (.ttlSecondsAfterFinished | type) == "number"
+    and (.resources.limits["ephemeral-storage"] | type) == "string"
+    and (.workSizeLimit | type) == "string")
+  | if $override != "" then $override else .image end' 2>/dev/null) || WORKER_IMAGE=""
 case "${WORKER_IMAGE:-}" in
-  ghcr.io/*) ;;
+  ghcr.io/*)
+    PROFILE_JSON=$(printf '%s' "${PROFILE_JSON}" | jq -c --arg image "${WORKER_IMAGE}" '.image = $image')
+    ;;
   *)
-    echo "[orch] FATAL: cannot resolve worker image from configmap ${PROFILE_CM} (RBAC? profile not applied?)" >&2
-    update_status "failed" "Orchestrator could not resolve the worker image from configmap \`${PROFILE_CM}\` — check RBAC and that the profile is applied."
+    echo "[orch] FATAL: cannot resolve a complete RunProfile from configmap ${PROFILE_CM} (RBAC? profile not applied?)" >&2
+    update_status "failed" "Orchestrator could not resolve a complete RunProfile from configmap \`${PROFILE_CM}\` — check RBAC and that the profile is applied."
     gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
     exit 1
     ;;
@@ -216,16 +200,7 @@ MARKER_ID=${COMMENT_URL##*issuecomment-}
 JOB_NAME="factory-issue-${NUM}-$(date +%s)"
 gh issue view "${NUM}" -R "${REPO}" --json number,title,body,url > /tmp/issue.json
 
-# Per-repo verify command: the worker's stop condition. Pipe-free on purpose:
-# dash reports a pipeline's last exit status, so `cmd | tail` always passes.
-# Keep in sync with apps/factory/medic/run-medic.sh.
-VERIFY_CMD=""
-case "${REPO}" in
-  *launchpad*)    VERIFY_CMD="cargo check --workspace --all-targets" ;;
-  *plantry*|*personal-site*|*pr-czar*|*kline-services-bot*|*discord-bot*) VERIFY_CMD="npm run build" ;;
-  # Syntax-check every changed .sh (shellcheck when present, else dash -n).
-  *homelab*)      VERIFY_CMD="for f in \$(git diff --name-only HEAD -- '*.sh'); do shellcheck -s sh \"\$f\" 2>/dev/null || dash -n \"\$f\" || exit 1; done; echo verify-ok" ;;
-esac
+VERIFY_CMD="$(verify_for "${REPO}")"
 
 # ---- 3b. knowledge context ------------------------------------------------
 # Fail-open: knowledge-context.sh always writes a status record and exits 0,
@@ -318,57 +293,11 @@ print(json.dumps({
 PYEOF
 BRIEF_B64=$(base64 -w0 /tmp/brief.json)
 
-# Single-shot creation via generated manifest (kubectl create job has no
-# --env/--labels flags; a here-doc manifest needs no patch verbs).
-kubectl apply -f - << EOF2
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: ${JOB_NAME}
-  namespace: sandbox
-  labels:
-    factory.gwkline.io/issue: "${NUM}"
-    factory.gwkline.io/profile: ${PROFILE}
-spec:
-  backoffLimit: 0
-  activeDeadlineSeconds: 3600
-  # 24h: worker Jobs GCd automatically; live ledger is GitHub labels, not Jobs.
-  ttlSecondsAfterFinished: 86400
-  template:
-    metadata:
-      labels:
-        factory.gwkline.io/profile: ${PROFILE}
-    spec:
-      restartPolicy: Never
-      serviceAccountName: ${WORKER_SA}
-      automountServiceAccountToken: false
-      containers:
-        - name: worker
-          image: ${WORKER_IMAGE}
-          imagePullPolicy: Always
-          env:
-            - { name: FACTORY_REPO,  value: "${REPO}" }
-            - { name: FACTORY_ISSUE, value: "${NUM}" }
-            - { name: FACTORY_PROFILE, value: "${PROFILE}" }
-            # The worker builds its clone URL from GH_TOKEN, so the token never
-            # appears in the Job spec (ADR D6).
-            - name: GH_TOKEN
-              valueFrom:
-                secretKeyRef: { name: github-token, key: token }
-            - { name: WORKER_CMD,    value: "${WORKER_CMD:-claude --dangerously-skip-permissions}" }
-            - name: OPENCODE_AUTH_B64
-              valueFrom:
-                secretKeyRef: { name: factory-opencode-auth, key: auth-b64, optional: true }
-            - name: FACTORY_BRIEF_B64
-              value: '${BRIEF_B64}'            # shell substitutes
-            - { name: FACTORY_SECURITY_MODE, value: "per-issue" }
-          resources:
-            requests: { cpu: ${WORKER_CPU}, memory: 512Mi }
-            limits:   { cpu: "2",   memory: ${WORKER_MEM} }
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities: { drop: ["ALL"] }
-EOF2
+jq -n --argjson profile "${PROFILE_JSON}" --arg job "${JOB_NAME}" --arg issue "${NUM}" \
+  --arg repo "${REPO}" --arg brief_b64 "${BRIEF_B64}" \
+  --arg worker_cmd "${WORKER_CMD:-claude --dangerously-skip-permissions}" \
+  -f "${SCRIPT_DIR}/worker-job.jq" > /tmp/worker-job.json
+kubectl apply -f /tmp/worker-job.json
 echo "[orch] job ${JOB_NAME} created"
 
 update_status "running" "_Job \`${JOB_NAME}\` running._
@@ -381,9 +310,10 @@ ${KNOWLEDGE_BLOCK}
 
 # ---- 4. wait for completion -----------------------------------------------
 # Poll instead of `kubectl wait`, whose exit status dash + set -e can swallow.
-# 340 x 10s = the 3600s worker budget minus image pull/startup.
+# Stop 200s short of the profile's Job deadline (image pull/startup).
+WAIT_TICKS=$(( $(printf '%s' "${PROFILE_JSON}" | jq '.activeDeadlineSeconds') / 10 - 20 ))
 WAIT_OK=0
-for _i in $(seq 1 340); do
+for _i in $(seq 1 "${WAIT_TICKS}"); do
   PHASE=$(kubectl get job "${JOB_NAME}" -n sandbox -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
   if [ "${PHASE}" = "True" ]; then WAIT_OK=1; break; fi
   FAILED=$(kubectl get job "${JOB_NAME}" -n sandbox -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || echo "")
@@ -391,10 +321,10 @@ for _i in $(seq 1 340); do
   sleep 10
 done
 if [ "${WAIT_OK}" != "1" ]; then
-  LOGTAIL=$(kubectl logs "job/${JOB_NAME}" -n sandbox --tail=40 2>/dev/null | redact || true)
+  LOGTAIL=$(kubectl logs "job/${JOB_NAME}" -n sandbox --all-containers --tail=40 2>/dev/null | redact || true)
   # Bounded auto-retry: one extra attempt for transient failures (flaky
   # provider, netpol blip). 2 run markers max, then park in failed for a human.
-  ATTEMPTS=$(gh api "repos/${REPO}/issues/${NUM}/comments?per_page=100" --jq '[.[] | select(.body | contains("<!-- factory:run:"))] | length' 2>/dev/null || echo 2)
+  ATTEMPTS=$(gh api "repos/${REPO}/issues/${NUM}/comments?per_page=100" --jq "[.[] | select(.body | contains(\"<!-- ${FACTORY_RUN_MARKER}\"))] | length" 2>/dev/null || echo 2)
   if [ "${ATTEMPTS}" -lt 2 ]; then
     update_status "retrying" "Job failed (attempt ${ATTEMPTS}) — auto-retry queued.
 
@@ -434,7 +364,7 @@ if [ -z "${POD}" ]; then
 fi
 # Logs are fetched once: they carry both PATCH_B64 and REPORT_B64 blocks.
 POD_LOGS="/tmp/pod-logs-${NUM}.txt"
-kubectl logs -n sandbox "${POD}" > "${POD_LOGS}" 2>/dev/null || true
+kubectl logs -n sandbox "${POD}" -c worker > "${POD_LOGS}" 2>/dev/null || true
 EXTRACTED=0
 if grep -q "PATCH_B64_BEGIN" "${POD_LOGS}"; then
   sed -n '/---PATCH_B64_BEGIN---/,/---PATCH_B64_END---/p' "${POD_LOGS}" \
@@ -474,13 +404,12 @@ git config user.name "factory-bot"; git config user.email "factory@homelab.local
 git checkout -qb "${BRANCH}"
 if gitt apply --whitespace=nowarn "/tmp/patch-${NUM}.diff" 2>/tmp/apply-err; then
   echo "[orch] publish: patch applied ($(git diff --cached --stat | tail -1))"
+  # shellcheck disable=SC3057 # ${WORKER_MODEL:+...} spans a newline; not indexing
   git add -A && git commit -qm "factory: resolve #${NUM}
 
 Produced by homelab software factory (${PROFILE} profile).${WORKER_MODEL:+
 Model: ${WORKER_MODEL}}
 Refs #${NUM}"
-  # Push the branch before the gate: the approval binds to its head SHA, and
-  # opening the PR is the gated transition.
   echo "[orch] publish: pushing branch ${BRANCH}..."
   # A prior tick may have pushed this factory-owned branch and died; overwrite
   # it. A fresh clone has no tracking ref, so the lease must name the remote
@@ -500,39 +429,25 @@ $(printf '%s' "$PUSH_ERR" | head -5)
 \`\`\`"
     gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
   else
-  echo "[orch] publish: branch pushed"
-  HEAD_SHA=$(git rev-parse HEAD)
-  echo "[orch] publish: approval gate..."
-  GATE=$(approval_gate_publish "${REPO}" "${NUM}" "${PROFILE}" "${BRANCH}" "main" "/tmp/patch-${NUM}.diff" "${HEAD_SHA}") || true
-  echo "[orch] publish: gate verdict: ${GATE}"
-  case "${GATE}" in
-    proceed)
-      echo "[orch] publish: opening draft PR..."
-      PR_URL=$(approval_open_pr "${REPO}" "${NUM}" "${PROFILE}" "${BRANCH}" "main")
-      approval_mark_executed "${REPO}" "${NUM}" publish "${PR_URL}" || true
-      update_status "published" "Draft PR: ${PR_URL}
+  echo "[orch] publish: branch pushed; opening draft PR..."
+  PR_URL=$(gh pr create -R "${REPO}" --draft --head "${BRANCH}" --base main \
+    --title "${TITLE}" --body "## Factory Run — ${PROFILE}
+
+Closes #${NUM}
+
+> ⚠️ **Automated draft PR** produced by the homelab software factory.
+> Requires CI green — the factory merges green runs automatically; human review welcome anytime.
+
+**Verification:** see status comment on the linked issue.")
+  update_status "published" "Draft PR: ${PR_URL}
 
 ${REPORT_BLOCK}
 
 _Comment edited by factory; CI will run on the draft branch._"
-      gh issue edit "${NUM}" -R "${REPO}" \
-          --remove-label "${LABEL_WIP}" --add-label "${LABEL_DONE}" >/dev/null
-      gh issue comment "${NUM}" -R "${REPO}" --body "🏭 Draft PR ready: ${PR_URL}" >/dev/null
-      echo "[orch] published ${PR_URL}"
-      ;;
-    awaiting)
-      update_status "awaiting approval" "_Publish paused — a durable approval request was recorded on this issue (digest \`${HEAD_SHA}\`). Approve or deny in the panel; the next tick resumes automatically._"
-      gh issue edit "${NUM}" -R "${REPO}" \
-          --remove-label "${LABEL_WIP}" --add-label "${APPROVAL_LABEL}" >/dev/null
-      echo "[orch] issue #${NUM}: publish gated — awaiting approval (digest ${HEAD_SHA})"
-      ;;
-    *)
-      update_status "failed" "Publish ${GATE} — see the approval record comment on this issue."
-      gh issue edit "${NUM}" -R "${REPO}" \
-          --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
-      echo "[orch] issue #${NUM}: publish ${GATE} — parked in ${LABEL_FAILED}"
-      ;;
-  esac
+  gh issue edit "${NUM}" -R "${REPO}" \
+      --remove-label "${LABEL_WIP}" --add-label "${LABEL_DONE}" >/dev/null
+  gh issue comment "${NUM}" -R "${REPO}" --body "🏭 Draft PR ready: ${PR_URL}" >/dev/null
+  echo "[orch] published ${PR_URL}"
   fi
 else
   ERR=$(cat /tmp/apply-err | head -10)

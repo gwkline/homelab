@@ -3,7 +3,7 @@
 # on any PR write (merge / ready / label edits).
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR/../../../../"
+cd "$SCRIPT_DIR/../../../../" || exit 1
 
 SHIM="$PWD/apps/factory/reviewer/tests/bin"
 mkdir -p "$SHIM"

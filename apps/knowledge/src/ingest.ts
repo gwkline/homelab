@@ -9,17 +9,16 @@
  */
 
 import { chunkDocumentVersion, CHUNKER_VERSION, sha256Hex } from "./chunk.ts";
-import type { ChunkFormat, NormalizedDocumentVersion } from "./chunk.ts";
+import type { NormalizedDocumentVersion } from "./chunk.ts";
 import { embedChunkTexts } from "./embedder.ts";
 import type { EmbeddingWorkerConfig } from "./embedder.ts";
-import type { PgClient, PgPool } from "./pg-client.ts";
+import type { PgPool } from "./pg-client.ts";
 import { withTransaction } from "./pg-client.ts";
 import type { CitationAnchor } from "./pgvector.ts";
 import { toPgvectorLiteral } from "./pgvector.ts";
 import {
   buildDocumentUpsert,
   buildDocumentVersionInsert,
-  buildIngestJobClaim,
   buildNamespaceRegistration,
 } from "./schema.ts";
 import type { SchemaQuery } from "./schema.ts";
@@ -34,184 +33,7 @@ export interface IngestDocumentVersion extends NormalizedDocumentVersion {
 }
 
 const NAMESPACE_PATTERN = /^[\w.-]{1,128}$/u;
-const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const HASH_PATTERN = /^[0-9a-f]{64}$/u;
-
-export const isIngestIdentifier = (value: string): boolean =>
-  ID_PATTERN.test(value);
-
-export const MAX_JOB_ERROR_CHARS = 2000;
-
-const truncateJobError = (message: string): string =>
-  message.length > MAX_JOB_ERROR_CHARS
-    ? message.slice(0, MAX_JOB_ERROR_CHARS)
-    : message;
-
-export interface IngestJobSpec {
-  /** Idempotency key for the enqueue. */
-  jobId: string;
-  kind: string;
-  payload: Record<string, unknown>;
-  /** Higher runs first. Default 0. */
-  priority?: number;
-}
-
-export const buildEnqueueJobQuery = (job: IngestJobSpec): SchemaQuery => {
-  if (!isIngestIdentifier(job.jobId)) {
-    throw new TypeError(`ingest: invalid job id ${JSON.stringify(job.jobId)}`);
-  }
-  if (typeof job.kind !== "string" || !isIngestIdentifier(job.kind)) {
-    throw new TypeError(`ingest: invalid job kind ${JSON.stringify(job.kind)}`);
-  }
-  if (job.payload === null || typeof job.payload !== "object") {
-    throw new TypeError("ingest: job payload must be a JSON object");
-  }
-  const priority = job.priority ?? 0;
-  if (!Number.isInteger(priority) || priority < 0) {
-    throw new TypeError(
-      `ingest: priority must be an integer >= 0, got ${String(job.priority)}`
-    );
-  }
-  return {
-    params: [job.jobId, job.kind, JSON.stringify(job.payload), priority],
-    text: `INSERT INTO ingest_job (id, kind, payload, priority)
-VALUES ($1, $2, $3::jsonb, $4)
-ON CONFLICT (id) DO NOTHING`,
-  };
-};
-
-export const buildClaimJobQuery = (): SchemaQuery => buildIngestJobClaim();
-
-export const buildCompleteJobQuery = (jobId: string): SchemaQuery => ({
-  params: [jobId],
-  text: `UPDATE ingest_job
-SET status = 'done', heartbeat_at = now(), error = NULL
-WHERE id = $1`,
-});
-
-export const buildFailJobQuery = (
-  jobId: string,
-  error: string
-): SchemaQuery => ({
-  params: [jobId, truncateJobError(error)],
-  text: `UPDATE ingest_job
-SET status = 'failed', heartbeat_at = now(), error = $2
-WHERE id = $1`,
-});
-
-export interface IngestJobRecord {
-  attempts: number;
-  jobId: string;
-  kind: string;
-  payload: unknown;
-}
-
-export const parseIngestJobRow = (
-  row: Record<string, unknown>
-): IngestJobRecord => {
-  const { attempts, id: jobId } = row;
-  const { kind, payload } = row;
-  if (typeof jobId !== "string" || jobId.length === 0) {
-    throw new TypeError("ingest: claimed job has no string id");
-  }
-  if (typeof kind !== "string" || kind.length === 0) {
-    throw new TypeError(`ingest: claimed job ${jobId} has no string kind`);
-  }
-  let attemptsValue = Number.NaN;
-  if (typeof attempts === "number") {
-    attemptsValue = attempts;
-  } else if (typeof attempts === "string" && /^\d+$/u.test(attempts)) {
-    attemptsValue = Number(attempts);
-  }
-  if (!Number.isInteger(attemptsValue) || attemptsValue < 0) {
-    throw new TypeError(
-      `ingest: claimed job ${jobId} has a malformed attempts count`
-    );
-  }
-  return { attempts: attemptsValue, jobId, kind, payload };
-};
-
-const payloadRequiredString = (
-  record: Record<string, unknown>,
-  key: string,
-  jobId: string
-): string => {
-  const value = record[key];
-  if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`ingest: job ${jobId} payload has no string ${key}`);
-  }
-  return value;
-};
-
-const payloadChunkFormat = (
-  record: Record<string, unknown>,
-  jobId: string
-): ChunkFormat | undefined => {
-  const { format } = record;
-  if (format === undefined) {
-    return undefined;
-  }
-  if (format !== "markdown" && format !== "code" && format !== "text") {
-    throw new TypeError(
-      `ingest: job ${jobId} payload format ${JSON.stringify(format)} is not a chunk format`
-    );
-  }
-  return format;
-};
-
-const payloadNullableString = (
-  record: Record<string, unknown>,
-  key: string,
-  jobId: string
-): string | null | undefined => {
-  const value = record[key];
-  if (value === undefined || value === null || typeof value === "string") {
-    return value;
-  }
-  throw new TypeError(
-    `ingest: job ${jobId} payload ${key} must be a string or null`
-  );
-};
-
-export const parseDocumentPayload = (
-  job: IngestJobRecord
-): IngestDocumentVersion => {
-  const record =
-    typeof job.payload === "object" && job.payload !== null
-      ? (job.payload as Record<string, unknown>)
-      : null;
-  if (record === null) {
-    throw new TypeError(
-      `ingest: job ${job.jobId} payload is not a JSON object`
-    );
-  }
-  const { jobId } = job;
-  const content = payloadRequiredString(record, "content", jobId);
-  const documentId = payloadRequiredString(record, "documentId", jobId);
-  const externalId = payloadRequiredString(record, "externalId", jobId);
-  const source = payloadRequiredString(record, "source", jobId);
-  const versionId = payloadRequiredString(record, "versionId", jobId);
-  const namespace = payloadRequiredString(record, "namespace", jobId);
-  if (!NAMESPACE_PATTERN.test(namespace)) {
-    throw new TypeError(
-      `ingest: job ${jobId} payload has an invalid namespace`
-    );
-  }
-  const format = payloadChunkFormat(record, jobId);
-  const title = payloadNullableString(record, "title", jobId);
-  const url = payloadNullableString(record, "url", jobId);
-  return {
-    content,
-    documentId,
-    externalId,
-    namespace,
-    source,
-    versionId,
-    ...(format === undefined ? {} : { format }),
-    ...(title === undefined ? {} : { title }),
-    ...(url === undefined ? {} : { url }),
-  };
-};
 
 /** Used when the version-bump upsert returns nothing because content is unchanged. */
 export const buildDocumentCurrentVersionQuery = (
@@ -585,65 +407,4 @@ export const processDocumentVersion = async (
     totalChunks: chunks.length,
     versionId,
   };
-};
-
-export interface IngestJobResult {
-  error?: string;
-  outcome?: DocumentIngestOutcome;
-  status: "done" | "failed";
-}
-
-/** Per-chunk embedding failures are a `partial` outcome, not a job failure. */
-export const runIngestJob = async (
-  pool: PgPool,
-  job: IngestJobRecord,
-  options: IngestRunOptions
-): Promise<IngestJobResult> => {
-  try {
-    const doc = parseDocumentPayload(job);
-    const outcome = await processDocumentVersion(pool, doc, {
-      ...options,
-      jobId: job.jobId,
-    });
-    const complete = buildCompleteJobQuery(job.jobId);
-    await pool.query(complete.text, complete.params);
-    return { outcome, status: "done" };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const fail = buildFailJobQuery(job.jobId, message);
-    await pool.query(fail.text, fail.params);
-    return { error: truncateJobError(message), status: "failed" };
-  }
-};
-
-export const claimIngestJob = async (
-  client: PgClient
-): Promise<IngestJobRecord | null> => {
-  const built = buildClaimJobQuery();
-  const result = await client.query(built.text, built.params);
-  const [row] = result.rows;
-  return row === undefined ? null : parseIngestJobRow(row);
-};
-
-/** Claims and runs jobs until the queue is empty or `maxJobs` have run. */
-export const drainIngestJobs = async (
-  pool: PgPool,
-  options: IngestRunOptions,
-  limits: { maxJobs?: number } = {}
-): Promise<IngestJobResult[]> => {
-  const maxJobs = limits.maxJobs ?? 10;
-  if (!Number.isInteger(maxJobs) || maxJobs < 1) {
-    throw new TypeError(
-      `ingest: maxJobs must be an integer >= 1, got ${String(limits.maxJobs)}`
-    );
-  }
-  const results: IngestJobResult[] = [];
-  while (results.length < maxJobs) {
-    const job = await claimIngestJob(pool);
-    if (job === null) {
-      break;
-    }
-    results.push(await runIngestJob(pool, job, options));
-  }
-  return results;
 };

@@ -4,10 +4,14 @@ import { test } from "node:test";
 
 import type { Pool } from "pg";
 
+import {
+  KNOWLEDGE_SCHEMA_VERSION,
+  migrateKnowledgeSchema,
+  readKnowledgeSchemaVersion,
+} from "../../knowledge/src/schema.ts";
 import { createFixtureHandler } from "../server/fixture-worker.ts";
 import { PgIngestStore, createPgPool } from "../server/pg-store.ts";
 import type { QueueDbClient } from "../server/pg-store.ts";
-import { INGEST_SCHEMA_VERSION } from "../server/queue.ts";
 import { runWorkerCycle } from "../server/worker.ts";
 import { makeIngestInput, makeWorkerConfig, noopLogger } from "./helpers.ts";
 /**
@@ -80,9 +84,12 @@ test(
     const pool = await createPgPool(databaseUrl);
     try {
       const store = new PgIngestStore(wrapClient(pool));
-      await store.applySchema();
+      await migrateKnowledgeSchema(pool);
       await store.ping();
-      assert.ok(INGEST_SCHEMA_VERSION.length > 0);
+      assert.equal(
+        await readKnowledgeSchemaVersion(pool),
+        KNOWLEDGE_SCHEMA_VERSION
+      );
     } finally {
       await pool.end();
     }
@@ -98,7 +105,7 @@ test(
     const pool = await createPgPool(databaseUrl);
     try {
       const store = new PgIngestStore(wrapClient(pool));
-      await store.applySchema();
+      await migrateKnowledgeSchema(pool);
       for (let i = 0; i < 12; i += 1) {
         await store.enqueueIngest(testInput(run, i));
       }
@@ -138,7 +145,7 @@ test(
     const pool = await createPgPool(databaseUrl);
     try {
       const store = new PgIngestStore(wrapClient(pool));
-      await store.applySchema();
+      await migrateKnowledgeSchema(pool);
       const input = testInput(run, 0);
       const sequential = await store.enqueueIngest(input);
       const duplicate = await store.enqueueIngest(input);
@@ -174,7 +181,7 @@ test(
       const store = new PgIngestStore(wrapClient(pool), {
         defaultMaxAttempts: 2,
       });
-      await store.applySchema();
+      await migrateKnowledgeSchema(pool);
       const { job } = await store.enqueueIngest(testInput(run, 0));
 
       const [claimed] = await store.claim({ limit: 1, workerId: "w1" });
@@ -223,7 +230,7 @@ test(
     const pool = await createPgPool(databaseUrl);
     try {
       const store = new PgIngestStore(wrapClient(pool));
-      await store.applySchema();
+      await migrateKnowledgeSchema(pool);
       const input = testInput(run, 0);
       const { job } = await store.enqueueIngest(input);
 
@@ -288,7 +295,7 @@ test(
     const pool = await createPgPool(databaseUrl);
     try {
       const store = new PgIngestStore(wrapClient(pool));
-      await store.applySchema();
+      await migrateKnowledgeSchema(pool);
       for (let i = 0; i < 4; i += 1) {
         await store.enqueueIngest(testInput(run, i));
       }

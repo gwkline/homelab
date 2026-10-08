@@ -99,6 +99,8 @@ const knowledgeCfg = loadKnowledgeConfig();
 const knowledge = createKnowledgeClient(knowledgeCfg);
 
 const FACTORY_NS = "sandbox";
+// Matches the factory CronJobs' ttlSecondsAfterFinished.
+const FACTORY_JOB_TTL_SECONDS = 86_400;
 // Each factory repo and the orchestrator CronJob that serves it
 // (deploy/factory/base/orchestrator-*cronjob.yaml). A run clones that CronJob,
 // so a repo without one could never leave factory/queued.
@@ -128,27 +130,17 @@ const FACTORY_PROFILE_INFO = [
 const FACTORY_RUN_STATES: [string, string][] = [
   ["factory/queued", "queued"],
   ["factory/in-progress", "running"],
-  ["factory/pending-approval", "awaiting-approval"],
   ["factory/draft-pr", "published"],
   ["factory/needs-review", "needs-review"],
-  ["factory/approved", "approved"],
   ["factory/failed", "failed"],
   ["factory/cancelled", "cancelled"],
 ];
 const FACTORY_RUN_STATE_NAMES = new Set(FACTORY_RUN_STATES.map(([, s]) => s));
-const FACTORY_CANCELABLE = new Set(["queued", "running", "awaiting-approval"]);
+const FACTORY_CANCELABLE = new Set(["queued", "running"]);
 const FACTORY_RETRYABLE = new Set(["failed", "cancelled"]);
-const FACTORY_TERMINAL_DONE = new Set([
-  "published",
-  "needs-review",
-  "approved",
-]);
+const FACTORY_TERMINAL_DONE = new Set(["published", "needs-review"]);
 // States whose labels must be stripped when a run is cancelled or retried.
-const FACTORY_ACTIVE_LABELS = [
-  "factory/queued",
-  "factory/in-progress",
-  "factory/pending-approval",
-];
+const FACTORY_ACTIVE_LABELS = ["factory/queued", "factory/in-progress"];
 const FACTORY_FAILED_LABELS = ["factory/failed", "factory/cancelled"];
 const runStateFor = (issue: GhIssue): string | null => {
   const labels = new Set((issue.labels ?? []).map((l) => l.name));
@@ -1072,6 +1064,8 @@ const triggerFactoryJob = async (
     const jobName = `factory-issue-${issueNum}-${ts}`.slice(0, 63);
     // Inject FACTORY_ISSUE directly to avoid racing GitHub label propagation.
     const spec = structuredClone(template.spec ?? {}) as JobTemplateSpec;
+    // Finished Jobs never linger, even if the CronJob template loses its TTL.
+    spec.ttlSecondsAfterFinished ??= FACTORY_JOB_TTL_SECONDS;
     const containers = spec.template?.spec?.containers ?? [];
     if (containers[0]) {
       containers[0].env = withEnv(containers[0].env ?? [], {

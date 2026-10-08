@@ -11,20 +11,29 @@ labels:
 resources:
   - deployment.yaml
   - service.yaml
-  - datasources.yaml
-  - dashboards-provider.yaml
-  - alerting.yaml
   - netpol.yaml
+  - ntfy-secret.yaml
 
+# Hash-suffixed names, so any dashboard or provisioning change rolls Grafana.
+# Its database is an emptyDir, so the new pod holds exactly what these files
+# define and deleted rules disappear.
 configMapGenerator:
   - name: grafana-dashboards
     files:
-      - dashboards/homelab-chaos.json
       - dashboards/homelab-factory-jobs.json
       - dashboards/homelab-logs.json
       - dashboards/homelab-nodes.json
       - dashboards/homelab-postgres.json
       - dashboards/homelab-tailscale.json
       - dashboards/homelab-workloads.json
-    options:
-      disableNameSuffixHash: true
+  - name: grafana-datasources
+    files:
+      - provisioning/datasources/loki.yaml
+      - provisioning/datasources/victoriametrics.yaml
+  - name: grafana-dashboard-provider
+    files:
+      - provisioning/dashboards/provider.yaml
+  - name: grafana-alerting
+    files:
+      - provisioning/alerting/contact-points.yaml
+      - provisioning/alerting/rules.yaml

@@ -45,7 +45,7 @@ export const collectRunMetadata = (
     retrievalConfig,
     // Env override for migrations that identify themselves differently.
     schemaVersion:
-      process.env.KNOWLEDGE_SCHEMA_VERSION ?? KNOWLEDGE_SCHEMA_VERSION,
+      process.env.KNOWLEDGE_SCHEMA_VERSION ?? String(KNOWLEDGE_SCHEMA_VERSION),
     subset,
   };
 };

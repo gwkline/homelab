@@ -5,31 +5,23 @@
 # FACTORY_REVIEWER_AUTO_MERGE=true. gh + jq only; no LLM, no k8s API.
 set -eu
 
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+FACTORY_LIB_DIR="${FACTORY_LIB_DIR:-/usr/local/lib/factory}"
+[ -f "${FACTORY_LIB_DIR}/factory.sh" ] || FACTORY_LIB_DIR="${SCRIPT_DIR}/../lib"
+# shellcheck source=apps/factory/lib/factory.sh
+. "${FACTORY_LIB_DIR}/factory.sh"
+
 REPO="${FACTORY_REPO:?FACTORY_REPO required}"
 DRY="${FACTORY_REVIEWER_DRY_RUN:-false}"
 AUTO_MERGE="${FACTORY_REVIEWER_AUTO_MERGE:-false}"
 
-if [ -z "${GH_AUTH_SKIP:-}" ]; then
-  gh auth status >/dev/null 2>&1 || { echo "[reviewer] gh auth failed"; exit 1; }
-fi
-
-classify_checks() {
-  # $1 = comma-separated check conclusions/statuses (or empty)
-  # Empty (no checks yet, or the API call failed) is pending, never green.
-  case "$1" in
-    *failure*|*timed_out*|*action_required*|*stale*|*cancelled*) echo red ;;
-    ""|none)                                                     echo pending ;;
-    *pending*|*queued*|*in_progress*|*waiting*)                  echo pending ;;
-    success)                                                    echo green ;;
-    *,*) echo green ;;  # multiple conclusions, none red/pending => all green/skipped
-    *)                                                          echo unknown ;;
-  esac
-}
+factory_gh_auth || { echo "[reviewer] gh auth failed"; exit 1; }
 
 # Filter by branch, not label: lifecycle labels live on the linked issue.
 # Use printf '%s', never echo, for JSON: echo can mangle escapes.
-PRS_JSON="$(gh api --paginate --slurp "repos/${REPO}/pulls?state=open&per_page=100" \
-  | jq '[.[][] | select((.head.ref // "") | startswith("factory/issue-"))]')"
+PRS_PAGES="$(factory_retry gh api --paginate --slurp "repos/${REPO}/pulls?state=open&per_page=100")" \
+  || { echo "[reviewer] cannot list open PRs"; exit 1; }
+PRS_JSON="$(printf '%s' "$PRS_PAGES" | jq '[.[][] | select((.head.ref // "") | startswith("factory/issue-"))]')"
 
 printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
   NUM="$(printf '%s' "$PR" | jq -r '.number')"
@@ -42,9 +34,10 @@ printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
   esac
 
   SHA="$(printf '%s' "$PR" | jq -r '.head.sha')"
-  CHECKS="$(gh api "repos/${REPO}/commits/${SHA}/check-runs" 2>/dev/null | jq -r '.check_runs | map(.conclusion // .status) | join(",")')" || CHECKS=""
+  CHECKS_JSON="$(gh api "repos/${REPO}/commits/${SHA}/check-runs" 2>/dev/null)" || CHECKS_JSON=""
+  CHECKS="$(printf '%s' "$CHECKS_JSON" | jq -r '.check_runs | map(.conclusion // .status) | join(",")' 2>/dev/null)" || CHECKS=""
   CHECKS_STATE="${CHECKS:-none}"
-  CI="$(classify_checks "$CHECKS_STATE")"
+  CI="$(printf '%s' "$CHECKS_JSON" | classify_checks)"
 
   REVIEWS="$(gh api "repos/${REPO}/pulls/${NUM}/reviews" 2>/dev/null | jq -r '[.[] | select(.state=="APPROVED")] | length')" || REVIEWS=0
   CHANGES_REQUESTED="$(gh api "repos/${REPO}/pulls/${NUM}/reviews" 2>/dev/null | jq -r '[.[] | select(.state=="CHANGES_REQUESTED")] | length > 0')" || CHANGES_REQUESTED=false
@@ -92,14 +85,9 @@ printf '%s' "$PRS_JSON" | jq -c '.[]' | while IFS= read -r PR; do
         ;;
     esac
     if [ "$CI" = "green" ] && [ "$DRAFT" = "false" ] && [ "$DECISION" != "CHANGES_REQUESTED" ] \
-       && ! printf '%s' "$LABELS" | grep -q "factory/needs-review"; then
-      gh api -X POST "repos/${REPO}/issues/${NUM}/labels" -f 'labels[]=factory/needs-review' >/dev/null 2>&1 || true
-      echo "[reviewer] PR #${NUM}: labeled factory/needs-review"
-    fi
-    if [ "$CI" = "green" ] && [ "$DECISION" = "APPROVED" ] \
-       && ! printf '%s' "$LABELS" | grep -q "factory/approved"; then
-      gh api -X POST "repos/${REPO}/issues/${NUM}/labels" -f 'labels[]=factory/approved' >/dev/null 2>&1 || true
-      echo "[reviewer] PR #${NUM}: labeled factory/approved"
+       && ! printf '%s' "$LABELS" | grep -qF "${LABEL_NEEDS_REVIEW}"; then
+      gh api -X POST "repos/${REPO}/issues/${NUM}/labels" -f "labels[]=${LABEL_NEEDS_REVIEW}" >/dev/null 2>&1 || true
+      echo "[reviewer] PR #${NUM}: labeled ${LABEL_NEEDS_REVIEW}"
     fi
   elif [ "${AUTO_MERGE}" = "true" ] && [ "$DRY" = "true" ]; then
     echo "[reviewer] PR #${NUM}: auto-merge flag on but dry-run — would evaluate write actions"

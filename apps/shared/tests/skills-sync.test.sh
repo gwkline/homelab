@@ -19,6 +19,7 @@ die() { echo "FAIL: $1" >&2; exit 1; }
 command -v git >/dev/null 2>&1 || { echo "SKIP: git not available"; exit 0; }
 # Source (not execute) so the link-farm function can be exercised directly;
 # $0 is this test, so the library's driver mode stays dormant.
+# shellcheck source=apps/shared/skills-lib.sh
 . "$LIB"
 
 FIX="$(mktemp -d)"

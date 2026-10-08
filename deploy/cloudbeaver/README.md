@@ -1,34 +1,50 @@
 # CloudBeaver
 
-CloudBeaver (DBeaver's web client) as a tailnet-only read-only GUI for PostgreSQL, at `https://cloudbeaver.<tailnet>`. Single replica. All state (users, connections, encrypted credentials, saved scripts) lives on PVC `workspace-cloudbeaver-0`, which is not backed up. Anonymous access is off.
+CloudBeaver (DBeaver's web client) is a tailnet-only, read-only GUI for PostgreSQL, at `https://cloudbeaver.<tailnet>`. It runs as a single replica and is part of the core set (`clusters/home`). All state (users, connections, encrypted credentials, saved scripts) lives on PVC `workspace-cloudbeaver-0`, which is not backed up. Anonymous access is off.
+
+## Credentials
+
+| What | 1Password item (vault `homelab`) | How it is used |
+| --- | --- | --- |
+| Admin login | `cloudbeaver-admin`, fields `username`, `password` | ExternalSecret → Secret `cloudbeaver-admin` → `CB_ADMIN_NAME`/`CB_ADMIN_PASSWORD`. Read only when the workspace is empty; the pod does not start until the Secret exists. |
+| Read-only database role | `cloudbeaver-db`, fields `username` (`cloudbeaver_ro`), `password` | Not synced. Type it into the seeded connection once; CloudBeaver stores it encrypted. |
+
+No credential appears in the StatefulSet or a ConfigMap.
 
 ## Prerequisites
 
-1. `scripts/create-cloudbeaver-secret.sh` creates Secret `cloudbeaver-db` (keys `user`/`password`) from your password manager.
-2. A read-only role on the cluster (`kubectl cnpg psql pg-primary -n database`):
+1. Create both 1Password items.
+2. Create the read-only role. `kubectl cnpg psql pg-primary -n database -- -d knowledge`:
 
    ```sql
-   CREATE ROLE cloudbeaver_ro LOGIN PASSWORD '<from Secret cloudbeaver-db>';
-   GRANT CONNECT ON DATABASE factory TO cloudbeaver_ro;
+   CREATE ROLE cloudbeaver_ro LOGIN PASSWORD '<cloudbeaver-db password>';
+   GRANT CONNECT ON DATABASE knowledge TO cloudbeaver_ro;
    GRANT USAGE ON SCHEMA public TO cloudbeaver_ro;
    GRANT SELECT ON ALL TABLES IN SCHEMA public TO cloudbeaver_ro;
-   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO cloudbeaver_ro;
+   ALTER DEFAULT PRIVILEGES FOR ROLE knowledge_owner IN SCHEMA public GRANT SELECT ON TABLES TO cloudbeaver_ro;
    ```
 
-## Apply
+## First start
 
-```sh
-kubectl apply -k deploy/cloudbeaver/base
-```
+On an empty workspace, CloudBeaver:
 
-On first open, create the admin account. Then type the role's credentials into the seeded connection once; CloudBeaver stores them encrypted.
+- configures itself as server `homelab` with the 1Password admin;
+- copies `initial-datasources.yaml` in as connection "Postgres (knowledge)": `pg-primary-rw.database.svc:5432`, database `knowledge`, read-only.
+
+Log in as the admin, open the connection, and enter the `cloudbeaver-db` credentials once.
 
 ## Verify
 
-Log in, open the connection, and run `SELECT 1;`. INSERT, UPDATE, and DDL must fail.
+Run `SELECT 1;` on the connection. INSERT, UPDATE, and DDL must fail.
+
+## Network
+
+- Ingress: Tailscale proxies only, on 8978.
+- Egress: DNS, plus TCP 5432 to the CNPG primary pod in `database`. Postgres's `allow-sql-clients` must admit the `app: cloudbeaver` pod.
 
 ## Notes
 
 - Superuser work never goes through CloudBeaver. Use `kubectl cnpg psql`.
-- Recovery: re-apply. An empty workspace is re-seeded, so you recreate the admin and re-enter the connection credentials; saved scripts are lost.
-- Rotation: update the password manager entry, re-run the secret script, `ALTER ROLE ... PASSWORD`, then update the connection in the admin UI.
+- **Recovery:** delete the PVC and the pod. You get the seeded admin and connection back, then re-enter the role credentials; saved scripts are lost.
+- **Admin rotation:** update `cloudbeaver-admin` in 1Password, then set the same password in Administration → Users. The env var only seeds an empty workspace.
+- **Role rotation:** update `cloudbeaver-db` in 1Password, run `ALTER ROLE cloudbeaver_ro PASSWORD ...`, then edit the connection's credentials.
