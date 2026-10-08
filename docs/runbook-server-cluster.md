@@ -23,7 +23,7 @@ From bare machines to Ready k3s nodes, plus the one-time external accounts. One 
 ## 2. Ubuntu Server 24.04 LTS (per machine)
 
 1. Flash `ubuntu-24.04.x-live-server-amd64.iso` with [balenaEtcher](https://etcher.balena.io/) or `dd`.
-2. Installer: Ubuntu Server (no extras), DHCP, **use entire disk** (no LVM), user `<user>`, hostname `agent-1`, `agent-2`, …, **[x] Install OpenSSH server**, no snaps.
+2. Installer: Ubuntu Server (no extras), DHCP, **use entire disk** with the default LVM layout (bootstrap grows the root volume to fill it), user `<user>`, hostname `agent-1`, `agent-2`, …, **[x] Install OpenSSH server**, no snaps.
 3. Reboot, note the IP from the summary screen or your router, and make it a DHCP reservation for this machine. The server's address is in `clusters/home/node/node.yaml`; NetworkPolicies allow the Kubernetes API by it, so update that file if the address differs.
 
 Headless physical hosts also need `nomodeset`, or a reboot without a monitor can hang:
@@ -82,7 +82,7 @@ The API certificate covers the node's tailnet name and IP (bootstrap writes them
 | GitHub | Fine-grained PAT, Contents read-only → item `github-readonly`; optional writer PAT → `github-writer` | [deploy/github-tokens/README.md](../deploy/github-tokens/README.md) |
 | GHCR | After CI's first push, make each `ghcr.io/<github-user>/homelab/*` package public (Packages → Package settings → visibility), or create `ghcr-pull` Secrets | `ImagePullBackOff` means this step was skipped |
 
-Then follow [rebuild-runbook.md](rebuild-runbook.md) from step 2.
+Then continue with [rebuild-runbook.md](rebuild-runbook.md) section 3.2; 3.1 is the bootstrap above.
 
 ## Upgrading pinned k3s / Tailscale
 

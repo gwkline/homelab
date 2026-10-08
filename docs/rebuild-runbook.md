@@ -13,7 +13,7 @@ Only documented sources; anything else you need is a drill finding (section 6).
 | Clean Ubuntu 24.04 host (or a VM running the same scripts) | [runbook-server-cluster.md](runbook-server-cluster.md) steps 1–4 |
 | `kubectl` and `helm` on the driver | same, step 4 |
 | `OP_SERVICE_ACCOUNT_TOKEN` | 1Password; read-only on vault `homelab`. Entered via env or stdin only |
-| Everything else (GitHub tokens, Tailscale OAuth, knowledge credentials) | synced from vault `homelab` by ESO ([secrets-inventory.md](secrets-inventory.md)) |
+| Everything else (GitHub tokens and App, Tailscale OAuth, model key, Postgres role passwords, Grafana, knowledge credentials) | synced from vault `homelab` by ESO. Every item in [secrets-inventory.md](secrets-inventory.md) must exist before 3.6, or its ExternalSecret stays not Ready and 3.8 fails |
 
 ## 2. Pinned versions
 
@@ -90,7 +90,7 @@ kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
 kubectl apply -k clusters/home
 ```
 
-Namespaces, policies, the ClusterImagePolicy, GitHub-token and Tailscale ExternalSecrets, postgres, and every core workload, in dependency order ([clusters/home/README.md](../clusters/home/README.md)). Preview with `kubectl kustomize clusters/home`. From here `deploy/deployer` keeps homelab images current every 5 minutes.
+Namespaces, policies, the ClusterImagePolicy, the ClusterSecretStore and every ExternalSecret, postgres, the metrics and logging stack (VictoriaMetrics, Loki, Grafana), and every core workload, in dependency order ([clusters/home/README.md](../clusters/home/README.md)). Preview with `kubectl kustomize clusters/home`. From here `deploy/deployer` keeps homelab images current every 5 minutes.
 
 ### 3.7 Tailscale operator
 
@@ -114,17 +114,29 @@ kubectl apply -k deploy/operator-policies/base
 ### 3.8 Verify
 
 ```sh
-./scripts/rebuild-check.sh   # drift, pods, ESO sync, tailnet HTTPS, exposure annotations
+./scripts/rebuild-check.sh --phase cluster
 ```
+
+It fails on any of these:
+
+- an unreachable API server;
+- a `kubectl diff` error, or drift;
+- a node under pressure or off the pinned k3s version;
+- an API endpoint that isn't the node IP in `clusters/home/node/node.yaml`;
+- a Deployment or StatefulSet not ready;
+- policy-controller unavailable;
+- a secret store or ExternalSecret not Ready;
+- pg-primary unhealthy;
+- no deployer success in 15 minutes;
+- a tailnet UI not answering HTTPS.
+
+It also lists live objects the repo doesn't define, as a report rather than a failure. After 3.10, `./scripts/rebuild-check.sh` (all phases) adds the checks that need the manual steps.
 
 ### 3.9 Components outside the core set
 
 Apply as needed; each README lists its prerequisites:
 
 ```sh
-kubectl apply -k deploy/victoriametrics/base
-kubectl apply -k deploy/loki/base
-kubectl apply -k deploy/grafana/base      # needs 1Password grafana-admin, grafana-ntfy
 kubectl apply -k deploy/executor/base     # optional Secret executor-admin
 kubectl apply -k deploy/knowledge/base    # needs 1Password knowledge-db / knowledge-api-token
 ```
@@ -141,13 +153,15 @@ Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart &&
 | homepage tailnet links | `kubectl -n agents create configmap homepage-env --from-literal=tailnet-name=<tailnet>.ts.net` ([deploy/tailscale/README.md](../deploy/tailscale/README.md#tailnet-dns-suffix)) |
 | panel, homepage | open both over HTTPS; links resolve |
 
+Then `./scripts/rebuild-check.sh --phase manual` (the hermes gateway is running).
+
 ## 4. Timed drill
 
 ```sh
 ./scripts/recovery-drill.sh --from "$DRILL_START"   # prompts for the 1Password token unless OP_SERVICE_ACCOUNT_TOKEN is set
 ```
 
-Runs and times: ESO → namespaces + 1Password token → image policy → CNPG → core set → Tailscale operator → pods ready → tailnet HTTPS → `rebuild-check.sh`, then prints per-stage times and total RTO. Any failed stage fails the drill.
+Runs and times: ESO → namespaces + 1Password token → image policy → CNPG → core set → Tailscale operator and operator-namespace policies → pods ready → tailnet HTTPS → first deployer success → `rebuild-check.sh --phase cluster`, then prints per-stage times and total RTO. Any failed stage fails the drill. It stops at the cluster phase: 3.10 needs a human, so time it separately as the manual phase.
 
 ## 5. Drill log
 
@@ -161,4 +175,4 @@ No completed runs yet. After two clean runs, set **target RTO = median × 1.5, r
 
 ## 6. Manual interventions
 
-Every undocumented step during a drill becomes a step in this runbook or a tracked issue before the next run. Known manual steps: the 1Password token (3.3), and hermes portal setup and t3code pairing (3.10).
+Every undocumented step during a drill becomes a step in this runbook or a tracked issue before the next run. Known manual steps: the 1Password token (3.3), and hermes portal setup, t3code pairing and CLI logins (3.10). CloudBeaver's read-only connection credentials are typed into its UI ([deploy/cloudbeaver/README.md](../deploy/cloudbeaver/README.md)), and Executor (3.9) lists its admin and client tokens in its README.
