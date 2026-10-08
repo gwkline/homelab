@@ -29,7 +29,7 @@ FACTORY_LIB_DIR="${FACTORY_LIB_DIR:-/usr/local/lib/factory}"
 
 REPO="${FACTORY_REPO:?FACTORY_REPO required (owner/name)}"
 # Repo allowlist (mirrors the panel's /api/factory/run allowlist).
-WHITELIST="${FACTORY_REPOS:-gwkline/homelab,gwkline/launchpad,gwkline/plantry,gwkline/personal-site,gwkline/kline-services-bot,gwkline/discord-bot,gwkline/pr-czar}"
+WHITELIST="${FACTORY_REPOS:-gwkline/homelab,gwkline/launchpad}"
 case ",${WHITELIST}," in
   *",${REPO},"*) ;;
   *) echo "[orch] repo ${REPO} not whitelisted for factory runs" >&2; exit 78 ;;
