@@ -40,7 +40,7 @@ Worker pods run at the `restricted` Pod Security level.
 
 ## Run identity and idempotency
 
-- One Run = one issue + one profile. The branch `factory/issue-<N>/<profile>` is the dedupe key: before creating anything the orchestrator looks for an existing branch/PR with that head and updates or skips instead of duplicating.
+- One Run = one issue + one profile. The branch `factory/issue-<N>/<profile>` is the dedupe key: before creating anything the orchestrator looks for an existing branch/PR with that head and repairs (see Medic), updates, or skips instead of duplicating.
 - Run marker comment `<!-- factory:run:<issue>:<ts> -->`, edited in place, carries status, profile/workflow (`code-pr@v1`), attempt, the worker report on success, and a redacted log tail on failure.
 - A worker failure retries once (two run markers max), then the issue lands on `factory/failed`.
 - Retrying can't help in some cases. The orchestrator then parks the issue on `factory/failed` + `factory/stuck` at once, with the reason in the run comment:
@@ -64,14 +64,16 @@ PR `isDraft`, `reviewDecision`, and check rollup are derived state; labels remai
 
 ## Medic
 
-Per freshly red PR (one repair per tick, at most one in flight) the medic posts a repair brief (failing checks, truncated logs, diff, verify command) and requeues the linked issue. Retry state lives in markers on the PR:
+Per freshly red PR (one repair per tick, at most one in flight) the medic posts a repair brief (failing checks, truncated logs, diff, verify command) on the PR and requeues the linked issue. Retry state lives in markers on the PR:
 
 | Marker | Meaning |
 | --- | --- |
 | `<!-- factory:medic:<head-sha>:queued -->` | repair dispatched for that head |
 | `<!-- factory:medic:<head-sha>:failed -->` | that head went red again after a repair |
 
-Budget: `FACTORY_MEDIC_MAX_ATTEMPTS` (3) failures per head SHA; a new push resets it. Exhausted → issue relabeled `factory/stuck` + give-up comment. The medic's only write path is a fast-forward push to the PR's existing `factory/issue-<N>/<profile>` branch (no force, no new branches, never `main`).
+The orchestrator consumes the requeue as a repair run instead of skipping it (a plain skip would relabel the issue `factory/draft-pr` and the red PR would strand): a queued issue whose PR exists and whose latest `queued` marker matches the live head runs the worker on the PR branch — the clone checks out `factory/issue-<N>/<profile>`, the brief carries the failing checks of the pinned head, and the fix is pushed to the same branch with a push lease on that head, so a repair can never overwrite a commit made after the medic looked. A requeue whose head already moved (its repair ran) or whose PR is no longer red is handed back to `factory/draft-pr`; the medic re-derives against the live head on its next sweep.
+
+Budget: `FACTORY_MEDIC_MAX_ATTEMPTS` (3) failures per head SHA; a new push resets it. Exhausted → issue relabeled `factory/stuck` + give-up comment. The medic itself only writes GitHub comments and labels; the repair push is the orchestrator's (same branch, leased, never `main`, never a new branch).
 
 ## Sweeper
 

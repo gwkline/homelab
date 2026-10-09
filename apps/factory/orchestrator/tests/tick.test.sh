@@ -3,7 +3,9 @@
 # An ordinary patch becomes a pushed branch and a draft PR. These are parked
 # for a human instead: a patch touching a merge-gate path, an issue needing a
 # capability its profile lacks, and a run that cannot be attempted. An
-# ordinary failure still retries.
+# ordinary failure still retries. A medic requeue (queued marker on the PR)
+# turns the tick into a repair run on the PR branch; a requeue without a live
+# red PR is skipped or handed back instead.
 set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
@@ -44,7 +46,11 @@ cat > "${FIX}/bin/kubectl" << 'EOF'
 echo "kubectl $*" >> "${FIX}/kubectl.log"
 case "$*" in
   *"get configmap"*) cat "${FIX}/profile.json" ;;
-  "apply -f "*) echo "job.batch/x created" ;;
+  "apply -f "*)
+    # Keep the rendered Job so tests can inspect the clone ref and the brief.
+    cp /tmp/worker-job.json "${FIX}/worker-job.json" 2>/dev/null || true
+    echo "job.batch/x created"
+    ;;
   *"get job"*Complete*) [ -n "${JOB_FAILED:-}" ] || echo True ;;
   *"get job"*Failed*) [ -z "${JOB_FAILED:-}" ] || echo True ;;
   *"get pods"*exitCode*) echo "${EXIT_CODES:-}" ;;
@@ -60,9 +66,11 @@ esac
 EOF
 cat > "${FIX}/bin/gh" << 'EOF'
 #!/bin/sh
-# Serves one queued issue (labelled with NEEDS, one earlier run marker);
-# records every call in gh.log.
+# Serves one queued issue (labelled with NEEDS, one earlier run marker); a PR
+# (PR_HEAD_SHA + PR_NUMBER) and its medic/check fixtures for repair ticks.
+# Records every call in gh.log.
 echo "gh $*" >> "${FIX}/gh.log"
+if [ -z "${CHECKS_JSON:-}" ]; then CHECKS_JSON='{"check_runs":[]}'; fi
 case "$*" in
   "auth status") ;;
   *"issues?labels=factory/in-progress"*) ;;
@@ -70,7 +78,15 @@ case "$*" in
   "api repos/"*"/issues/${ISSUE} --jq .title") echo "Fixture issue" ;;
   "api repos/"*"/issues/${ISSUE} --jq [.labels"*) echo "${NEEDS:-}" ;;
   *"issues/${ISSUE}/comments?per_page=100"*) echo 1 ;;
-  "pr list"*) echo 0 ;;
+  *--paginate*) printf '%s\n' "${PR_COMMENTS:-[]}" ;;
+  *"commits/"*"check-runs"*) printf '%s\n' "${CHECKS_JSON}" ;;
+  "pr list"*)
+    if [ -n "${PR_HEAD_SHA:-}" ]; then
+      printf '[{"number":%s,"headRefOid":"%s"}]\n' "${PR_NUMBER:-500}" "${PR_HEAD_SHA}"
+    else
+      echo '[]'
+    fi
+    ;;
   "issue comment ${ISSUE}"*) echo "https://github.com/gwkline/homelab/issues/${ISSUE}#issuecomment-99" ;;
   "issue view"*) printf '{"number":%s,"title":"Fixture issue","body":"edit a file","url":"u"}\n' "${ISSUE}" ;;
   "pr create"*) echo "https://github.com/gwkline/homelab/pull/500" ;;
@@ -93,6 +109,21 @@ tick() { # $1 = issue number, rest = env assignments; runs one orchestrator tick
     || { cat "${FIX}/tick-${_issue}.log"; fail "tick for #${_issue} exited non-zero"; }
 }
 branch_exists() { git -C "${FIX}/origin.git" rev-parse -q --verify "refs/heads/factory/issue-$1/code-pr" > /dev/null; }
+
+# A ci-red factory branch for the medic-repair scenarios: one commit on
+# factory/issue-46/code-pr with a deliberately broken shell file.
+git -C "${FIX}/seed" checkout -qb factory/issue-46/code-pr
+printf '#!/bin/sh\necho (broken\n' > "${FIX}/seed/broken.sh"
+git -C "${FIX}/seed" add -A
+git -C "${FIX}/seed" commit -qm "break: deliberate red head"
+git -C "${FIX}/seed" push -q origin factory/issue-46/code-pr
+MEDIC_SHA="$(git -C "${FIX}/seed" rev-parse HEAD)"
+MAIN_SHA="$(git -C "${FIX}/seed" rev-parse main)"
+git -C "${FIX}/seed" checkout -q main
+# The medic's requeue marker, posted on the PR for the pinned head.
+PR_COMMENTS="$(printf '[ [ {"body": "<!-- factory:medic:%s:queued -->\\n## 🩺 Factory Medic brief — repair this ci-red PR"} ] ]' "${MEDIC_SHA}")"
+RED_CHECKS='{"check_runs":[{"name":"ci / verify","conclusion":"failure","output":{"summary":"shellcheck failed on broken.sh"}}]}'
+GREEN_CHECKS='{"check_runs":[{"name":"ci / verify","conclusion":"success","output":{"summary":"ok"}}]}'
 
 # --- 1. an ordinary patch is pushed and opened as a draft PR ---------------------------
 patch_for README.md > "${FIX}/patch.diff"
@@ -137,3 +168,49 @@ tick 45 JOB_FAILED=1 EXIT_CODES="0 1" JOB_LOG="[worker] agent command failed (ex
 grep -q "issue edit 45 .*--remove-label factory/in-progress --add-label factory/queued" "${FIX}/gh.log" \
   || fail "an ordinary failure was not requeued for its retry"
 echo "PASS: an ordinary worker failure is still requeued for one retry"
+
+# --- 6. a medic requeue on a red PR runs a repair worker on the PR branch --------------
+patch_for README.md > "${FIX}/patch.diff"
+tick 46 PR_HEAD_SHA="${MEDIC_SHA}" PR_NUMBER=507 PR_COMMENTS="${PR_COMMENTS}" CHECKS_JSON="${RED_CHECKS}"
+grep -q '^kubectl apply' "${FIX}/kubectl.log" \
+  || { cat "${FIX}/tick-46.log"; fail "medic requeue did not spawn a repair worker"; }
+if grep -q '^gh pr create' "${FIX}/gh.log"; then fail "a repair opened a second PR"; fi
+grep -q "issue edit 46 .*--remove-label factory/in-progress --add-label factory/draft-pr" "${FIX}/gh.log" \
+  || fail "repaired issue not moved to factory/draft-pr"
+# The fix landed on the SAME branch, one commit on top of the pinned head.
+[ "$(git -C "${FIX}/origin.git" rev-parse "refs/heads/factory/issue-46/code-pr^")" = "${MEDIC_SHA}" ] \
+  || fail "repair commit is not on top of the medic-pinned head"
+git -C "${FIX}/origin.git" log -1 --format=%s refs/heads/factory/issue-46/code-pr | grep -q "factory(medic): repair #46" \
+  || fail "repair commit message wrong"
+grep -q "Repair pushed to" "${FIX}/status.md" || { cat "${FIX}/status.md"; fail "run comment does not record the repair"; }
+# The clone checks out the PR branch and the brief carries PR, pinned head and checks.
+jq -e --arg b "factory/issue-46/code-pr" \
+  '.spec.template.spec.initContainers[0].env | any(.name == "FACTORY_CLONE_REF" and .value == $b)' \
+  "${FIX}/worker-job.json" > /dev/null || fail "repair Job does not clone the PR branch"
+jq -r '.spec.template.spec.containers[0].env[] | select(.name == "FACTORY_BRIEF_B64") | .value' \
+  "${FIX}/worker-job.json" | base64 -d | jq -e --arg sha "${MEDIC_SHA}" \
+  '.repair.pr == 507 and .repair.branch == "factory/issue-46/code-pr" and .repair.head_sha == $sha
+    and (.repair.failing_checks | contains("ci / verify"))' > /dev/null \
+  || fail "repair brief lacks the PR, pinned head or failing checks"
+echo "PASS: a medic requeue on a red PR runs a repair worker on the PR branch"
+
+# --- 7. control: a PR without a medic requeue is still skipped as a duplicate ----------
+tick 47 PR_HEAD_SHA="${MEDIC_SHA}" PR_NUMBER=508
+if grep -q '^kubectl apply' "${FIX}/kubectl.log"; then fail "duplicate-PR skip spawned a worker"; fi
+grep -q "issue edit 47 .*--remove-label factory/queued --remove-label factory/in-progress --add-label factory/draft-pr" "${FIX}/gh.log" \
+  || fail "duplicate-PR issue not converged to factory/draft-pr"
+echo "PASS: a PR without a medic requeue is still skipped as a duplicate"
+
+# --- 8. a stale medic requeue (branch moved) is handed back, not run --------------------
+tick 48 PR_HEAD_SHA="${MAIN_SHA}" PR_NUMBER=508 PR_COMMENTS="${PR_COMMENTS}" CHECKS_JSON="${RED_CHECKS}"
+if grep -q '^kubectl apply' "${FIX}/kubectl.log"; then fail "stale medic requeue spawned a worker"; fi
+grep -q "issue edit 48 .*--remove-label factory/queued --add-label factory/draft-pr" "${FIX}/gh.log" \
+  || fail "stale medic requeue not handed back to factory/draft-pr"
+echo "PASS: a stale medic requeue is handed back without a run"
+
+# --- 9. a medic requeue on a green PR is not repaired -----------------------------------
+tick 49 PR_HEAD_SHA="${MEDIC_SHA}" PR_NUMBER=509 PR_COMMENTS="${PR_COMMENTS}" CHECKS_JSON="${GREEN_CHECKS}"
+if grep -q '^kubectl apply' "${FIX}/kubectl.log"; then fail "a green PR with a medic requeue spawned a worker"; fi
+grep -q "issue edit 49 .*--remove-label factory/queued --add-label factory/draft-pr" "${FIX}/gh.log" \
+  || fail "green PR with a medic requeue not handed back to factory/draft-pr"
+echo "PASS: a green PR with a medic requeue is left to the reviewer"

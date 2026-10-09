@@ -5,7 +5,8 @@
 # agent container starts with no token in its env, files or /proc.
 #
 #   in   FACTORY_REPO (owner/name); GH_TOKEN, GITHUB_TOKEN or GITHUB_TOKEN_FILE
-#        (optional: public repos clone anonymously)
+#        (optional: public repos clone anonymously); FACTORY_CLONE_REF
+#        (optional: a branch to check out after the clone — medic repair runs)
 #   out  ${WORK_DIR}/repo with a credential-free origin; skills in
 #        SKILLS_TARGET with their status in SKILLS_STATUS_FILE
 #   exit 0 cloned · 1 clone failed or stalled (retryable) · 78 cannot attempt:
@@ -65,6 +66,27 @@ else
   fi
   git -C "${WORK_DIR}/repo" remote set-url origin "https://github.com/${REPO}.git"
   echo "[prepare] cloned ${REPO} @ $(git -C "${WORK_DIR}/repo" rev-parse --short HEAD)"
+fi
+
+# Medic repair runs (apps/factory/orchestrator/run.sh) work on the existing PR
+# branch, not the default branch: check it out so the worker's patch diffs
+# against the branch tip the fix is pushed onto. A vanished branch means the
+# PR was merged or closed while the repair queued — cannot attempt.
+if [ -n "${FACTORY_CLONE_REF:-}" ]; then
+  _pcr_rc=0
+  PREPARE_TOKEN="${PREPARE_TOKEN}" GIT_ASKPASS="${ASKPASS}" GIT_TERMINAL_PROMPT=0 \
+    git -C "${WORK_DIR}/repo" fetch -q --depth 20 origin "refs/heads/${FACTORY_CLONE_REF}" || _pcr_rc=$?
+  if [ "${_pcr_rc}" -ne 0 ]; then
+    if PREPARE_TOKEN="${PREPARE_TOKEN}" GIT_ASKPASS="${ASKPASS}" GIT_TERMINAL_PROMPT=0 \
+      git -C "${WORK_DIR}/repo" ls-remote --exit-code origin "refs/heads/${FACTORY_CLONE_REF}" >/dev/null 2>&1; then
+      echo "[prepare] FATAL: fetch of ${FACTORY_CLONE_REF} failed (or stalled >30s)" >&2
+      exit 1
+    fi
+    echo "[prepare] CANNOT ATTEMPT: ${FACTORY_CLONE_REF} is gone from origin (PR merged or closed?)" >&2
+    exit 78
+  fi
+  git -C "${WORK_DIR}/repo" checkout -q FETCH_HEAD
+  echo "[prepare] checked out ${FACTORY_CLONE_REF} @ $(git -C "${WORK_DIR}/repo" rev-parse --short HEAD)"
 fi
 
 # Pinned private skills (apps/shared/skills-lib.sh), required when SKILLS_REF
