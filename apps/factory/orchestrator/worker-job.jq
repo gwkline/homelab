@@ -5,7 +5,11 @@
 #
 #   jq -n --argjson profile <profile.json> --arg job <name> --arg issue <n> \
 #     --arg repo <owner/name> --arg brief_b64 <b64> --arg worker_cmd <cmd> \
+#     --arg clone_ref <branch|empty> \
 #     -f worker-job.jq
+#
+# clone_ref is set only for medic repair runs: the clone checks out the PR's
+# existing branch instead of the default branch.
 
 # Container half of the restricted Pod Security level.
 def restricted: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}};
@@ -45,10 +49,17 @@ def restricted: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
           image: $profile.image,
           imagePullPolicy: "Always",
           command: ["/usr/local/bin/prepare"],
-          env: [
-            {name: "FACTORY_REPO", value: $repo},
-            {name: "GH_TOKEN", valueFrom: {secretKeyRef: {name: "github-token", key: "token"}}}
-          ],
+          env: (
+            [
+              {name: "FACTORY_REPO", value: $repo},
+              {name: "GH_TOKEN", valueFrom: {secretKeyRef: {name: "github-token", key: "token"}}}
+            ]
+            # Repair runs work on the existing PR branch, not the default one.
+            + (if ($clone_ref // "") != ""
+               then [{name: "FACTORY_CLONE_REF", value: $clone_ref}]
+               else []
+               end)
+          ),
           resources: {
             requests: {cpu: "100m", memory: "256Mi"},
             limits: {

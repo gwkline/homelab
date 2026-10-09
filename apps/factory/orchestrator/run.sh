@@ -158,16 +158,49 @@ echo "[orch] $(timestamp) picked issue #${NUM}: ${TITLE}"
 BRANCH="factory/issue-${NUM}/${PROFILE}"
 RUN_TS=$(timestamp)
 
-# ---- idempotency: skip if a PR already exists for this issue+profile ----
-EXISTING=$(gh pr list -R "${REPO}" --head "${BRANCH}" --state all --json number --jq 'length')
-if [ "${EXISTING}" != "0" ]; then
-  echo "[orch] branch ${BRANCH} already has PR — skipping duplicate"
-  # A prior publisher may have died before converging labels; repair them so
-  # the collector does not requeue the issue forever.
-  gh issue edit "${NUM}" -R "${REPO}" \
-    --remove-label "${LABEL_QUEUED}" --remove-label "${LABEL_WIP}" \
-    --add-label "${LABEL_DONE}" >/dev/null
-  exit 0
+# ---- idempotency: skip, or repair, when a PR already exists ------------------
+# A PR on this branch normally means the run finished: converge the label and
+# skip. One exception: a medic requeue (its `factory:medic:<sha>:queued`
+# marker on the PR, pinned to the live head) turns the tick into a repair
+# run — the worker is briefed with the failing checks and the fix is pushed
+# to the same branch. Without this the skip would swallow every medic
+# requeue, so a red PR could never be repaired.
+# (No pre-declarations here: an empty exported var would shadow the parent
+# environment into every gh subprocess below.)
+PR_EXISTING=$(gh pr list -R "${REPO}" --head "${BRANCH}" --state all --json number,headRefOid)
+if [ "$(printf '%s' "${PR_EXISTING}" | jq 'length')" != "0" ]; then
+  REPAIR_PR=$(printf '%s' "${PR_EXISTING}" | jq -r '.[0].number')
+  PR_HEAD=$(printf '%s' "${PR_EXISTING}" | jq -r '.[0].headRefOid')
+  # Head SHA of the latest repair dispatch marker on the PR (empty: none).
+  MEDIC_SHA=$(gh api --paginate --slurp "repos/${REPO}/issues/${REPAIR_PR}/comments" 2>/dev/null \
+    | jq -r '[.. | objects | select((.body // "") | test("factory:medic:[0-9a-f]{40}:queued")) | .body] | last // ""' 2>/dev/null \
+    | sed -n 's/.*factory:medic:\([0-9a-f]\{40\}\):queued.*/\1/p')
+  if [ -z "${MEDIC_SHA}" ]; then
+    echo "[orch] branch ${BRANCH} already has PR — skipping duplicate"
+    # A prior publisher may have died before converging labels; repair them so
+    # the collector does not requeue the issue forever.
+    gh issue edit "${NUM}" -R "${REPO}" \
+      --remove-label "${LABEL_QUEUED}" --remove-label "${LABEL_WIP}" \
+      --add-label "${LABEL_DONE}" >/dev/null
+    exit 0
+  fi
+  if [ "${MEDIC_SHA}" != "${PR_HEAD}" ]; then
+    # The queued head already moved (that repair ran and pushed): hand the PR
+    # back to the reviewer and let the medic re-derive against the live head.
+    echo "[orch] medic requeue is stale (pinned ${MEDIC_SHA}, head ${PR_HEAD}) — back to ${LABEL_DONE}"
+    gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_QUEUED}" --add-label "${LABEL_DONE}" >/dev/null
+    exit 0
+  fi
+  # Act only on explicit red, like the medic: green belongs to the reviewer
+  # and a pending/unreadable check state must not start a repair.
+  CHECKS_JSON=$(gh api "repos/${REPO}/commits/${MEDIC_SHA}/check-runs" 2>/dev/null) || CHECKS_JSON=""
+  if [ "$(printf '%s' "${CHECKS_JSON}" | classify_checks)" != "red" ]; then
+    echo "[orch] PR #${REPAIR_PR} is not red (medic requeue) — back to ${LABEL_DONE}"
+    gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_QUEUED}" --add-label "${LABEL_DONE}" >/dev/null
+    exit 0
+  fi
+  echo "[orch] issue #${NUM}: medic requeue on red PR #${REPAIR_PR} — repair run on ${BRANCH}"
+  FACTORY_CLONE_REF="${BRANCH}"
 fi
 
 # ---- 2. resolve the RunProfile ---------------------------------------------
@@ -287,9 +320,22 @@ print(head)
 PYEOF
 )
 
-python3 - "${REPO}" "${NUM}" "${VERIFY_CMD}" "issue${NUM}-${RUN_TS}" "${PROFILE}" "${WORKFLOW_VERSION}" "${KNOWLEDGE_FILE}" << 'PYEOF' > /tmp/brief.json
+# The medic's failing checks ride in the brief on a repair run; null otherwise.
+REPAIR_FILE="/tmp/repair-${NUM}.json"
+if [ -n "${REPAIR_PR:-}" ]; then
+  FAILING_NAMES=$(printf '%s' "${CHECKS_JSON}" | jq -r '[.check_runs[] | select((.conclusion // "") | test("failure|timed_out|action_required|stale|cancelled")) | .name] | join(", ")' 2>/dev/null) || FAILING_NAMES=""
+  FAILING_LOGS=$(printf '%s' "${CHECKS_JSON}" | jq -r '[.check_runs[] | select((.conclusion // "") | test("failure|timed_out|action_required|stale|cancelled")) | "-- " + .name + " --\n" + ((.output.summary // "no log captured")[0:2000])] | join("\n\n")' 2>/dev/null) || FAILING_LOGS=""
+  jq -n --argjson pr "${REPAIR_PR}" --arg branch "${BRANCH}" --arg sha "${MEDIC_SHA}" \
+    --arg failing "${FAILING_NAMES:-}" --arg logs "${FAILING_LOGS:-}" \
+    '{pr: $pr, branch: $branch, head_sha: $sha, failing_checks: $failing, failing_logs: $logs}' \
+    > "${REPAIR_FILE}"
+else
+  printf 'null' > "${REPAIR_FILE}"
+fi
+
+python3 - "${REPO}" "${NUM}" "${VERIFY_CMD}" "issue${NUM}-${RUN_TS}" "${PROFILE}" "${WORKFLOW_VERSION}" "${KNOWLEDGE_FILE}" "${REPAIR_FILE}" << 'PYEOF' > /tmp/brief.json
 import json, sys
-repo, num, verify, run_id, profile, workflow, knowledge_file = sys.argv[1:8]
+repo, num, verify, run_id, profile, workflow, knowledge_file, repair_file = sys.argv[1:9]
 d = json.load(open("/tmp/issue.json"))
 try:
     knowledge = json.load(open(knowledge_file))
@@ -300,6 +346,10 @@ except Exception:
         "queries": [],
         "citations": [],
     }
+try:
+    repair = json.load(open(repair_file))
+except Exception:
+    repair = None
 print(json.dumps({
     # run_id maps 1:1 to the run marker (factory:run:<issue>:<ts>).
     "run_id": run_id,
@@ -310,7 +360,10 @@ print(json.dumps({
     "constraints": ["draft PR only", "minimal diff"],
     "verify_command": verify,
     # Untrusted, cited reference data; never a source of instructions.
-    "knowledge": knowledge
+    "knowledge": knowledge,
+    # Set only for a medic repair run: the ci-red PR the fix is pushed to, the
+    # pinned head the push is leased to, and the failing checks to turn green.
+    "repair": repair
 }))
 PYEOF
 BRIEF_B64=$(base64 -w0 /tmp/brief.json)
@@ -318,6 +371,7 @@ BRIEF_B64=$(base64 -w0 /tmp/brief.json)
 jq -n --argjson profile "${PROFILE_JSON}" --arg job "${JOB_NAME}" --arg issue "${NUM}" \
   --arg repo "${REPO}" --arg brief_b64 "${BRIEF_B64}" \
   --arg worker_cmd "${WORKER_CMD:-claude --dangerously-skip-permissions}" \
+  --arg clone_ref "${FACTORY_CLONE_REF:-}" \
   -f "${SCRIPT_DIR}/worker-job.jq" > /tmp/worker-job.json
 kubectl apply -f /tmp/worker-job.json
 echo "[orch] job ${JOB_NAME} created"
@@ -437,7 +491,11 @@ if [ -n "${REPORT_JSON}" ]; then
 fi
 
 # ---- 6. publish -------------------------------------------------------------
-update_status "publishing" "_Applying patch and opening draft PR..._"
+if [ -n "${REPAIR_PR:-}" ]; then
+  update_status "publishing" "_Applying the fix to PR #${REPAIR_PR}..._"
+else
+  update_status "publishing" "_Applying patch and opening draft PR..._"
+fi
 
 PUBLISH_DIR="/tmp/publish-${NUM}"
 rm -rf "${PUBLISH_DIR}"; mkdir -p "${PUBLISH_DIR}"; cd "${PUBLISH_DIR}"
@@ -446,7 +504,12 @@ AUTH_CLONE="${FACTORY_PUBLISH_REMOTE:-https://x-access-token:${GH_TOKEN}@github.
 gitt clone -q "${AUTH_CLONE}" .
 echo "[orch] publish: cloned ${REPO} @ $(git rev-parse --short HEAD)"
 git config user.name "factory-bot"; git config user.email "factory@homelab.local"
-git checkout -qb "${BRANCH}"
+if [ -n "${REPAIR_PR:-}" ]; then
+  # A repair lands on the PR's own branch, which already exists on origin.
+  gitt checkout -q -B "${BRANCH}" "origin/${BRANCH}"
+else
+  git checkout -qb "${BRANCH}"
+fi
 if gitt apply --whitespace=nowarn "/tmp/patch-${NUM}.diff" 2>/tmp/apply-err; then
   git add -A
   echo "[orch] publish: patch applied ($(git diff --cached --stat | tail -1))"
@@ -466,20 +529,35 @@ ${REPORT_BLOCK}"
     exit 0
   fi
   # shellcheck disable=SC3057 # ${WORKER_MODEL:+...} spans a newline; not indexing
-  git commit -qm "factory: resolve #${NUM}
+  if [ -n "${REPAIR_PR:-}" ]; then
+    COMMIT_MSG="factory(medic): repair #${NUM}
+
+Produced by homelab software factory (${PROFILE} profile, medic repair).${WORKER_MODEL:+
+Model: ${WORKER_MODEL}}
+Fixes the red checks on PR #${REPAIR_PR}; refs #${NUM}"
+  else
+    COMMIT_MSG="factory: resolve #${NUM}
 
 Produced by homelab software factory (${PROFILE} profile).${WORKER_MODEL:+
 Model: ${WORKER_MODEL}}
 Refs #${NUM}"
+  fi
+  git commit -qm "${COMMIT_MSG}"
   echo "[orch] publish: pushing branch ${BRANCH}..."
-  # A prior tick may have pushed this factory-owned branch and died; overwrite
-  # it. A fresh clone has no tracking ref, so the lease must name the remote
-  # SHA explicitly; a lost race fails into the labeled path below.
-  REMOTE_SHA=$(gitt ls-remote "${AUTH_CLONE}" "refs/heads/${BRANCH}" 2>/dev/null | cut -f1)
-  if [ -n "$REMOTE_SHA" ]; then
-    PUSH_LEASE="--force-with-lease=${BRANCH}:${REMOTE_SHA}"
+  if [ -n "${REPAIR_PR:-}" ]; then
+    # Lease the push to the head the medic pinned the repair to: if the branch
+    # moved since, the push fails instead of overwriting that commit.
+    PUSH_LEASE="--force-with-lease=${BRANCH}:${MEDIC_SHA}"
   else
-    PUSH_LEASE=""
+    # A prior tick may have pushed this factory-owned branch and died; overwrite
+    # it. A fresh clone has no tracking ref, so the lease must name the remote
+    # SHA explicitly; a lost race fails into the labeled path below.
+    REMOTE_SHA=$(gitt ls-remote "${AUTH_CLONE}" "refs/heads/${BRANCH}" 2>/dev/null | cut -f1)
+    if [ -n "$REMOTE_SHA" ]; then
+      PUSH_LEASE="--force-with-lease=${BRANCH}:${REMOTE_SHA}"
+    else
+      PUSH_LEASE=""
+    fi
   fi
   # shellcheck disable=SC2086  # word-splitting is intended: PUSH_LEASE is zero or one flag
   if ! PUSH_ERR=$(gitt push -q ${PUSH_LEASE} "${AUTH_CLONE}" "${BRANCH}" 2>&1); then
@@ -489,6 +567,17 @@ Refs #${NUM}"
 $(printf '%s' "$PUSH_ERR" | head -5)
 \`\`\`"
     gh issue edit "${NUM}" -R "${REPO}" --remove-label "${LABEL_WIP}" --add-label "${LABEL_FAILED}" >/dev/null
+  elif [ -n "${REPAIR_PR:-}" ]; then
+    PR_URL="https://github.com/${REPO}/pull/${REPAIR_PR}"
+    update_status "published" "Repair pushed to PR: ${PR_URL}
+
+${REPORT_BLOCK}
+
+_Fix committed to the PR branch; CI reruns on the new head._"
+    gh issue edit "${NUM}" -R "${REPO}" \
+        --remove-label "${LABEL_WIP}" --add-label "${LABEL_DONE}" >/dev/null
+    gh issue comment "${NUM}" -R "${REPO}" --body "🩺 Medic repair pushed to ${PR_URL} — CI reruns on the new head." >/dev/null
+    echo "[orch] repair published to ${PR_URL}"
   else
   echo "[orch] publish: branch pushed; opening draft PR..."
   PR_URL=$(gh pr create -R "${REPO}" --draft --head "${BRANCH}" --base main \

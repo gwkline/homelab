@@ -20,6 +20,7 @@ profile_of() {
 render() { # $1 = profile JSON file
   jq -n --argjson profile "$(cat "$1")" --arg job factory-issue-7-1 --arg issue 7 \
     --arg repo gwkline/homelab --arg brief_b64 e30= --arg worker_cmd "opencode run" \
+    --arg clone_ref "" \
     -f "${TEMPLATE}"
 }
 
@@ -80,3 +81,16 @@ render "${FIX}/edited.json" | jq -e '.spec.ttlSecondsAfterFinished == 600
   and (.spec.template.spec.volumes[] | select(.name == "work") | .emptyDir.sizeLimit) == "15Gi"' > /dev/null \
   || fail "edited profile did not change the rendered Job"
 echo "PASS: changing resources, TTL or work size in a profile changes the next Job"
+
+# A repair render (clone_ref set) gives the clone the PR branch; an ordinary
+# render leaves the ref out entirely.
+jq -n --argjson profile "$(cat "${FIX}/code-pr.json")" --arg job factory-issue-7-2 --arg issue 7 \
+  --arg repo gwkline/homelab --arg brief_b64 e30= --arg worker_cmd "opencode run" \
+  --arg clone_ref "factory/issue-7/code-pr" \
+  -f "${TEMPLATE}" > "${FIX}/repair-job.json"
+jq -e '.spec.template.spec.initContainers[0].env
+  | any(.name == "FACTORY_CLONE_REF" and .value == "factory/issue-7/code-pr")' \
+  "${FIX}/repair-job.json" > /dev/null || fail "repair Job does not clone the PR branch"
+jq -e '[.spec.template.spec.initContainers[0].env[].name] | index("FACTORY_CLONE_REF") == null' \
+  "${FIX}/code-pr-job.json" > /dev/null || fail "ordinary Job clones a repair ref"
+echo "PASS: a repair Job clones the PR branch; ordinary Jobs do not"
