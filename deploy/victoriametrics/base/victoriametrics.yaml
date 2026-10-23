@@ -100,7 +100,7 @@ spec:
       containers:
         - name: victoriametrics
           # Flags change between versions; bump deliberately.
-          image: victoriametrics/victoria-metrics:v1.110.0@sha256:77f49c5f05df8d4d19602b0e7cc20c8fbed7cb0a9bb1b36066a50b788036a7c7
+          image: victoriametrics/victoria-metrics:v1.154.1@sha256:c7884f32920dd45a9d86542a717227e63af03e060e53bbf8031e6e6fd0e1e05d
           args:
             - -storageDataPath=/var/lib/victoria-metrics
             - -retentionPeriod=30d
