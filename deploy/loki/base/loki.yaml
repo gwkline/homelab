@@ -120,7 +120,7 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: loki
-          image: grafana/loki:3.4.2@sha256:58a6c186ce78ba04d58bfe2a927eff296ba733a430df09645d56cdc158f3ba08
+          image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
           args: ["-config.file=/etc/loki/config/loki.yaml"]
           ports:
             - name: http
