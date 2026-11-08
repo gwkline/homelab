@@ -1,0 +1,27 @@
+webhook:
+  # Image admission must remain available while noncritical work is evicted.
+  priorityClass: system-cluster-critical
+  failurePolicy: Fail
+  # Preserve the existing third-party digest-pinned policy and writable cache.
+  configData:
+    no-match-policy: allow
+  volumeMounts:
+    - name: writable-home-dir
+      mountPath: /home/nonroot
+  volumes:
+    - name: writable-home-dir
+      emptyDir:
+        sizeLimit: 128Mi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+      ephemeral-storage: 16Mi
+    limits:
+      cpu: 200m
+      memory: 512Mi
+      ephemeral-storage: 128Mi
+commonTolerations:
+  - key: node.kubernetes.io/disk-pressure
+    operator: Exists
+    effect: NoSchedule

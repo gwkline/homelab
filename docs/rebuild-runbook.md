@@ -73,7 +73,9 @@ Must be serving before workloads are admitted ([ADR-004](adr/adr-004-cosign-admi
 ```sh
 helm repo add sigstore https://sigstore.github.io/helm-charts
 helm upgrade --install policy-controller sigstore/policy-controller \
-  --version 0.10.7 -n cosign-system --create-namespace
+  --version 0.10.7 -n cosign-system --create-namespace \
+  --values deploy/image-policy/values.yaml
+python3 deploy/image-policy/harden.py --kubeconfig "$KUBECONFIG"
 kubectl -n cosign-system rollout status deploy/policy-controller-webhook
 ```
 

@@ -45,7 +45,7 @@ All work threads using one filesystem must share **the same lock inode** at `WOR
 
 Numbers must be finite and positive, with start strictly above stop. Invalid configuration fails closed when activated. Available space is `f_bavail * f_frsize`, excluding blocks reserved for root. Stat failures refuse new work and stop running work. No filesystem size/quota is inferred from a PVC's requested capacity.
 
-- **Run:** wait without starting the server until at least 25 GiB is available. During operation, terminate below 20 GiB (or on stat errors), then wait until at least 25 GiB before restarting the exact command. Normal server exits are returned, not endlessly restarted. Shutdown signals are forwarded; low-space stops restart only when headroom recovers. Restarts depend on the application's own durable recovery semantics; this tool does not implement session recovery.
+- **Run:** wait without starting the server until at least 25 GiB is available. During operation, terminate below 20 GiB (or on stat errors), then exit with 75. In the work image this supervisor is container PID 1 around the entire entrypoint, so containerd also reaps escaped PTY writers. The next container waits for the higher launch watermark. Normal exits are returned, not endlessly restarted inside the same container. Shutdown signals first reach the entrypoint leader so its state saver can stop cooperatively before bounded group cleanup; the work deployment grants 15 seconds of grace. Durable session recovery remains the application's responsibility.
 - **Build:** wait for one exclusive `fcntl.flock` slot, checking launch headroom while waiting and again before launch. Insufficient launch headroom refuses the build rather than retrying it. Monitor during the command; insufficient space or stat failures stop it, release the slot after cleanup, and return **75**. Interrupted builds may leave partial build outputs. No cleanup occurs.
 - **Commands:** exact argument boundaries and ordinary numeric exit statuses are preserved; signal deaths return conventional `128 + signal` status. Guard refusal returns 75, launch errors 127, external TERM 143, external INT 130. No shell interpretation or argument/environment dumps occur in guard logs.
 - **Nested builds:** a lock-owner token, matching file metadata, a still-held flock, and live ancestor PID validation avoid deadlocks through Node/Python children that close inherited FDs. Nested wrappers exec in the outer build's group and share its ongoing monitor/slot; the higher watermark is still checked before the nested command begins. The token is an operational marker, not a credential. On Linux ancestry uses procfs; macOS uses PID-only `ps` output. If possible nested ancestry cannot be read, the build fails closed with 75 instead of deadlocking its ancestor.
@@ -63,7 +63,7 @@ Only wrapped commands are serialized. Direct real-binary calls, different lock i
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
-  -s apps/shared/tests -p 'test_work_resource_guard.py' -v
+  -s apps/shared/tests -p 'test_work_resource_guard*.py' -v
 sh apps/shared/tests/work-resource-guard.test.sh
 ```
 

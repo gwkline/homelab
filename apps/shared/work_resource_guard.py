@@ -24,7 +24,7 @@ import time
 GIB = 1024**3
 GUARD_FAILURE = 75
 LOCK_OWNER_ENV = "WORK_BUILD_LOCK_OWNER"
-TOOLS = ("npm", "pnpm", "yarn", "bun", "cargo", "make", "docker", "depot")
+TOOLS = ("npm", "npx", "pnpm", "yarn", "bun", "uv", "cargo", "make", "docker", "depot")
 
 
 def log(message):
@@ -140,11 +140,21 @@ def descendant_groups(pid):
     return {group for child, parent, group in rows if child == group and child in descendants} | {pid}
 
 
-def stop_group(process, config, sig=signal.SIGTERM):
+def stop_group(process, config, sig=signal.SIGTERM, graceful_leader=False):
     """Grace is bounded even if the leader exits before its descendants."""
     groups = descendant_groups(process.pid)
-    for group in groups:
-        signal_group(group, sig)
+    if graceful_leader:
+        # Entrypoints coordinate their state saver before stopping the server.
+        # Stop independently-sessioned builders, then let the leader run its trap.
+        for group in groups - {process.pid}:
+            signal_group(group, sig)
+        try:
+            process.send_signal(sig)
+        except ProcessLookupError:
+            pass
+    else:
+        for group in groups:
+            signal_group(group, sig)
     deadline = time.monotonic() + config.grace_seconds
     while time.monotonic() < deadline:
         process.poll()  # Reap the leader so an empty group disappears promptly.
@@ -160,7 +170,7 @@ def shell_status(returncode):
     return returncode if returncode >= 0 else 128 - returncode
 
 
-def monitor(command, config, env, state, probe=available_bytes):
+def monitor(command, config, env, state, probe=available_bytes, graceful_leader=False):
     """Return (exit status, headroom-triggered stop); never shell-parse argv."""
     if state[0] is not None:
         return 128 + state[0], False
@@ -175,7 +185,7 @@ def monitor(command, config, env, state, probe=available_bytes):
     try:
         while True:
             if state[0] is not None:
-                stop_group(process, config, state[0])
+                stop_group(process, config, state[0], graceful_leader=graceful_leader)
                 return 128 + state[0], False
             status = process.poll()
             if status is not None:
@@ -184,7 +194,7 @@ def monitor(command, config, env, state, probe=available_bytes):
                 return shell_status(status), False
             if not has_space(config, config.stop_bytes, probe):
                 log("headroom below stop threshold; terminating process group")
-                stop_group(process, config)
+                stop_group(process, config, graceful_leader=graceful_leader)
                 return GUARD_FAILURE, True
             time.sleep(config.poll_seconds)
     finally:
@@ -205,10 +215,12 @@ def supervise(command, config, env=None, probe=available_bytes):
                 continue
             log("launch headroom available; starting server")
             waiting_logged = False
-            status, low_space = monitor(command, config, env, state, probe)
-            if not low_space:
-                return status
-            # A stopped server is restarted only after the higher watermark.
+            status, low_space = monitor(command, config, env, state, probe, graceful_leader=True)
+            if low_space:
+                # As container PID 1, exit so the runtime reaps escaped PTY writers.
+                # The next container waits for the higher launch watermark.
+                return GUARD_FAILURE
+            return status
         return 128 + state[0]
 
 

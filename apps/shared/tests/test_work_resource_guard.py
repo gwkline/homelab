@@ -284,30 +284,63 @@ with open(sys.argv[1], 'a') as f: f.write('end:'+sys.argv[2]+'\\n')
         result = self.cli([sys.executable, "-c", "import os,signal; os.kill(os.getpid(),signal.SIGTERM)"])
         self.assertEqual(result.returncode, 143)
 
-    def test_supervisor_hysteresis_waits_then_restarts(self):
+    def test_supervisor_waits_for_launch_then_exits_on_pressure(self):
         launches = self.root / "launches"
         recovery = self.root / "recovery"
         script = self.script("server.py", """
 import sys,time
 from pathlib import Path
 p=Path(sys.argv[1])
-n=int(p.read_text())+1 if p.exists() else 1
-p.write_text(str(n))
-if n == 1:
-    while True: time.sleep(.02)
-sys.exit(11)
+p.write_text('1')
+while True: time.sleep(.02)
 """)
-        # Startup high, operation low; 90 is above stop but below restart.
-        expression = "lambda path: 100 if not Path({0!r}).exists() or Path({1!r}).exists() else (0 if Path({0!r}).read_text()=='1' and not Path({2!r}).exists() else 90)".format(str(launches), str(recovery), str(self.root / "intermediate"))
+        expression = "lambda path: (100 if Path({0!r}).exists() else 90) if not Path({1!r}).exists() else 0".format(str(recovery), str(launches))
         child = self.injected_child([sys.executable, script, str(launches)], expression)
-        self.wait_file(launches)
-        time.sleep(.3)
-        (self.root / "intermediate").touch()
         time.sleep(.2)
-        self.assertEqual(launches.read_text(), "1")
+        self.assertFalse(launches.exists())
         recovery.touch()
-        self.assertEqual(child.wait(timeout=5), 11)
-        self.assertEqual(launches.read_text(), "2")
+        self.wait_file(launches)
+        self.assertEqual(child.wait(timeout=5), 75)
+        self.assertEqual(launches.read_text(), "1")
+
+    def test_supervisor_preserves_coordinated_state_saver_shutdown(self):
+        ready = self.root / "leader-ready"
+        saver_ready = self.root / "saver-ready"
+        stop = self.root / "stop-saver"
+        saved = self.root / "saved-state"
+        interrupted = self.root / "interrupted-saver"
+        saver = self.script("saver.py", """
+import signal,sys,time
+from pathlib import Path
+ready,stop,saved,bad=map(Path,sys.argv[1:])
+def on_term(sig,frame):
+    bad.touch()
+    sys.exit(1)
+signal.signal(signal.SIGTERM,on_term)
+ready.touch()
+while not stop.exists(): time.sleep(.005)
+saved.write_text('complete')
+""")
+        leader = self.script("leader.py", """
+import signal,subprocess,sys,time
+from pathlib import Path
+p=subprocess.Popen([sys.executable]+sys.argv[1:6])
+while not Path(sys.argv[2]).exists(): time.sleep(.005)
+def on_term(sig,frame):
+    Path(sys.argv[3]).touch()
+    p.wait(timeout=1)
+    sys.exit(0)
+signal.signal(signal.SIGTERM,on_term)
+Path(sys.argv[6]).touch()
+while True: time.sleep(.01)
+""")
+        command = [sys.executable, leader, saver, str(saver_ready), str(stop), str(saved), str(interrupted), str(ready)]
+        child = self.injected_child(command, "lambda path: 100")
+        self.wait_file(ready)
+        child.terminate()
+        self.assertEqual(child.wait(timeout=5), 143)
+        self.assertEqual(saved.read_text(), "complete")
+        self.assertFalse(interrupted.exists())
 
     def test_startup_stat_failure_waits_without_launch_and_is_interruptible(self):
         marker = self.root / "launched"
@@ -368,8 +401,7 @@ sys.exit(11)
         self.wait_file(ready)
         time.sleep(.4)
         self.assert_group_dead(ready)
-        child.terminate()
-        self.assertEqual(child.wait(timeout=5), 143)
+        self.assertEqual(child.wait(timeout=5), 75)
 
     def test_leader_exit_does_not_leave_same_group_background_writer(self):
         ready = self.root / "background"
