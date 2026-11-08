@@ -17,7 +17,9 @@ python3 deploy/image-policy/harden.py --kubeconfig ~/kubeconfig-homelab
 kubectl --kubeconfig ~/kubeconfig-homelab -n cosign-system rollout status deploy/policy-controller-webhook
 ```
 
-Keep these values and run the helper on every upgrade. The controller has cluster-critical priority and a disk-pressure toleration so image admission can recover while ordinary work is blocked. The helper adds a status-only exclusion to the workload mutating webhook, preserving its image rules, namespace selector, and `failurePolicy: Fail`. Kubernetes status updates cannot change workload image specifications; sending them to an unavailable image webhook strands dead pods behind stale Ready flags. The predicate handles ordinary requests that omit `subResource`, and still routes CREATE, spec UPDATE, and ephemeral-container image changes through the existing image checks. The helper verifies the exact live target after applying.
+Keep these values and run the helper on every upgrade. With Helm 4, add `--server-side=false`: the webhook controller owns its namespace selector, so server-side Helm upgrades conflict with that live field. Helm 3 does not need this flag. Do not force field ownership or add another writable home volume—the chart already supplies one, and extra entries duplicate the same mount.
+
+The controller has cluster-critical priority and a disk-pressure toleration so image admission can recover while ordinary work is blocked. The helper adds a status-only exclusion to the workload mutating webhook, preserving its image rules, namespace selector, and `failurePolicy: Fail`. Kubernetes status updates cannot change workload image specifications; sending them to an unavailable image webhook strands dead pods behind stale Ready flags. The predicate handles ordinary requests that omit `subResource`, and still routes CREATE, spec UPDATE, and ephemeral-container image changes through the existing image checks. The helper verifies the exact live target after applying.
 
 ## Verify
 

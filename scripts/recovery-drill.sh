@@ -93,7 +93,12 @@ end_stage
 # Admission webhook must serve before any homelab pod is admitted (ADR-004).
 stage image-policy
 helm repo add sigstore https://sigstore.github.io/helm-charts >/dev/null 2>&1 || true
-helm upgrade --install policy-controller sigstore/policy-controller \
+case "$(helm version --short)" in
+  v4.*) POLICY_HELM_METHOD=--server-side=false ;;
+  *) POLICY_HELM_METHOD='' ;;
+esac
+# shellcheck disable=SC2086 # one optional, fixed Helm compatibility argument
+helm upgrade --install policy-controller sigstore/policy-controller $POLICY_HELM_METHOD \
   --namespace cosign-system --create-namespace \
   --version "$POLICY_CHART_VERSION" \
   --values deploy/image-policy/values.yaml
