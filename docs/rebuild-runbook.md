@@ -68,7 +68,7 @@ That is the only hand-entered secret. Everything else, including the Postgres ow
 
 ### 3.4 Image admission
 
-Must be serving before workloads are admitted ([ADR-004](adr/adr-004-cosign-admission-verification.md), break-glass in [deploy/image-policy/README.md](../deploy/image-policy/README.md)):
+Must be serving before workloads are admitted ([ADR-004](adr/adr-004-cosign-admission-verification.md), break-glass in [deploy/image-policy/README.md](../deploy/image-policy/README.md)). With Helm 4, add `--server-side=false` to preserve controller-owned webhook fields; see the image-policy README:
 
 ```sh
 helm repo add sigstore https://sigstore.github.io/helm-charts
