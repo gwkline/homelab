@@ -25,6 +25,14 @@ spec.loader.exec_module(guard)
 
 
 def alive(pid):
+    if sys.platform.startswith("linux"):
+        # Slim runtime images omit ps; procfs reports real zombie/liveness state.
+        try:
+            stat = Path("/proc/{}/stat".format(pid)).read_text()
+            state = stat[stat.rfind(")") + 2:].split()[0]
+            return state not in ("Z", "X")
+        except (OSError, IndexError):
+            return False
     try:
         value = subprocess.check_output(
             ["ps", "-o", "stat=", "-p", str(pid)], stderr=subprocess.DEVNULL,
