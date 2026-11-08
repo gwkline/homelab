@@ -46,6 +46,32 @@ class ShimInstallationTests(unittest.TestCase):
             self.assertEqual(json.loads(result.stdout), args)
             self.assertNotIn("do-not-run", result.stderr)
 
+    def profile_path(self, scope, directory, initial):
+        hook = Path(__file__).resolve().parents[1] / "work-resource-guard-profile.sh"
+        env = dict(os.environ, WORK_RESOURCE_GUARD="1", WORK_RESOURCE_SCOPE=scope,
+                   WORK_GUARD_SHIM_BIN=str(directory), PATH=initial)
+        script = '. "$1"; first="$PATH"; . "$1"; [ "$first" = "$PATH" ] || exit 1; printf "%s" "$PATH"'
+        result = subprocess.run(["/bin/sh", "-c", script, "profile-test", str(hook)],
+                                env=env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_login_profile_restores_work_shims_before_system_bins(self):
+        with tempfile.TemporaryDirectory() as directory:
+            initial = "/usr/local/bin:/usr/bin:" + directory
+            self.assertEqual(self.profile_path("work", directory, initial), directory + ":" + initial)
+
+    def test_login_profile_leaves_personal_path_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(self.profile_path("personal", directory, "/usr/local/bin:/usr/bin"),
+                             "/usr/local/bin:/usr/bin")
+
+    def test_login_profile_requires_installed_shims(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = str(Path(directory) / "absent")
+            self.assertEqual(self.profile_path("work", missing, "/usr/local/bin:/usr/bin"),
+                             "/usr/local/bin:/usr/bin")
+
     def test_refuses_symlinked_output_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
