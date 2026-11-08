@@ -1,3 +1,4 @@
+#!/bin/sh
 # Login shells rebuild PATH before T3 launches tools; restore work-only shims.
 if [ "${WORK_RESOURCE_GUARD:-0}" = 1 ] && [ "${WORK_RESOURCE_SCOPE:-}" = work ]; then
   _work_resource_guard_bin="${WORK_GUARD_SHIM_BIN:-/tmp/work-resource-guard/bin}"
