@@ -37,6 +37,19 @@ spec:
             - containerPort: 3773
               name: http
           env:
+            # Local-path claim sizes are not quotas; reserve backing-node space.
+            - name: WORK_RESOURCE_GUARD
+              value: "1"
+            - name: WORK_RESOURCE_SCOPE
+              value: work
+            - name: WORK_GUARD_START_GIB
+              value: "25"
+            - name: WORK_GUARD_STOP_GIB
+              value: "20"
+            - name: WORK_GUARD_POLL_SECONDS
+              value: "2"
+            - name: WORK_GUARD_GRACE_SECONDS
+              value: "15"
             - name: GITHUB_TOKEN_FILE
               value: /secrets/token
             # In the Secret so this public repo has no work identifiers.

@@ -34,5 +34,13 @@ kubectl -n work exec work-t3code-0 -- ls /data/repos
 
 ## Operations
 
+### Disk and build backpressure
+
+Only this workload enables the shared image's resource guard. The entrypoint starts as a supervisor before repository sync or state restoration, and waits for at least 25 GiB of backing-filesystem headroom. It stops the container below 20 GiB, preserving workspace files rather than deleting them. These are cooperative operating watermarks, not a hard local-path PVC quota: claim sizes do not cap the shared ext4 filesystem. A stopped container cannot leave detached PTY builds writing behind it.
+
+Generated command shims serialize heavy npm/npx/pnpm/yarn/bun/uv/cargo/make/docker/depot commands that are installed, using one shared lock across work threads. Read-only queries pass through. Wrapped builds default to two Cargo jobs and a 3 GiB Node heap only when the caller has not already supplied settings; the existing cgroup memory limit remains authoritative. Direct binaries, deliberate bypasses, and remote builders remain limitations. Full semantics and regression tests are in [the guard documentation](../../apps/shared/work-resource-guard.md).
+
+If startup is waiting for headroom, inspect node filesystem usage and the guard logs. Remove only verified generated artifacts after preserving dirty/unpushed source; do not clear the entire state PVC. For T3's own cleanup settings, prefer merged-only worktree cleanup with the strongest local-file protection, scoped to this project, after verifying the remote server supports the controls. Whole-worktree cleanup is not selective build-cache cleanup.
+
 - Adding a repo or rotating a token is all done in 1Password: widen the PAT's repository access, then update `token` and/or `repos`. ESO syncs within an hour. Env vars only change on a new pod: `kubectl -n work rollout restart statefulset work-t3code`.
 - Codex login: run `codex login` in the pod, then `kubectl -n work port-forward work-t3code-0 1455:1455` and open the printed URL locally. Workspace-managed ChatGPT accounts may be rejected by org policy (`token_exchange_failed`). Fallbacks: a personal account, `codex login --device-auth`, or an API key.

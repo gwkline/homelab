@@ -6,14 +6,18 @@ The webhook only intercepts namespaces labeled `policy.sigstore.dev/include: "tr
 
 ## Apply
 
-Install the controller before `clusters/home`, which applies the policy:
+Install the controller before `clusters/home`, which applies the policy. The hardening helper uses Python 3 and kubectl, and works independently of Helm's version-specific post-renderer plugin interface.
 
 ```sh
 helm repo add sigstore https://sigstore.github.io/helm-charts
-helm upgrade --install policy-controller sigstore/policy-controller \
-  --version 0.10.7 -n cosign-system --create-namespace
-kubectl -n cosign-system rollout status deploy/policy-controller-webhook
+helm --kubeconfig ~/kubeconfig-homelab upgrade --install policy-controller sigstore/policy-controller \
+  --version 0.10.7 -n cosign-system --create-namespace \
+  --values deploy/image-policy/values.yaml
+python3 deploy/image-policy/harden.py --kubeconfig ~/kubeconfig-homelab
+kubectl --kubeconfig ~/kubeconfig-homelab -n cosign-system rollout status deploy/policy-controller-webhook
 ```
+
+Keep these values and run the helper on every upgrade. The controller has cluster-critical priority and a disk-pressure toleration so image admission can recover while ordinary work is blocked. The helper adds a status-only exclusion to the workload mutating webhook, preserving its image rules, namespace selector, and `failurePolicy: Fail`. Kubernetes status updates cannot change workload image specifications; sending them to an unavailable image webhook strands dead pods behind stale Ready flags. The predicate handles ordinary requests that omit `subResource`, and still routes CREATE, spec UPDATE, and ephemeral-container image changes through the existing image checks. The helper verifies the exact live target after applying.
 
 ## Verify
 

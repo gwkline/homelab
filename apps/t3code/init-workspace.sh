@@ -2,6 +2,18 @@
 # Entrypoint for t3code pods: auth git, sync repos, register projects, serve.
 set -eu
 
+# Supervise the entire work container, including startup and saved-state helpers.
+# PID 1 exits on low headroom so containerd also reaps escaped PTY builders.
+if [ "${WORK_RESOURCE_GUARD:-0}" = 1 ] && [ "${WORK_RESOURCE_SCOPE:-}" = work ]; then
+  if [ "${WORK_GUARD_SUPERVISED:-0}" != 1 ]; then
+    export WORK_GUARD_SUPERVISED=1
+    exec python3 /usr/local/lib/work_resource_guard.py run -- /usr/local/bin/init-workspace "$@"
+  fi
+  python3 /usr/local/lib/install_work_build_shims.py
+  export WORK_GUARD_COMMAND_MAP=/tmp/work-resource-guard/commands.json
+  export PATH="/tmp/work-resource-guard/bin:${PATH}"
+fi
+
 . /usr/local/lib/workspace-lib.sh
 
 # gh CLI reads GH_TOKEN, not GITHUB_TOKEN_FILE: bridge the mounted secret

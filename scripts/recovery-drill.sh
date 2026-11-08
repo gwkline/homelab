@@ -45,6 +45,8 @@ done
 
 command -v kubectl >/dev/null 2>&1 || fail "kubectl not found"
 command -v helm >/dev/null 2>&1 || fail "helm not found"
+command -v python3 >/dev/null 2>&1 || fail "python3 not found"
+[ -n "${KUBECONFIG:-}" ] || fail "Set KUBECONFIG to the intended cluster before a recovery drill"
 
 cd "$(dirname "$0")/.." || exit 1
 
@@ -93,7 +95,9 @@ stage image-policy
 helm repo add sigstore https://sigstore.github.io/helm-charts >/dev/null 2>&1 || true
 helm upgrade --install policy-controller sigstore/policy-controller \
   --namespace cosign-system --create-namespace \
-  --version "$POLICY_CHART_VERSION"
+  --version "$POLICY_CHART_VERSION" \
+  --values deploy/image-policy/values.yaml
+python3 deploy/image-policy/harden.py --kubeconfig "$KUBECONFIG"
 kubectl -n cosign-system rollout status deploy/policy-controller-webhook --timeout="$PROXY_TIMEOUT"
 end_stage
 
