@@ -42,6 +42,9 @@ spec:
               value: "1"
             - name: WORK_RESOURCE_SCOPE
               value: work
+            # The interface can start while heavier build commands wait.
+            - name: WORK_SERVER_START_GIB
+              value: "22"
             - name: WORK_GUARD_START_GIB
               value: "25"
             - name: WORK_GUARD_STOP_GIB

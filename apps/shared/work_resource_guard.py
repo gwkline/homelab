@@ -53,8 +53,10 @@ class Config:
     grace_seconds: float = 5.0
 
     @classmethod
-    def from_env(cls, env):
-        start = int(positive_number(env, "WORK_GUARD_START_GIB", 25) * GIB)
+    def from_env(cls, env, mode="build"):
+        # Keep the UI available while larger builds wait for their own budget.
+        start_key, default = ("WORK_SERVER_START_GIB", 22) if mode == "run" else ("WORK_GUARD_START_GIB", 25)
+        start = int(positive_number(env, start_key, default) * GIB)
         stop = int(positive_number(env, "WORK_GUARD_STOP_GIB", 20) * GIB)
         if start <= stop or stop <= 0:
             raise ValueError("start threshold must exceed stop threshold")
@@ -391,7 +393,7 @@ def main(argv=None):
             log("command could not be started")
             return 127
     try:
-        config = Config.from_env(env)
+        config = Config.from_env(env, mode=args.mode)
     except (ValueError, OverflowError):
         log("invalid guard configuration; refusing work")
         return GUARD_FAILURE

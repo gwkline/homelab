@@ -149,6 +149,40 @@ while True: time.sleep(.02)
         self.assertEqual(guard.serialized_build([sys.executable, "-c", "raise Exception('not launched')"],
                                                 self.config, probe=broken), 75)
 
+    def test_server_and_build_thresholds_are_independent(self):
+        env = dict(WORK_SERVER_START_GIB="22", WORK_GUARD_START_GIB="25", WORK_GUARD_STOP_GIB="20")
+        self.assertEqual(guard.Config.from_env(env, mode="run").start_bytes, 22 * guard.GIB)
+        self.assertEqual(guard.Config.from_env(env, mode="build").start_bytes, 25 * guard.GIB)
+        self.assertEqual(guard.Config.from_env({}, mode="run").start_bytes, 22 * guard.GIB)
+        with self.assertRaises(ValueError):
+            guard.Config.from_env(dict(env, WORK_SERVER_START_GIB="20"), mode="run")
+        self.assertEqual(guard.Config.from_env(dict(env, WORK_SERVER_START_GIB="20"), mode="build").start_bytes, 25 * guard.GIB)
+
+    def test_interface_stays_alive_below_build_launch_budget(self):
+        ready = self.root / "interface-ready"
+        built = self.root / "build-started"
+        server = self.script("interface.py", "import sys,time\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\nwhile True: time.sleep(.01)\n")
+        env = dict(self.env, WORK_SERVER_START_GIB="22", WORK_GUARD_START_GIB="25", WORK_GUARD_STOP_GIB="20")
+        code = (
+            "import sys;sys.path.insert(0,{0!r});import work_resource_guard as g;"
+            "sys.exit(g.supervise(sys.argv[1:],g.Config.from_env(dict(__import__('os').environ),mode='run'),"
+            "probe=lambda path:int(23.8*g.GIB)))"
+        ).format(str(GUARD.parent))
+        child = subprocess.Popen([sys.executable, "-c", code, sys.executable, server, str(ready)],
+                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(child)
+        self.wait_file(ready)
+        builder = [sys.executable, "-c", "from pathlib import Path;Path({!r}).touch()".format(str(built))]
+        result = guard.serialized_build(builder, guard.Config.from_env(env, mode="build"), env,
+                                        probe=lambda path: int(23.8 * guard.GIB))
+        self.assertEqual(result, 75)
+        self.assertFalse(built.exists())
+        self.assertIsNone(child.poll())
+        child.terminate()
+        status = child.wait(timeout=5)
+        assert child.stderr is not None
+        self.assertEqual(status, 143, child.stderr.read())
+
     def test_default_thresholds_and_configuration_validation(self):
         c = guard.Config.from_env({})
         self.assertEqual((c.start_bytes, c.stop_bytes, c.poll_seconds), (25 * guard.GIB, 20 * guard.GIB, 2))
@@ -308,7 +342,9 @@ while True: time.sleep(.02)
         self.assertFalse(launches.exists())
         recovery.touch()
         self.wait_file(launches)
-        self.assertEqual(child.wait(timeout=5), 75)
+        status = child.wait(timeout=5)
+        assert child.stderr is not None
+        self.assertEqual(status, 75, child.stderr.read())
         self.assertEqual(launches.read_text(), "1")
 
     def test_supervisor_preserves_coordinated_state_saver_shutdown(self):
@@ -434,7 +470,9 @@ while True: time.sleep(.01)
         low.touch()
         self.assertEqual(refused.wait(timeout=3), 75)
         holder.terminate()
-        self.assertEqual(holder.wait(timeout=3), 143)
+        status = holder.wait(timeout=3)
+        assert holder.stderr is not None
+        self.assertEqual(status, 143, holder.stderr.read())
 
 
 if __name__ == "__main__":
