@@ -84,10 +84,11 @@ spec:
           resources:
             requests:
               cpu: "1"
-              memory: 2Gi
+              memory: 4Gi
               ephemeral-storage: 1Gi
             limits:
-              memory: 6Gi
+              # Native package managers and concurrent agents share this cap.
+              memory: 12Gi
               ephemeral-storage: 8Gi
           startupProbe:
             httpGet:
