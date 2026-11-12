@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
-    "@hono/node-server": "2.1.1",
+    "@hono/node-server": "2.1.8",
     "@tanstack/react-table": "^9.2.4",
     "@tanstack/table-core": "9.2.6",
     "hono": "4.13.13"
