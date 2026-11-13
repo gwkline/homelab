@@ -17,7 +17,7 @@
     "@hono/node-server": "2.1.6",
     "@tanstack/react-table": "^9.2.4",
     "@tanstack/table-core": "9.2.6",
-    "hono": "4.13.13"
+    "hono": "4.13.18"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
