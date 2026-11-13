@@ -16,8 +16,8 @@ Knowledge (`deploy/knowledge`): one image, two Deployments over Postgres. `knowl
 
 Platform:
 
-- **panel**: this repo's control panel. It queues and shows factory runs, explores the knowledge base, and links to every dev tool.
-- **homepage**, **headlamp** (read-only Kubernetes UI), **cloudbeaver** (SQL client) and **grafana**: tailnet UIs.
+- **panel**: the homelab landing page and control panel, at `https://panel.<tailnet>.ts.net`. It queues and shows factory runs, explores the knowledge base, and links to every dev tool.
+- **headlamp** (read-only Kubernetes UI), **cloudbeaver** (SQL client) and **grafana**: tailnet UIs.
 - **postgres**: a CloudNativePG cluster holding the knowledge base.
 - **loki** and **victoriametrics**: 30 days of logs and metrics, read by Grafana.
 - **deployer**: continuous delivery for this repo's images (see below).
@@ -40,7 +40,7 @@ Long-lived credentials live in 1Password, and External Secrets syncs them into t
 
 ## Security model
 
-Verified on 2026-10-07 against `main` and, with read-only `kubectl`, the live cluster.
+Verified on 2026-11-13 against `main` and, with read-only `kubectl`, the live cluster.
 
 - **Pod Security:** every namespace has an enforce level. `agents`, `sandbox`, `work`, `database` and `default` enforce `restricted`. The operator namespaces (`external-secrets`, `cnpg-system`, `cosign-system`, `tailscale`) enforce `baseline`, and only `kube-system` is `privileged`. No container outside `kube-system` is privileged, adds a capability or mounts a hostPath, so no pod gets a Docker socket.
 - **Exposure:** every UI is a Tailscale Ingress, whose proxy runs unprivileged in userspace. No Service is a LoadBalancer or NodePort, and no pod uses a host port.
@@ -48,7 +48,7 @@ Verified on 2026-10-07 against `main` and, with read-only `kubectl`, the live cl
   - Ingress is default-deny in every namespace that runs pods except `kube-system` and `tailscale`, whose proxies take direct WireGuard from tailnet peers. Each workload admits only its named callers.
   - Egress from `sandbox` and `work` is public-internet only: no Kubernetes API, LAN, tailnet or cloud metadata. The factory orchestrator alone adds the API server and knowledge retrieval. `agents` allows DNS, in-cluster services and the public internet, and workloads holding credentials for internal targets get a narrower allowlist ([docs/egress-policy.md](docs/egress-policy.md)).
 - **Kubernetes API access is the exception and is narrowly scoped:**
-  - panel and the factory orchestrator create Jobs in `sandbox`. The panel also deletes Jobs and suspends or resumes CronJobs there; the orchestrator execs into its worker pods to copy out the patch.
+  - panel and the factory orchestrator create Jobs in `sandbox`. The panel also deletes Jobs and suspends or resumes CronJobs there; the orchestrator reads worker pod logs to collect the patch and has no exec grant.
   - deployer applies the kinds its targets need in `agents`, `sandbox` and `work`, and writes no RBAC.
   - hermes, t3code, headlamp, alloy, victoriametrics and kube-state-metrics only read, and none of them can read Secrets.
   - The operators hold the rights their upstream manifests grant.

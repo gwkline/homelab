@@ -250,7 +250,6 @@ EOF
   check_https work work-t3code-0 0
   check_https agents grafana 0
   check_https agents headlamp 0
-  check_https agents homepage 0
   check_https agents cloudbeaver 0
   # An API with no page at /; its liveness route proves the proxy path.
   check_https agents knowledge 0 /healthz

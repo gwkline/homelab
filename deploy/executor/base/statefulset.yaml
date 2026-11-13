@@ -37,7 +37,7 @@ spec:
             - name: TAILNET_NAME
               valueFrom:
                 configMapKeyRef:
-                  name: homepage-env
+                  name: tailnet-env
                   key: tailnet-name
                   optional: true
             - name: EXECUTOR_WEB_BASE_URL

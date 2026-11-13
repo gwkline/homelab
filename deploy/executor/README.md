@@ -11,7 +11,7 @@ Not deployed, and not in `clusters/home`. Before it is, move `executor-tailnet` 
   kubectl -n agents create secret generic executor-admin \
     --from-literal=email=you@example.com --from-literal=password="$(openssl rand -base64 24)"
   ```
-- `homepage-env` key `tailnet-name` must be set. Browser logins are rejected until `EXECUTOR_WEB_BASE_URL` matches the real browser URL; in-cluster MCP works without it.
+- ConfigMap `agents/tailnet-env` key `tailnet-name` must be set ([tailnet DNS suffix](../tailscale/README.md#tailnet-dns-suffix)). Browser logins are rejected until `EXECUTOR_WEB_BASE_URL` matches the real browser URL; in-cluster MCP works without it.
 
 ## Apply
 

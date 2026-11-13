@@ -15,7 +15,6 @@ resources:
   - ../../../deploy/cloudbeaver/base
   - ../../../deploy/t3code/base
   - ../../../deploy/hermes/base
-  - ../../../deploy/homepage/base
   - ../../../deploy/panel/base
   - ../../../deploy/headlamp/base
   - ../../../deploy/loki/base

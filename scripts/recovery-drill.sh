@@ -142,7 +142,6 @@ stage pods
 kubectl -n agents rollout status statefulset/t3code --timeout="$POD_TIMEOUT"
 kubectl -n agents rollout status statefulset/hermes --timeout="$POD_TIMEOUT"
 kubectl -n agents rollout status deploy/panel --timeout="$POD_TIMEOUT"
-kubectl -n agents rollout status deploy/homepage --timeout="$POD_TIMEOUT"
 end_stage
 
 # ---------------------------------------------------------------------------

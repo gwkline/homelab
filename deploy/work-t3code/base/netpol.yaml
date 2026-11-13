@@ -16,14 +16,3 @@ spec:
       ports:
         - protocol: TCP
           port: 3773
-    - from:
-        # Homepage siteMonitor.
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: agents
-          podSelector:
-            matchLabels:
-              app: homepage
-      ports:
-        - protocol: TCP
-          port: 3773
