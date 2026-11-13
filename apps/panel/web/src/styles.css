@@ -32,4 +32,36 @@ body {
   background: var(--color-background);
   color: var(--color-foreground);
   font-family: ui-sans-serif, system-ui, sans-serif;
+  margin: 0;
+  min-width: 320px;
+}
+
+:where(button, a, input, [role="combobox"], [role="checkbox"]):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }

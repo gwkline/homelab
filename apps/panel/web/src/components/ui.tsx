@@ -36,14 +36,18 @@ export const CardHeader = ({
   subtitle?: string;
   action?: ReactNode;
 }) => (
-  <div className="border-border flex items-center justify-between border-b px-5 py-4">
-    <div>
-      <h2 className="text-sm font-semibold tracking-wide">{title}</h2>
+  <div className="border-border flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
+    <div className="min-w-0 flex-1 basis-48">
+      <h2 className="text-base font-semibold">{title}</h2>
       {subtitle && (
         <p className="text-muted-foreground mt-0.5 text-xs">{subtitle}</p>
       )}
     </div>
-    {action}
+    {action && (
+      <div className="flex max-w-full flex-wrap items-center gap-2">
+        {action}
+      </div>
+    )}
   </div>
 );
 
@@ -55,11 +59,11 @@ interface BadgeTone {
 const TONES: BadgeTone[] = [
   {
     className: "bg-success/15 text-success border-success/30",
-    matches: ["complete", "healthy"],
+    matches: ["complete", "healthy", "Ready"],
   },
   {
     className: "bg-destructive/15 text-destructive border-destructive/30",
-    matches: ["failed", "unhealthy"],
+    matches: ["failed", "unhealthy", "NotReady"],
   },
   {
     className: "bg-warning/15 text-warning border-warning/30",

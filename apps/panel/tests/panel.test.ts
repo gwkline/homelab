@@ -761,7 +761,7 @@ test("server serves SPA and lists sandbox state; no route launches commands", as
     assert.equal(created.length, 0, "no Job created from command text");
 
     const html = await (await fetch(`${panel.base}/`)).text();
-    assert.ok(html.includes("homelab factory"));
+    assert.ok(html.includes("Panel · Homelab"));
   } finally {
     panel.stop();
     mock.close();
