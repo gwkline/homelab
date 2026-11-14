@@ -1,6 +1,6 @@
 # Upstream distributes hermes-agent as an image (its setup.py refuses pip
 # builds), so we build on their pinned release.
-FROM nousresearch/hermes-agent:v2026.8.19@sha256:3811ed13da874fba2ac99b6d492db9a203d34cb6dccf90d886948c00d0ccec09
+FROM nousresearch/hermes-agent:v0.23.1@sha256:276d44685c65c0cb2a25f190b63c65c8906f9dc76486fb1c05ae71b5826bda08
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends curl ca-certificates \

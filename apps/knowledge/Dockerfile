@@ -1,7 +1,7 @@
 # Knowledge services, one image: dist/ingest.js (queue, worker, git sync;
 # port 3100) and dist/retrieval.js (hybrid search; port 3000). Each Deployment
 # picks its entrypoint with `command`.
-FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS build
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 COPY apps/knowledge/package.json apps/knowledge/
@@ -9,7 +9,7 @@ RUN npm ci -w apps/knowledge --no-audit --no-fund
 COPY apps/knowledge/ apps/knowledge/
 RUN npm run build -w apps/knowledge
 
-FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 WORKDIR /app
 # git: ingest clones knowledge sources; ca-certificates serves https.
 RUN apt-get update \

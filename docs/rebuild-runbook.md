@@ -23,8 +23,8 @@ Only documented sources; anything else you need is a drill finding (section 6).
 | tailscaled | `1.102.4` | `bootstrap/bootstrap.sh` (`TAILSCALE_VERSION`, sha256-verified installer) |
 | External Secrets Operator | chart 2.10.0 (vendored render) | `deploy/eso/base/eso.yaml` |
 | CloudNativePG | 1.30.0 | `deploy/cnpg/base` |
-| Sigstore policy-controller chart | `0.10.7` | this runbook, `scripts/recovery-drill.sh` |
-| Tailscale operator chart | `1.102.3` | this runbook, `scripts/recovery-drill.sh`, `deploy/tailscale/values.yaml` |
+| Sigstore policy-controller chart | `0.10.8` | this runbook, `scripts/recovery-drill.sh` |
+| Tailscale operator chart | `1.104.7` | this runbook, `scripts/recovery-drill.sh`, `deploy/tailscale/values.yaml` |
 
 Upgrading k3s/Tailscale: [runbook-server-cluster.md](runbook-server-cluster.md#upgrading-pinned-k3s--tailscale).
 
@@ -73,7 +73,7 @@ Must be serving before workloads are admitted ([ADR-004](adr/adr-004-cosign-admi
 ```sh
 helm repo add sigstore https://sigstore.github.io/helm-charts
 helm upgrade --install policy-controller sigstore/policy-controller \
-  --version 0.10.7 -n cosign-system --create-namespace \
+  --version 0.10.8 -n cosign-system --create-namespace \
   --values deploy/image-policy/values.yaml
 python3 deploy/image-policy/harden.py --kubeconfig "$KUBECONFIG"
 kubectl -n cosign-system rollout status deploy/policy-controller-webhook
@@ -102,7 +102,7 @@ After the core set, which syncs Secret `operator-oauth`. OAuth values are never 
 ```sh
 helm repo add tailscale https://pkgs.tailscale.com/helmcharts
 helm upgrade --install tailscale-operator tailscale/tailscale-operator \
-  --version 1.102.3 -n tailscale --create-namespace \
+  --version 1.104.7 -n tailscale --create-namespace \
   -f deploy/tailscale/values.yaml
 kubectl apply -f deploy/tailscale/proxyclass.yaml   # default ProxyClass; proxies wait for it
 kubectl get ingress -A   # every UI gets <host>.<tailnet>.ts.net
@@ -154,8 +154,7 @@ Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart &&
 | t3code | pairing URL from `kubectl logs t3code-0 -n agents \| head`; pair from desktop/phone; repos re-clone |
 | hermes | `kubectl exec -it hermes-0 -n agents -- hermes setup --portal`, then `kubectl rollout restart statefulset hermes -n agents`; message it and get a reply |
 | CLI logins (Claude, Codex) | log in again inside hermes/t3code (PVC homes start empty) |
-| homepage tailnet links | `kubectl -n agents create configmap homepage-env --from-literal=tailnet-name=<tailnet>.ts.net` ([deploy/tailscale/README.md](../deploy/tailscale/README.md#tailnet-dns-suffix)) |
-| panel, homepage | open both over HTTPS; links resolve |
+| panel landing page | open `https://panel.<tailnet>.ts.net` over HTTPS; factory, knowledge and dev-tool links work. The suffix comes from its Ingress status ([deploy/tailscale/README.md](../deploy/tailscale/README.md#tailnet-dns-suffix)) |
 
 Then `./scripts/rebuild-check.sh --phase manual` (the hermes gateway is running).
 

@@ -30,7 +30,7 @@ cd "$(dirname "$0")/.."
 KIND_NODE="${SMOKE_KIND_NODE:-kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed}"
 KUBE_MINOR="1.36"
 KIND_CLUSTER="${SMOKE_KIND_CLUSTER:-manifest-smoke}"
-WAIT_DEPLOY="${SMOKE_WAIT_DEPLOY:-kube-state-metrics,homepage,headlamp}"
+WAIT_DEPLOY="${SMOKE_WAIT_DEPLOY:-kube-state-metrics,headlamp}"
 DEPLOY_WAIT="${SMOKE_DEPLOY_WAIT:-300s}"
 JOB_WAIT="${SMOKE_JOB_WAIT:-180s}"
 # Namespaces the rendered set creates or lands in (deploy/namespaces/base,
@@ -352,7 +352,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: canary
-          image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          image: busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
           command:
             - sh
             - -c

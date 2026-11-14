@@ -2,7 +2,7 @@
 # toolchain installers; differs by having no t3 serve, no pairing, no
 # persistent volumes, and explicit /task (input) and /out (output) dirs.
 
-FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \

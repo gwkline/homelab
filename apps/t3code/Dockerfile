@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # python3/make/g++ build node-pty (a native dep of t3) when no prebuild
@@ -26,13 +26,13 @@ RUN sh /usr/local/lib/install-kubectl.sh
 # `depot bake` builds (inert without DEPOT_TOKEN).
 # Bump each version and its digests together.
 # renovate: datasource=github-releases depName=astral-sh/uv
-ARG UV_VERSION=0.12.23
-ARG UV_SHA256_X86_64=9167d72b3319674b6303c4cbe071854bba13ebdf3d76b1a7cbdc175471fb66d6
-ARG UV_SHA256_AARCH64=6524bd338177ed50d035d39354e12545e993bbeba2ecbddf0480c5b3a81d313f
+ARG UV_VERSION=0.13.8
+ARG UV_SHA256_X86_64=5acfd9177cfecf0bf87578f059728215ccc884388988f55f7a65041b57387d91
+ARG UV_SHA256_AARCH64=74f2f5c6024d397481db228db8fc25eed420db192243f88438c118e7e013e585
 # renovate: datasource=github-releases depName=depot/cli extractVersion=^v(?<version>.+)$
-ARG DEPOT_VERSION=2.102.16
-ARG DEPOT_SHA256_AMD64=6e82427723c9f074b332ccb505a121f7f8594e9d6a5f11e2773ec7da767bc6ec
-ARG DEPOT_SHA256_ARM64=6a44c71120ac5ceebeb7b02a554b31747529cbca3bc8808a04d36425376498dd
+ARG DEPOT_VERSION=2.103.13
+ARG DEPOT_SHA256_AMD64=342d19d914a5f31045f9fcc8fd462a140a73cac5c278e7838eb645f1075e7326
+ARG DEPOT_SHA256_ARM64=2537d9342eecaed93a5e831d684006e2a7330d4a3e11d6a96eff751d1757d498
 RUN ARCH="$(uname -m)" \
   && case "$ARCH" in \
        x86_64|amd64) UARCH=x86_64; DARCH=amd64; UV_SHA256="${UV_SHA256_X86_64}"; DEPOT_SHA256="${DEPOT_SHA256_AMD64}" ;; \
@@ -60,7 +60,7 @@ RUN sh /usr/local/lib/install-agent-clis.sh
 # t3 ships its binary as an optional npm dep that can lag a nightly publish;
 # `t3 --version` fails the build instead of crash-looping the pod.
 # renovate: datasource=npm depName=t3
-ARG T3_VERSION=0.0.46-nightly.20261007.2787
+ARG T3_VERSION=0.1.10-nightly.20261113.4656
 # renovate: datasource=npm depName=opencode-ai
 ARG OPENCODE_BETA_VERSION=0.0.0-beta-202608110357
 RUN npm install -g "t3@${T3_VERSION}" \

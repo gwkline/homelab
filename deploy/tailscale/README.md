@@ -19,7 +19,7 @@ Prerequisite: External Secrets Operator is running and `ClusterSecretStore` `one
 kubectl apply -k deploy/tailscale/base # namespace + ExternalSecret -> Secret operator-oauth
 helm repo add tailscale https://pkgs.tailscale.com/helmcharts
 helm upgrade --install tailscale-operator tailscale/tailscale-operator \
-  --version 1.102.3 \
+  --version 1.104.7 \
   -n tailscale --create-namespace \
   -f deploy/tailscale/values.yaml
 kubectl apply -f deploy/tailscale/proxyclass.yaml
@@ -39,7 +39,7 @@ Rotating the credential: create a new OAuth client with the same tag and scopes,
 
 ## How exposure works
 
-Every UI is a Tailscale Ingress in front of a ClusterIP Service: t3code-0, work-t3code-0, panel, grafana, headlamp, homepage, cloudbeaver and knowledge. The Ingress proxy terminates HTTPS with a tailnet cert and forwards (websockets included) to the Service, so pod restarts need no proxy changes. Ingress proxies run in userspace and are unprivileged. The tailnet hostname is `spec.tls[0].hosts[0]`.
+Every UI is a Tailscale Ingress in front of a ClusterIP Service: panel (the landing page), t3code-0, work-t3code-0, grafana, headlamp, cloudbeaver and knowledge. The Ingress proxy terminates HTTPS with a tailnet cert and forwards (websockets included) to the Service, so pod restarts need no proxy changes. Ingress proxies run in userspace and are unprivileged. The tailnet hostname is `spec.tls[0].hosts[0]`.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -71,4 +71,6 @@ Not done: per-UI tags and a ProxyGroup. Per-UI tags need `tagOwners` entries for
 
 ## Tailnet DNS suffix
 
-The suffix (e.g. `tailabc1234.ts.net`) is never committed — `scripts/verify.sh` rejects real `*.ts.net` names. Read it from any Ingress (`kubectl get ingress panel -n agents -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'`), or set `TAILNET_NAME` in the shell. Homepage reads it from ConfigMap `agents/homepage-env` key `tailnet-name`, which is created on the cluster and never committed: `kubectl -n agents create configmap homepage-env --from-literal=tailnet-name=<tailnet>.ts.net`. The panel reads it from its own Ingress status unless `PANEL_TAILNET_NAME` is set.
+The suffix (e.g. `tailabc1234.ts.net`) is never committed — `scripts/verify.sh` rejects real `*.ts.net` names. The panel reads it from its own Ingress status unless `PANEL_TAILNET_NAME` is set; no runtime ConfigMap is needed for the landing page. Read the full hostname with `kubectl get ingress panel -n agents -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'`, or set `TAILNET_NAME` in the shell.
+
+The optional, undeployed Executor reads the suffix from ConfigMap `agents/tailnet-env` key `tailnet-name`. Before deploying it, create that runtime config (never commit the value): `kubectl -n agents create configmap tailnet-env --from-literal=tailnet-name=<tailnet>.ts.net`.

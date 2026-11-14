@@ -6,9 +6,9 @@ set -eu
 
 # Bump the version and both digests together.
 # renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.+)$
-GH_VERSION=2.98.0
-GH_SHA256_AMD64=3b8ac6b30336802fc1a858d7c084e11cdf24ac1a761ca90b68022d7d729208de
-GH_SHA256_ARM64=cf689084f3a3618f7eae4a2420d335d74626d65f5e594b9828d125d69f800d86
+GH_VERSION=2.104.0
+GH_SHA256_AMD64=98cb101ad87dbbd3f6b2f2bfcbd43197ccd07643140121d8a9cfaa91eadbc24e
+GH_SHA256_ARM64=cb34cefc6f4e77b90731374a2b737516bb8f3033c6ca46aa949e5344f68069e3
 
 case "$(uname -m)" in
   x86_64) arch=amd64; sha="${GH_SHA256_AMD64}" ;;

@@ -1,0 +1,156 @@
+# Render with chart external-secrets 2.15.0; see README.md for the exact command.
+# PriorityClasses and the controller's effective memory bounds remain in base/kustomization.yaml.
+namespaceOverride: external-secrets
+image:
+  repository: ghcr.io/external-secrets/external-secrets
+  tag: v2.15.0@sha256:6888f243e5f8f7592c6d7fae2a5547c9e33531441b47b53807b9093b25a00e31
+  pullPolicy: IfNotPresent
+  flavour: ""
+
+# Preserve the existing cluster-wide controllers and RBAC. Store conditions,
+# not scopedRBAC, restrict which namespaces may use the 1Password authority.
+createOperator: true
+installCRDs: true
+scopedNamespace: ""
+scopedRBAC: false
+openshiftFinalizers: true
+systemAuthDelegator: false
+processClusterExternalSecret: true
+processClusterPushSecret: true
+processClusterStore: true
+processSecretStore: true
+processClusterGenerator: true
+processPushSecret: true
+leaderElect: false
+concurrent: 1
+rbac:
+  create: true
+  leaderElection:
+    create: true
+  serviceAccountTokenCreate: true
+  servicebindings:
+    create: true
+  aggregateToView: true
+  aggregateToEdit: true
+  aggregateToAdmin: true
+serviceAccount:
+  create: true
+  automount: true
+
+global:
+  compatibility:
+    openshift:
+      adaptSecurityContext: disabled
+podSecurityContext:
+  enabled: true
+securityContext:
+  enabled: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  seccompProfile:
+    type: RuntimeDefault
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Do not introduce optional servers, generic-target permissions, or monitoring
+# resources; metrics access is managed separately in base/metrics.yaml.
+bitwarden-sdk-server:
+  enabled: false
+genericTargets:
+  enabled: false
+  resources: []
+vault:
+  enableTokenCache: false
+serviceMonitor:
+  enabled: false
+metrics:
+  service:
+    enabled: false
+grafanaDashboard:
+  enabled: false
+networkPolicy:
+  enabled: false
+
+webhook:
+  create: true
+  image:
+    repository: ghcr.io/external-secrets/external-secrets
+    tag: v2.15.0@sha256:6888f243e5f8f7592c6d7fae2a5547c9e33531441b47b53807b9093b25a00e31
+    pullPolicy: IfNotPresent
+    flavour: ""
+  serviceAccount:
+    create: true
+    automount: true
+  certManager:
+    enabled: false
+  networkPolicy:
+    enabled: false
+  metrics:
+    service:
+      enabled: false
+  podSecurityContext:
+    enabled: true
+  securityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+certController:
+  create: true
+  enablePartialCache: true
+  image:
+    repository: ghcr.io/external-secrets/external-secrets
+    tag: v2.15.0@sha256:6888f243e5f8f7592c6d7fae2a5547c9e33531441b47b53807b9093b25a00e31
+    pullPolicy: IfNotPresent
+    flavour: ""
+  rbac:
+    create: true
+  serviceAccount:
+    create: true
+    automount: true
+  networkPolicy:
+    enabled: false
+  metrics:
+    service:
+      enabled: false
+  podSecurityContext:
+    enabled: true
+  securityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi

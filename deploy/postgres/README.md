@@ -13,6 +13,19 @@ CNPG-managed PostgreSQL 18 for the knowledge base, with pgvector and `pg_textsea
 
 Part of `clusters/home`. Standalone: `kubectl apply -k deploy/postgres/base`, then `kubectl -n database get cluster pg-primary -w` until it reports a healthy state.
 
+## Upgrade the operand and extensions
+
+The PostgreSQL catalog and `images/pg-textsearch/Dockerfile` use the same PG 18 operand. A catalog change is **not ready to apply** until the extension image built for that operand has been published by successful `main` CI and its immutable digest is recorded in `base/cluster.yaml`. PR builds validate the image but do not publish the signed main build; never guess its digest or reuse the old extension pin for a new operand.
+
+After merging an operand/extension upgrade:
+
+1. Wait for successful main CI publication of `ghcr.io/gwkline/homelab/pg-textsearch`.
+2. Resolve that main build's immutable digest, update `spec.postgresql.extensions[name=pg-textsearch].image.reference` in `base/cluster.yaml` through a separately verified PR, and wait for its required CI. Keep the catalog unapplied until this pin is merged.
+3. Take and verify a database backup before the single-instance restart. Backups are not automated here; preserve the PVC and do not treat the old image as a data rollback plan.
+4. Apply only fresh merged manifests in the maintenance window. Check PostgreSQL and extension versions, preload, BM25/vector query results and stored indexes. Extension binaries and SQL definitions can differ: review upstream upgrade scripts before any `ALTER EXTENSION UPDATE`; do not run it blindly.
+
+There is one database instance, so operand changes interrupt the knowledge services. An extension major or PostgreSQL major needs a separate migration, not a tag edit.
+
 ## Verify
 
 `scripts/pg-smoke.sh seed` checks the extensions, builds HNSW and BM25 indexes, and checks query results. `restart` deletes the primary pod gracefully. `verify` checks that data and indexes survived.

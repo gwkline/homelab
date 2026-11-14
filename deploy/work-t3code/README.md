@@ -5,7 +5,7 @@ A second t3code instance for work repositories, in the `work` namespace. It uses
 ## Isolation
 
 - GitHub: the pod mounts only `work-github-token`, a fine-grained PAT limited to selected work repos (Contents + Pull requests read/write). No personal token is synced into `work`.
-- Network: `work` is default-deny for ingress and egress. Egress allows DNS and the public internet only: no Kubernetes API, LAN, tailnet, or homelab services. Ingress comes only from the Tailscale proxy and the Homepage siteMonitor.
+- Network: `work` is default-deny for ingress and egress. Egress allows DNS and the public internet only: no Kubernetes API, LAN, tailnet, or homelab services. Ingress comes only from the Tailscale proxy.
 - No ServiceAccount token, no skills-sync, no Executor.
 - PVCs are not backed up. Losing the node means re-pairing the browser and logging into the CLIs again.
 
