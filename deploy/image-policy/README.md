@@ -11,7 +11,7 @@ Install the controller before `clusters/home`, which applies the policy. The har
 ```sh
 helm repo add sigstore https://sigstore.github.io/helm-charts
 helm --kubeconfig ~/kubeconfig-homelab upgrade --install policy-controller sigstore/policy-controller \
-  --version 0.10.7 -n cosign-system --create-namespace \
+  --version 0.10.8 -n cosign-system --create-namespace \
   --values deploy/image-policy/values.yaml
 python3 deploy/image-policy/harden.py --kubeconfig ~/kubeconfig-homelab
 kubectl --kubeconfig ~/kubeconfig-homelab -n cosign-system rollout status deploy/policy-controller-webhook

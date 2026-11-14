@@ -14,6 +14,11 @@ webhook:
       cpu: 200m
       memory: 512Mi
       ephemeral-storage: 128Mi
+# The chart's post-delete hook otherwise fetches a floating kubectl image.
+leasescleanup:
+  image:
+    repository: cgr.dev/chainguard/kubectl
+    version: sha256:b209b87e41886d9e83f94472f9ff752744a70e8535ba0cd5ce001415059195e2
 commonTolerations:
   - key: node.kubernetes.io/disk-pressure
     operator: Exists

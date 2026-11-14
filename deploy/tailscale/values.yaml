@@ -1,4 +1,4 @@
-# tailscale-operator chart 1.102.3. OAuth stays empty: the chart then mounts
+# tailscale-operator chart 1.104.7. OAuth stays empty: the chart then mounts
 # the ESO-synced Secret operator-oauth. Set proxy tags here, never via
 # operatorConfig.extraEnv (duplicate PROXY_TAGS env fails the release).
 oauth:
@@ -10,8 +10,8 @@ oauth:
 operatorConfig:
   image:
     repository: tailscale/k8s-operator
-    tag: v1.102.3
-    digest: sha256:d86a8be7ad9d38714968f5d4e010ba8dad30c8f672736ef94eda9b250febeb12
+    tag: v1.104.7
+    digest: sha256:51ba104ff02afcc39f93189415c8b2f44fb6037e8592d626bfa52c3c8afc02f6
   resources:
     requests:
       cpu: 10m
@@ -26,7 +26,7 @@ proxyConfig:
   defaultTags: "tag:k8s-operator"
   image:
     repository: tailscale/tailscale
-    tag: v1.102.3
-    digest: sha256:8c42c4574ab066384fcb72f69e086a2ff1dd3652eb6f56856cee34bcf0d2f680
+    tag: v1.104.7
+    digest: sha256:72c1e19e0aedca96b8533bbb0b4368564410ff20b17e53b804eb6c1f04a31be4
   # deploy/tailscale/proxyclass.yaml: resource bounds for every proxy.
   defaultProxyClass: homelab

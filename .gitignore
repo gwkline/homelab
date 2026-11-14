@@ -3,6 +3,8 @@ node_modules/
 dist/
 tmp/
 *.log
+# Private security evidence and scanner caches are never published.
+.audit-private/
 # Credentials never belong in the repo.
 kubeconfig*
 *.kubeconfig

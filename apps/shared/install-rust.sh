@@ -10,12 +10,12 @@ set -eu
 : "${RUSTUP_HOME:?RUSTUP_HOME must be set}" "${CARGO_HOME:?CARGO_HOME must be set}"
 
 # renovate: datasource=github-tags depName=rust-lang/rust
-RUST_VERSION=1.98.0
+RUST_VERSION=1.100.0
 # Bump the version and both digests together.
 # renovate: datasource=github-tags depName=rust-lang/rustup
-RUSTUP_VERSION=1.29.1
-RUSTUP_SHA256_X86_64=dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71
-RUSTUP_SHA256_AARCH64=15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433
+RUSTUP_VERSION=1.29.3
+RUSTUP_SHA256_X86_64=b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55
+RUSTUP_SHA256_AARCH64=9f608c142e0e38a78957d0661ba1dfaf0b6fb37184cfaa4b9a0aa57af6184282
 
 case "$(uname -m)" in
   x86_64) target=x86_64-unknown-linux-gnu; sha="${RUSTUP_SHA256_X86_64}" ;;

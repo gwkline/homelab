@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs the linters scripts/verify.sh runs into <bindir>, for CI on linux
+# Installs kubectl and the linters scripts/verify.sh runs into <bindir>, for CI on linux
 # x86_64. Each sha256 is recorded here rather than fetched from the release,
 # so a replaced release asset fails the install. Bump a version and its
 # sha256 together. Elsewhere, install the same versions with a package manager.
@@ -7,6 +7,9 @@
 # Usage: scripts/install-ci-tools.sh <bindir>
 set -eu
 
+# renovate: datasource=github-releases depName=kubernetes/kubernetes extractVersion=^v(?<version>.+)$
+KUBECTL_VERSION=1.36.6
+KUBECTL_SHA256=29818b6729dc9262b692307470d0558d027725e738be5dd47c760261868a2634
 # renovate: datasource=github-releases depName=koalaman/shellcheck extractVersion=^v(?<version>.+)$
 SHELLCHECK_VERSION=0.11.0
 SHELLCHECK_SHA256=b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
@@ -17,8 +20,8 @@ GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 ACTIONLINT_VERSION=1.7.12
 ACTIONLINT_SHA256=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
 # renovate: datasource=github-releases depName=zizmorcore/zizmor extractVersion=^v(?<version>.+)$
-ZIZMOR_VERSION=1.30.1
-ZIZMOR_SHA256=e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a
+ZIZMOR_VERSION=1.32.0
+ZIZMOR_SHA256=bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b
 # renovate: datasource=github-releases depName=hadolint/hadolint extractVersion=^v(?<version>.+)$
 HADOLINT_VERSION=2.15.1
 HADOLINT_SHA256=c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
@@ -37,6 +40,10 @@ fetch() {
   curl -fsSLo "$tmp/$3" "$1"
   echo "$2  $tmp/$3" | sha256sum -c --strict --quiet -
 }
+
+fetch "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+  "$KUBECTL_SHA256" kubectl
+install -m 0755 "$tmp/kubectl" "$bindir/kubectl"
 
 gh_dl=https://github.com
 
@@ -64,6 +71,7 @@ fetch "$gh_dl/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-
   "$HADOLINT_SHA256" hadolint
 install -m 0755 "$tmp/hadolint" "$bindir/hadolint"
 
+"$bindir/kubectl" version --client
 "$bindir/shellcheck" --version | sed -n 2p
 "$bindir/gitleaks" version
 "$bindir/actionlint" --version | head -n 1
