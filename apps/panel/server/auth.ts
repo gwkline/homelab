@@ -81,7 +81,7 @@ const mediaType = (contentType: string | undefined): string =>
 
 // Caller identity and cross-site protection for every mutating /api route.
 //
-// The panel listens twice. PORT serves in-cluster callers (Executor, homepage,
+// The panel listens twice. PORT serves in-cluster callers (Executor,
 // the stats CronJob, probes). PANEL_TAILNET_PORT serves the Tailscale Ingress,
 // and the NetworkPolicy admits only the panel's own Tailscale proxy pod to it.
 // `tailscale serve` deletes client-sent Tailscale-User-* headers and sets

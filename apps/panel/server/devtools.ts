@@ -88,17 +88,7 @@ export const DEV_TOOLS: ToolDef[] = [
     noEmbed: true,
     url: "https://executor.{tailnet}",
   },
-  {
-    category: "dashboard",
-    dependsOn: "deploy/homepage/base",
-    description: "Tailnet-wide dashboard for every service.",
-    enabled: true,
-    health: { namespace: "agents", path: "/", port: 80, service: "homepage" },
-    icon: "LayoutDashboard",
-    name: "Homepage",
-    noEmbed: true,
-    url: "https://homepage.{tailnet}",
-  },
+
   {
     category: "agents",
     dependsOn: "deploy/t3code/base",

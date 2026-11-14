@@ -76,7 +76,7 @@ test("dev tools catalog entries are complete and policy-compliant", () => {
     "Headlamp",
     "CloudBeaver",
     "Executor",
-    "Homepage",
+
     "T3 Code",
     "Knowledge",
   ]) {
@@ -301,8 +301,10 @@ test("evaluateTools distinguishes healthy, unhealthy, unconfigured, and disabled
   assert.ok(noTailnet.detail?.includes("PANEL_TAILNET_NAME"));
 });
 
-test("GET /api/devtools discovers the tailnet and reports catalog states", async () => {
+test("GET /api/devtools discovers the tailnet without advertising or probing Homepage", async () => {
+  const requests: string[] = [];
   const mock = createServer((req, res) => {
+    requests.push(req.url ?? "");
     if (
       req.url === "/apis/networking.k8s.io/v1/namespaces/agents/ingresses/panel"
     ) {
@@ -316,11 +318,11 @@ test("GET /api/devtools discovers the tailnet and reports catalog states", async
       );
       return;
     }
-    if (req.url === "/api/v1/namespaces/agents/services/homepage") {
+    if (req.url === "/api/v1/namespaces/agents/services/headlamp") {
       res.writeHead(200, { "content-type": "application/json" }).end(
         JSON.stringify({
-          metadata: { name: "homepage" },
-          spec: { ports: [{ port: 80 }], selector: { app: "homepage" } },
+          metadata: { name: "headlamp" },
+          spec: { ports: [{ port: 80 }], selector: { app: "headlamp" } },
         })
       );
       return;
@@ -336,7 +338,7 @@ test("GET /api/devtools discovers the tailnet and reports catalog states", async
         JSON.stringify({
           items: [
             {
-              metadata: { labels: { app: "homepage" }, namespace: "agents" },
+              metadata: { labels: { app: "headlamp" }, namespace: "agents" },
               status: { conditions: [{ status: "True", type: "Ready" }] },
             },
           ],
@@ -373,7 +375,9 @@ test("GET /api/devtools discovers the tailnet and reports catalog states", async
 
     assert.equal(body.tailnet.configured, true);
     assert.equal(body.tailnet.name, "tailtest.example");
-    assert.ok(Array.isArray(body.tools) && body.tools.length >= 7);
+    assert.equal(body.tools.length, DEV_TOOLS.length);
+    assert.doesNotMatch(JSON.stringify(body.tools), /homepage/iu);
+    assert.ok(requests.every((url) => !url.includes("homepage")));
 
     const byName = Object.fromEntries(body.tools.map((t) => [t.name, t]));
     const card = (name: string) => {
@@ -382,18 +386,18 @@ test("GET /api/devtools discovers the tailnet and reports catalog states", async
       return state;
     };
     // Deployed tool: healthy, link built from the discovered tailnet suffix.
-    assert.equal(card("Homepage").status, "healthy");
-    assert.equal(card("Homepage").url, "https://homepage.tailtest.example");
+    assert.equal(card("Headlamp").status, "healthy");
+    assert.equal(card("Headlamp").url, "https://headlamp.tailtest.example");
     // The in-cluster probe cannot resolve the service DNS in this mock —
     // a network-level failure must NOT flip the card to unhealthy.
-    assert.ok(card("Homepage").detail.includes("not probed"));
+    assert.ok(card("Headlamp").detail.includes("not probed"));
     // Enabled tools whose Service is absent report unconfigured, not disabled.
     assert.equal(card("Grafana").status, "unconfigured");
     assert.equal(card("Knowledge").status, "unconfigured");
     // Cards carry the full declarative metadata.
     assert.equal(card("Grafana").category, "observability");
     assert.equal(card("Grafana").dependsOn, "deploy/grafana/base");
-    assert.equal(card("Homepage").noEmbed, true);
+    assert.equal(card("Headlamp").noEmbed, true);
   } finally {
     panel.stop();
     mock.close();
