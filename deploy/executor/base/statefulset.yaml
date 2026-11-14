@@ -22,7 +22,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: executor
-          image: ghcr.io/usefulsoftwareco/executor-selfhost:1.6.7@sha256:c8dd83a5dba8ac992dfe1ded4aa65ae4e7f52ec31fddbe2af5b49ffebe5bbfa7
+          image: ghcr.io/usefulsoftwareco/executor-selfhost:1.6.11@sha256:ea8b4d1019cc00c81cb4236d8edc07a12ac75ef465593b89ae652c0800cd33c1
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

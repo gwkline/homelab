@@ -19,7 +19,7 @@ Prerequisite: External Secrets Operator is running and `ClusterSecretStore` `one
 kubectl apply -k deploy/tailscale/base # namespace + ExternalSecret -> Secret operator-oauth
 helm repo add tailscale https://pkgs.tailscale.com/helmcharts
 helm upgrade --install tailscale-operator tailscale/tailscale-operator \
-  --version 1.102.3 \
+  --version 1.104.7 \
   -n tailscale --create-namespace \
   -f deploy/tailscale/values.yaml
 kubectl apply -f deploy/tailscale/proxyclass.yaml

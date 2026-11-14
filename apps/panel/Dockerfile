@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS build
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 COPY apps/panel/package.json apps/panel/
@@ -6,7 +6,7 @@ RUN npm ci -w apps/panel --no-audit --no-fund
 COPY apps/panel/ apps/panel/
 RUN npm run build -w apps/panel
 
-FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 WORKDIR /app
 # dist/ is a self-contained bundle: no runtime node_modules.
 ENV NODE_ENV=production \

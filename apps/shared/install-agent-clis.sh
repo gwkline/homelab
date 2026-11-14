@@ -7,17 +7,17 @@
 set -eu
 
 # renovate: datasource=npm depName=@openai/codex
-CODEX_VERSION=0.161.0
+CODEX_VERSION=0.169.0
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-CLAUDE_CODE_VERSION=2.1.293
+CLAUDE_CODE_VERSION=2.1.325
 # renovate: datasource=npm depName=opencode-ai
-OPENCODE_VERSION=1.18.23
+OPENCODE_VERSION=1.19.5
 # Cursor publishes no checksum file: the per-arch digests were recorded with
 # the pin. Bump all three together.
 # renovate: datasource=custom.cursor-agent depName=cursor-agent extractVersion=^DOWNLOAD_URL="https://downloads\.cursor\.com/lab/(?<version>[^/]+)/
-CURSOR_AGENT_VERSION=2026.08.11-e8db854
-CURSOR_AGENT_SHA256_X64=bfff4bf6f4e9dd30c1d0ef0a70b6077b074015dd2948e4c50685d53afdcfce5a
-CURSOR_AGENT_SHA256_ARM64=ea13f92e295f523a99ce8d8f57d6894d21e5d1e2d030ffad718ccd5955ca2eed
+CURSOR_AGENT_VERSION=2026.11.13-eacade1
+CURSOR_AGENT_SHA256_X64=c02e4321f20d691ee03af94d29948dc3a81c6c34e7328da7bb1afade4c75812f
+CURSOR_AGENT_SHA256_ARM64=e4ba0611045a24d1cf78f021d34c19461680fc7234c19c1f981f1cc169f70cdc
 
 npm install -g \
   "@openai/codex@${CODEX_VERSION}" \

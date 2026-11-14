@@ -3,7 +3,7 @@
 # publish path. Every scanner is pinned, downloads are verified against
 # sha256 digests recorded here, and each must install or the build fails.
 # Bump a version and its digest together.
-FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN apt-get update \
@@ -47,13 +47,13 @@ RUN curl -fsSLo "/tmp/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
 
 # PyPI publishes no checksum file; the exact version is asserted instead.
 # renovate: datasource=pypi depName=semgrep
-ARG SEMGREP_VERSION=1.176.0
+ARG SEMGREP_VERSION=1.185.0
 RUN pip3 install --no-cache-dir --break-system-packages "semgrep==${SEMGREP_VERSION}" \
   && test "$(semgrep --version)" = "${SEMGREP_VERSION}"
 
 # renovate: datasource=github-releases depName=aquasecurity/trivy extractVersion=^v(?<version>.+)$
-ARG TRIVY_VERSION=0.74.0
-ARG TRIVY_SHA256=cf1e32ec8d4d8823e023096a28cadb14f5b5123ce03f201fb633c5b76aa712dd
+ARG TRIVY_VERSION=0.76.2
+ARG TRIVY_SHA256=7edaf64c8a2a0ae02137f776c6e56adf285fc36ec76b045274afdc462f20f092
 RUN curl -fsSLo "/tmp/trivy_${TRIVY_VERSION}_Linux-64bit.deb" \
       "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.deb" \
   && echo "${TRIVY_SHA256}  /tmp/trivy_${TRIVY_VERSION}_Linux-64bit.deb" | sha256sum -c - \

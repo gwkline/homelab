@@ -9,9 +9,9 @@
 set -eu
 
 # renovate: datasource=helm depName=tailscale-operator registryUrl=https://pkgs.tailscale.com/helmcharts
-TS_CHART_VERSION=1.102.3
+TS_CHART_VERSION=1.104.7
 # renovate: datasource=helm depName=policy-controller registryUrl=https://sigstore.github.io/helm-charts
-POLICY_CHART_VERSION=0.10.7
+POLICY_CHART_VERSION=0.10.8
 
 POD_TIMEOUT=600s
 PROXY_TIMEOUT=480s

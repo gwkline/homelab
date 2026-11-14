@@ -1,6 +1,6 @@
 # Factory collector: admits open GitHub issues as factory Runs. TypeScript
 # run directly via type stripping, so there is no npm install step.
-FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 WORKDIR /app
 # token-service.ts keeps its repo-relative path so the collector's
 # ../github-app/token-service.ts import resolves the same in-image and in CI.
