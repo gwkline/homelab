@@ -109,6 +109,9 @@ jobs:
       - run: ./scripts/verify.sh
       - name: Secret scan (git history, first-parent mainline)
         run: gitleaks git --log-opts=--first-parent --config .gitleaks.toml --redact
+      # Manifest fixture tests import the lockfile-pinned YAML parser.
+      - name: Install fixture dependencies
+        run: npm ci --ignore-scripts
       - name: Shell fixture tests
         run: |
           for t in apps/*/tests/*.test.sh apps/factory/*/tests/*.test.sh deploy/*/tests/*.test.sh; do
