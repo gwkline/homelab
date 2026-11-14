@@ -16,7 +16,7 @@ Run `cosign verify` in CI against every digest a manifest deploys. Zero cluster 
 
 ### B. sigstore policy-controller (chosen)
 
-The admission controller purpose-built for cosign: a single webhook deployment in `cosign-system` plus two CRDs (`ClusterImagePolicy`, `TrustRoot`), installed from the sigstore helm chart (`policy-controller-0.10.7`, app `0.13.1`, webhook image itself digest-pinned). Maintained by the sigstore org on a monthly cadence; it is the reference consumer of the exact signature format CI already produces. k3s-compatible: it is a plain validating/mutating admission webhook — no node agents, no containerd changes, no kernel modules. Budget: one pod at `100m/128Mi` requests (`200m/512Mi` limits, chart defaults). Opt-in per namespace via the `policy.sigstore.dev/include=true` namespace label, which the API server evaluates before the webhook is ever called.
+The admission controller purpose-built for cosign: a single webhook deployment in `cosign-system` plus two CRDs (`ClusterImagePolicy`, `TrustRoot`), installed from the sigstore helm chart (`policy-controller-0.10.8`, app `0.13.1`, webhook image itself digest-pinned). Maintained by the sigstore org on a monthly cadence; it is the reference consumer of the exact signature format CI already produces. k3s-compatible: it is a plain validating/mutating admission webhook — no node agents, no containerd changes, no kernel modules. Budget: one pod at `100m/128Mi` requests (`200m/512Mi` limits, chart defaults). Opt-in per namespace via the `policy.sigstore.dev/include=true` namespace label, which the API server evaluates before the webhook is ever called.
 
 ### C. Kyverno verifyImages
 
@@ -26,7 +26,7 @@ Also maintained and capable of cosign keyless verification, but it is a general 
 
 ### D1. Mechanism and install shape
 
-policy-controller, installed out of band by Helm like tailscale-operator: `helm upgrade --install policy-controller sigstore/policy-controller --version 0.10.7 -n cosign-system --create-namespace` (pinned in `scripts/recovery-drill.sh` and the [rebuild runbook](../rebuild-runbook.md)). The `ClusterImagePolicy` itself is plain kustomize in `deploy/image-policy/base`, applied right after the install and before any workload apply — verification must exist before the first pod is admitted. The webhook config ships `failurePolicy: Fail`; the webhook self-reconciles its own rules.
+policy-controller, installed out of band by Helm like tailscale-operator: `helm upgrade --install policy-controller sigstore/policy-controller --version 0.10.8 -n cosign-system --create-namespace` (pinned in `scripts/recovery-drill.sh` and the [rebuild runbook](../rebuild-runbook.md)). The `ClusterImagePolicy` itself is plain kustomize in `deploy/image-policy/base`, applied right after the install and before any workload apply — verification must exist before the first pod is admitted. The webhook config ships `failurePolicy: Fail`; the webhook self-reconciles its own rules.
 
 ### D2. Trusted identity
 

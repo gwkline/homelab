@@ -21,7 +21,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: grafana
-          image: grafana/grafana:13.2.5@sha256:9f7aa1e1e3246aade5792d35a738049f7f32f89cd51d1956cf426a4e86268a84
+          image: grafana/grafana:13.2.6@sha256:b21409d7951ddcfd63a4b49083e4ef2cc35bc1437d071813bf82bfb238b00bca
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

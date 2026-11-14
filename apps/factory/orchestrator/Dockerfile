@@ -1,5 +1,5 @@
 # Factory orchestrator: kubectl + gh + jq + git in a slim shell.
-FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq python3 openssh-client \

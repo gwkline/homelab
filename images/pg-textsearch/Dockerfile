@@ -8,7 +8,7 @@
 # ABI: BASE must be the exact operand image in
 # deploy/postgres/base/cluster-image-catalog.yaml. Rebuild (and re-pin this
 # image's digest in cluster.yaml) whenever the operand changes.
-ARG BASE=ghcr.io/cloudnative-pg/postgresql:18.6-202608310817-minimal-trixie@sha256:5c389b0268d9e637ca55efa41a7fafa3996332b5ea3c6099d0861c5f31acb00e
+ARG BASE=ghcr.io/cloudnative-pg/postgresql:18.7-202611122305-minimal-trixie@sha256:b98ae0b74a12f20ccff32219be0e33fdd35c7e2e8e73c8bff9173f1128e167d1
 FROM $BASE AS builder
 # Build stage only; the shipped stage runs as 65532.
 # hadolint ignore=DL3002
@@ -18,8 +18,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG PG_MAJOR=18
 # timescale/pg_textsearch release: tag + release-asset hash. Bump both together.
 # renovate: datasource=github-releases depName=timescale/pg_textsearch extractVersion=^v(?<version>.+)$
-ARG EXT_VERSION=1.4.0
-ARG EXT_SHA256=313c231136f19ded24a7d6f4de3ca96f3840b10c55adbfc839cd0068042e2e40
+ARG EXT_VERSION=1.5.1
+ARG EXT_SHA256=5b90a160c4aa9ab78c72ab41eb761146a601485bff5e271f05a44d3da7493d5b
 
 # Build deps come from the image's own apt sources (Debian snapshot +
 # PGDG trixie-pgdg, both preconfigured in the operand image).
