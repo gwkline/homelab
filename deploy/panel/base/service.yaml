@@ -62,13 +62,6 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app: homepage
-      ports:
-        - protocol: TCP
-          port: 3000
-    - from:
-        - podSelector:
-            matchLabels:
               app: factory-stats-snapshot
       ports:
         - protocol: TCP

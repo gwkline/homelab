@@ -154,8 +154,7 @@ Then prove postgres: `scripts/pg-smoke.sh seed && scripts/pg-smoke.sh restart &&
 | t3code | pairing URL from `kubectl logs t3code-0 -n agents \| head`; pair from desktop/phone; repos re-clone |
 | hermes | `kubectl exec -it hermes-0 -n agents -- hermes setup --portal`, then `kubectl rollout restart statefulset hermes -n agents`; message it and get a reply |
 | CLI logins (Claude, Codex) | log in again inside hermes/t3code (PVC homes start empty) |
-| homepage tailnet links | `kubectl -n agents create configmap homepage-env --from-literal=tailnet-name=<tailnet>.ts.net` ([deploy/tailscale/README.md](../deploy/tailscale/README.md#tailnet-dns-suffix)) |
-| panel, homepage | open both over HTTPS; links resolve |
+| panel landing page | open `https://panel.<tailnet>.ts.net` over HTTPS; factory, knowledge and dev-tool links work. The suffix comes from its Ingress status ([deploy/tailscale/README.md](../deploy/tailscale/README.md#tailnet-dns-suffix)) |
 
 Then `./scripts/rebuild-check.sh --phase manual` (the hermes gateway is running).
 

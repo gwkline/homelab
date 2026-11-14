@@ -30,7 +30,7 @@ cd "$(dirname "$0")/.."
 KIND_NODE="${SMOKE_KIND_NODE:-kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed}"
 KUBE_MINOR="1.36"
 KIND_CLUSTER="${SMOKE_KIND_CLUSTER:-manifest-smoke}"
-WAIT_DEPLOY="${SMOKE_WAIT_DEPLOY:-kube-state-metrics,homepage,headlamp}"
+WAIT_DEPLOY="${SMOKE_WAIT_DEPLOY:-kube-state-metrics,headlamp}"
 DEPLOY_WAIT="${SMOKE_DEPLOY_WAIT:-300s}"
 JOB_WAIT="${SMOKE_JOB_WAIT:-180s}"
 # Namespaces the rendered set creates or lands in (deploy/namespaces/base,
