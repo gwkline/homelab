@@ -83,6 +83,13 @@ printf '%s\n' 'fs.inotify.max_user_instances = 8192' 'fs.inotify.max_user_watche
   sudo tee /etc/sysctl.d/90-inotify.conf >/dev/null
 sudo sysctl -q -p /etc/sysctl.d/90-inotify.conf
 
+# A small node must not spend several GiB on duplicate system journals. This
+# caps future journal storage; rotating/vacuuming old journals on an existing
+# node is a separate, deliberate maintenance action after preserving evidence.
+echo "==> installing bounded node journal retention"
+sudo install -D -m 0644 -o root -g root "$REPO_DIR/bootstrap/journald.conf" /etc/systemd/journald.conf.d/90-homelab-storage.conf
+sudo systemctl restart systemd-journald
+
 # All k3s settings live in the repo file; the installer gets no flags, so a
 # re-run (also an upgrade) converges the node to it. k3s reads the file on
 # start, and the installer restarts the service.
