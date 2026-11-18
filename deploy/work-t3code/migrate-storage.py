@@ -60,6 +60,12 @@ def no_writers(config, proc=Path("/proc")):
         if not process.name.isdigit():
             continue
         try:
+            # Zombie tasks have no open files or mount namespace; Linux can
+            # return EINVAL for their mountinfo. Inspect state, never skip a
+            # live process merely because its procfs is unreadable.
+            state = (process / "stat").read_text().rsplit(")", 1)[1].split()[0]
+            if state == "Z":
+                continue
             for line in (process / "mountinfo").read_text().splitlines():
                 fields = line.split()
                 if any(source in fields[3] or source in line for source in sources):
