@@ -226,8 +226,33 @@ def supervise(command, config, env=None, probe=available_bytes):
         return 128 + state[0]
 
 
+def readonly_depot_command(args):
+    # Exempt finite metadata/diagnostics, not builds, exports or mutable CI actions.
+    # Only a bare command path followed by help is unambiguous: an earlier option
+    # could consume --help as its value rather than make Cobra show help.
+    if args and args[-1] in ("--help", "-h") and all(not value.startswith("-") for value in args[:-1]):
+        return True
+    if args[:2] in (["list", "builds"], ["list", "projects"], ["list", "jobs"],
+                    ["ls", "builds"], ["ls", "projects"], ["ls", "jobs"]):
+        return True
+    if args[:3] == ["ci", "artifacts", "list"]:
+        return True
+    if len(args) < 2 or args[0] != "ci":
+        return False
+    if args[1] in ("diagnose", "status", "summary", "metrics"):
+        return True
+    if args[1] == "logs":
+        # Follow and file export can grow without bound or fill the backing disk.
+        return not any(value.split("=", 1)[0] in ("--follow", "-f", "--output-file")
+                       or (value.startswith("-") and not value.startswith("--") and value != "-o")
+                       for value in args[2:])
+    return False
+
+
 def readonly_command(tool, args):
     # Be deliberately conservative: arbitrary scripts and ambiguous flags are heavy.
+    if tool == "depot" and readonly_depot_command(args):
+        return True
     if len(args) == 1 and args[0] in ("--version", "-v", "-V", "--help", "-h"):
         return True
     if not args:
