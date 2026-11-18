@@ -7,7 +7,7 @@ metadata:
   namespace: work
 spec:
   serviceName: work-t3code-headless
-  # Keep at 1: t3state is a single standalone RWO claim (t3state-pvc.yaml).
+  # Both standalone local claims are single-writer; retain the old claims.
   replicas: 1
   selector:
     matchLabels:
@@ -101,16 +101,9 @@ spec:
           secret:
             secretName: work-github-token
             optional: true
+        - name: data
+          persistentVolumeClaim:
+            claimName: data-work-t3code-ssd
         - name: t3state
           persistentVolumeClaim:
-            claimName: t3state-work-t3code-0
-  volumeClaimTemplates:
-    # Repo clones (they re-clone) and the agent CLIs' saved state: logins,
-    # config and the OpenCode database. Losing it logs every CLI out.
-    - metadata:
-        name: data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 20Gi
+            claimName: t3state-work-t3code-ssd

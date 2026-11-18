@@ -1,0 +1,75 @@
+# Pre-bound local volumes: kubelet must find existing directories, never create
+# a fallback on root. Prepare/verify the separate mount before applying these.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: work-t3code-data-ssd
+spec:
+  capacity:
+    storage: 60Gi
+  volumeMode: Filesystem
+  accessModes: ["ReadWriteOnce"]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  claimRef:
+    namespace: work
+    name: data-work-t3code-ssd
+  local:
+    path: /srv/work-docker/work-t3code/data
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [agent-1]
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: work-t3code-state-ssd
+spec:
+  capacity:
+    storage: 40Gi
+  volumeMode: Filesystem
+  accessModes: ["ReadWriteOnce"]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  claimRef:
+    namespace: work
+    name: t3state-work-t3code-ssd
+  local:
+    path: /srv/work-docker/work-t3code/t3state
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [agent-1]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-work-t3code-ssd
+  namespace: work
+spec:
+  storageClassName: ""
+  volumeName: work-t3code-data-ssd
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 60Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: t3state-work-t3code-ssd
+  namespace: work
+spec:
+  storageClassName: ""
+  volumeName: work-t3code-state-ssd
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 40Gi

@@ -23,6 +23,22 @@ They sync through `ClusterSecretStore` `onepassword`, whose conditions include `
 
 Part of `clusters/home`; the deployer keeps the StatefulSet on the latest image. Standalone: `kubectl apply -k deploy/work-t3code/base`. Then pair from `https://work-t3code-0.<tailnet>.ts.net`.
 
+## Storage
+
+`/data` and `/home/node/.t3` use separate pre-bound local claims on the mounted SSD at `/srv/work-docker/work-t3code/{data,t3state}`. Both PVs have `Retain`. The declared 60/40 GiB capacities are scheduling metadata, not filesystem quotas. The guard measures the actual `/data` backing filesystem, including VM growth on that same SSD; its 22/25/20 GiB watermarks are unchanged. Original claims and original data stay on root as rollback copies: copying them does **not** free root space. Neither work volume is included in personal backups.
+
+### Copy-and-switch maintenance
+
+Use an isolated checkout of merged, green main. Do not change a live PV's source or patch StatefulSet `volumeClaimTemplates`: both are immutable. Do not prune either old claim.
+
+1. Inventory the actual old PV paths/claim UIDs, all Git roots (including managed worktrees), dirty/untracked/ignored work, auth hashes, environment identity, SQLite/session state, replicas and deployer suspension. Keep this evidence private. Verify the intended SSD UUID with `findmnt --mountpoint`; it must be a separate filesystem. Its unmounted underlying directory must remain empty: never use `DirectoryOrCreate` or a fallback mkdir on root.
+2. Supply a private, root-owned JSON file to `migrate-storage.py`: `mount`, `uuid`, and exactly two `volumes` entries with `source` (the discovered old local-PV directory) and `destination` (the new data/t3state paths above). The script never formats anything or edits Kubernetes. Audit paths must be outside the copies but on the verified SSD. Optional `precopy` can run live; it does not delete. Budget the whole copy plus retained precopy versions and VM headroom before starting.
+3. Suspend the deployer, recording its original state, and gracefully scale **only** work-t3code to zero. Confirm its pod is gone and no writer survives. `final` independently rejects RW source mounts/writable descriptors via host procfs; inability to inspect a process is a failure, not an exemption. Run `final`, then `verify`. These use numeric IDs, sparse files, hardlinks, ACLs, xattrs and full checksums. Stale new-copy entries/previous versions are retained in the private audit, never removed from the source. Both checksum/metadata dry-run logs must be completely empty before switching.
+4. Manually apply the merged `ssd-storage.yaml` prerequisites with the base's common labels; verify both new claims Bound to the intended PVs/node/paths. With work still stopped, orphan-delete only its StatefulSet controller (not any PVC), then recreate the merged StatefulSet at zero replicas with the deployer's resolved **signed immutable** image. Keep security, credentials, service and internal paths unchanged. The regular deployer cannot perform this immutable-controller transition.
+5. Before restarting, compare Git/source/auth/environment/SQLite identity through the copied mounts. Restore the original replica count, run the managed deployer, then verify actual SSD-backed read/write/fsync, disposable Git operations, state integrity and both T3 HTTPS routes. Restore original deployer suspension. Remove exact temporary helpers and verify absence. Keep the private audit and both old claims/copies; no automatic cleanup is part of this procedure.
+
+Rollback: suspend deployment and stop work again, preserve any post-switch new work, recreate only the controller from the saved old manifest and signed image using the old claims, restore replicas/suspension and reverify identities. Never overwrite either copy or revert new Git work blindly.
+
 ## Verify
 
 ```sh
