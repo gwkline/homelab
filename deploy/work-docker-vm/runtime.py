@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import stat
 import ssl
 import struct
 import subprocess
@@ -22,8 +23,14 @@ INHIBIT = Path("/var/lib/work-docker-vm/inhibited")
 
 def mount(config):
     path = Path(config["mount"])
-    uuid = subprocess.check_output(["findmnt", "-n", "-o", "UUID", "--mountpoint", str(path)], text=True).strip()
-    if uuid != config["uuid"] or path.stat().st_dev == Path("/").stat().st_dev:
+    # Resolve the UUID-labelled block identity by stat, not by opening a
+    # disk/blkid probe. The VM UID has no block-device access by design.
+    device = Path("/dev/disk/by-uuid") / config["uuid"]
+    try:
+        identity = device.stat()
+    except OSError as error:
+        raise RuntimeError("required filesystem UUID identity unavailable") from error
+    if not path.is_mount() or not stat.S_ISBLK(identity.st_mode) or path.stat().st_dev != identity.st_rdev or path.stat().st_dev == Path("/").stat().st_dev:
         raise RuntimeError("required separate filesystem unavailable")
     return path
 

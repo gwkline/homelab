@@ -270,6 +270,8 @@ profile work-dockervm flags=(attach_disconnected) {{
  /sys/devices/system/** r,
  /sys/devices/virtual/** r,
  /dev/kvm rw,
+ /dev/disk/by-uuid/* r,
+ /run/udev/data/* r,
  /dev/null rw,
  /dev/urandom r,
  /run/work-dockervm/ r,
