@@ -52,6 +52,7 @@ class StorageSafety(unittest.TestCase):
             root = Path(directory).resolve()
             process = root / "proc" / "123"
             process.mkdir(parents=True)
+            (process / "stat").write_text("123 (fixture) S 1 2 3\n")
             source = root / "old"
             source.mkdir()
             (process / "fd").mkdir()
@@ -62,12 +63,26 @@ class StorageSafety(unittest.TestCase):
             (process / "mountinfo").write_text(f"1 2 8:1 {source} /data ro - ext4 /dev/a rw\n")
             MODULE.no_writers(config, root / "proc")
 
+    def test_zombie_has_no_writers_but_live_proc_errors_propagate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            process = root / "proc" / "123"
+            process.mkdir(parents=True)
+            (process / "stat").write_text("123 (terminated worker) Z 1 2 3\n")
+            config = {"volumes": [{"source": str(root / "source")}]}
+            MODULE.no_writers(config, root / "proc")
+            (process / "stat").write_text("123 (live worker) S 1 2 3\n")
+            with patch.object(Path, "read_text", side_effect=PermissionError("procfs inaccessible")):
+                with self.assertRaises(PermissionError):
+                    MODULE.no_writers(config, root / "proc")
+
     def test_writable_descriptor_blocks_final_copy(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             process = root / "proc" / "123"
             (process / "fd").mkdir(parents=True)
             (process / "fdinfo").mkdir()
+            (process / "stat").write_text("123 (fixture) S 1 2 3\n")
             source = root / "old"
             source.mkdir()
             (process / "mountinfo").write_text("")
