@@ -221,6 +221,18 @@ def install(config, source):
             if groups: command += ["--groups", groups]
             subprocess.run(command + [user], check=True)
     vm_user, proxy_user = pwd.getpwnam("work-dockervm"), pwd.getpwnam("work-docker-proxy")
+    allowed_groups = {vm_user.pw_gid, grp.getgrnam("kvm").gr_gid}
+    if vm_user.pw_shell != "/usr/sbin/nologin" or set(os.getgrouplist(vm_user.pw_name, vm_user.pw_gid)) != allowed_groups:
+        raise RuntimeError("existing VM account has unexpected login/groups")
+    authority = base / "authority"
+    os.chown(authority, 0, proxy_user.pw_gid); authority.chmod(0o710)
+    server_dir = authority / "server"
+    os.chown(server_dir, 0, proxy_user.pw_gid); server_dir.chmod(0o750)
+    for field in ["server_ca", "server_cert", "server_key"]:
+        path = Path(config[field])
+        if not path.resolve().is_relative_to(server_dir.resolve()):
+            raise ValueError("server leaf path outside dedicated authority directory")
+        os.chown(path, 0, proxy_user.pw_gid); path.chmod(0o440)
     vm = base / "vm"
     vm.mkdir(exist_ok=True, mode=0o700)
     os.chown(vm, vm_user.pw_uid, vm_user.pw_gid)
