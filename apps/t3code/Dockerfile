@@ -69,6 +69,10 @@ RUN npm install -g "t3@${T3_VERSION}" \
   && opencode-beta --version \
   && t3 --version
 
+# Keep client-only installation after the existing expensive tool layers.
+COPY apps/t3code/install-docker-client.sh /usr/local/lib/install-docker-client.sh
+RUN sh /usr/local/lib/install-docker-client.sh
+
 COPY apps/shared/workspace-lib.sh /usr/local/lib/workspace-lib.sh
 COPY apps/shared/skills-lib.sh /usr/local/lib/skills-lib.sh
 COPY apps/shared/work_resource_guard.py /usr/local/lib/work_resource_guard.py
