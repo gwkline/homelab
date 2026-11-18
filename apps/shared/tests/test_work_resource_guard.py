@@ -52,6 +52,7 @@ class GuardTests(unittest.TestCase):
             "WORK_RESOURCE_GUARD": "1", "WORK_RESOURCE_SCOPE": "work",
             "WORK_GUARD_PATH": str(self.root),
             "WORK_BUILD_LOCK": str(self.root / "build.lock"),
+            "WORK_SERVER_START_GIB": "0.001",
             "WORK_GUARD_START_GIB": "0.001", "WORK_GUARD_STOP_GIB": "0.0005",
             "WORK_GUARD_POLL_SECONDS": "0.03", "WORK_GUARD_GRACE_SECONDS": "0.15",
             "PYTHONDONTWRITEBYTECODE": "1",
@@ -229,6 +230,53 @@ while True: time.sleep(.02)
             self.assertFalse(guard.readonly_command(tool, ["--version", "build"]))
             self.assertFalse(guard.readonly_command(tool, ["run", "--version"]))
 
+    def test_depot_command_classification(self):
+        readonly = [
+            ["ci", "diagnose", "--run", "run-id", "--output", "json"],
+            ["ci", "logs", "job-id", "--timestamps", "-o", "json"],
+            ["ci", "status", "run-id"], ["ci", "metrics", "job-id"],
+            ["ci", "summary", "job-id"], ["ci", "artifacts", "list", "run-id"],
+            ["list", "builds", "--project", "project-id"], ["ls", "projects"],
+            ["list", "jobs"], ["ci", "diagnose", "--help"],
+            ["build", "--help"], ["ci", "artifacts", "download", "--help"],
+        ]
+        heavy = [
+            ["build", "."], ["bake"], ["pull", "build-id"], ["push", "build-id"],
+            ["ci", "run"], ["ci", "rerun", "run-id"], ["ci", "retry", "job-id"],
+            ["ci", "dispatch"], ["ci", "cancel", "job-id"], ["ci", "ssh", "job-id"],
+            ["ci", "artifacts", "download", "artifact-id"],
+            ["ci", "logs", "job-id", "--follow"], ["ci", "logs", "job-id", "-f"],
+            ["ci", "logs", "job-id", "-of", "json"],
+            ["ci", "logs", "job-id", "--output-file=logs.txt"],
+            ["ci", "logs", "job-id", "--output-file", "logs.txt"],
+            ["build", "--tag", "--help"], ["--org", "org-id", "ci", "diagnose"],
+            ["ci", "unknown"], ["cache", "reset"], ["projects", "create"],
+        ]
+        for args in readonly:
+            with self.subTest(readonly=args):
+                self.assertTrue(guard.readonly_command("depot", args))
+        for args in heavy:
+            with self.subTest(heavy=args):
+                self.assertFalse(guard.readonly_command("depot", args))
+
+    def test_depot_diagnostics_exec_below_build_budget_without_lock(self):
+        fixture = self.script("depot", "#!/usr/bin/env python3\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n")
+        os.chmod(fixture, 0o755)
+        env = dict(self.env, WORK_GUARD_START_GIB="1000000", WORK_GUARD_POLL_SECONDS="invalid")
+        args = ["ci", "diagnose", "--run", "run-id", "--output", "json"]
+        result = subprocess.run([sys.executable, str(GUARD), "build", "--tool", "depot", "--", fixture] + args,
+                                env=env, capture_output=True, text=True, timeout=8)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), args)
+        self.assertEqual(result.stderr, "")
+        self.assertFalse(Path(env["WORK_BUILD_LOCK"]).exists())
+        env["WORK_GUARD_POLL_SECONDS"] = "0.03"
+        heavy = subprocess.run([sys.executable, str(GUARD), "build", "--tool", "depot", "--", fixture, "build", "."],
+                               env=env, capture_output=True, text=True, timeout=8)
+        self.assertEqual(heavy.returncode, 75)
+        self.assertEqual(heavy.stdout, "")
+        self.assertIn("insufficient launch headroom", heavy.stderr)
+
     def test_invalid_active_config_fails_closed(self):
         result = self.cli([sys.executable, "-c", "print('should not run')"],
                           env=dict(self.env, WORK_GUARD_START_GIB="bad"))
@@ -293,7 +341,8 @@ with open(sys.argv[1], 'a') as f: f.write('end:'+sys.argv[2]+'\\n')
     def test_inaccessible_nested_ancestry_fails_instead_of_deadlocking(self):
         Path(self.config.lock_path).write_text(json.dumps({"pid": 1234567, "token": "owner"}))
         env = dict(self.env, WORK_BUILD_LOCK_OWNER="owner")
-        with patch.object(guard, "parent_pid", return_value=None):
+        # kubectl exec may have PPID 0; establish a candidate ancestor explicitly.
+        with patch.object(guard.os, "getppid", return_value=12345), patch.object(guard, "parent_pid", return_value=None):
             status = guard.serialized_build([sys.executable, "-c", "print('must not run')"],
                                             self.config, env=env, probe=lambda path: 100)
         self.assertEqual(status, 75)
