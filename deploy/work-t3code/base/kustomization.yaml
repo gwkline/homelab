@@ -7,7 +7,8 @@ labels:
     includeSelectors: false
 
 resources:
-  - t3state-pvc.yaml
+  - t3state-pvc.yaml # Retained original rollback claim; never prune it.
+  - ssd-storage.yaml
   - claude-oauth.yaml
   - depot-token.yaml
   - netpol.yaml
