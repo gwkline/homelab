@@ -1,6 +1,11 @@
 """Offline safety contract; the maintenance run additionally exercises rsync."""
 import importlib.util
 from pathlib import Path
+import os
+import shutil
+import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -82,6 +87,43 @@ class StorageSafety(unittest.TestCase):
             with patch.object(MODULE, "mounted", return_value=mount.resolve()):
                 with self.assertRaisesRegex(RuntimeError, "overlapping"):
                     MODULE.validate(config)
+
+    @unittest.skipUnless(sys.platform == "linux" and shutil.which("rsync"), "requires Linux rsync ACL/xattr support")
+    def test_real_copy_checksum_hardlinks_xattrs_and_retained_delta(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            mount = root / "ssd"
+            mount.mkdir()
+            volumes = []
+            for name in ("data", "state"):
+                source = root / ("old-" + name)
+                source.mkdir()
+                (source / "precious").write_bytes(b"ignored but precious\n")
+                (source / "precious").chmod(0o640)
+                os.setxattr(source / "precious", "user.fixture", b"preserve")
+                os.link(source / "precious", source / "hardlink")
+                (source / "symlink").symlink_to("precious")
+                if shutil.which("setfacl"):
+                    subprocess.run(["setfacl", "-m", "u:12345:r--", str(source / "precious")], check=True)
+                volumes.append({"source": str(source), "destination": str(mount / name)})
+            config = {"uuid": "fixture", "volumes": volumes}
+            audit = mount / "audit"
+            with patch.object(MODULE, "mounted", return_value=mount), patch.object(MODULE, "no_writers"):
+                MODULE.run(config, "precopy", audit)
+                (mount / "data" / "stale").write_bytes(b"keep rollback")
+                MODULE.run(config, "final", audit)
+                MODULE.run(config, "verify", audit)
+                for volume in volumes:
+                    a, b = Path(volume["source"]), Path(volume["destination"])
+                    self.assertEqual((a / "precious").read_bytes(), (b / "precious").read_bytes())
+                    self.assertEqual(stat.S_IMODE((a / "precious").stat().st_mode), stat.S_IMODE((b / "precious").stat().st_mode))
+                    self.assertEqual((b / "precious").stat().st_ino, (b / "hardlink").stat().st_ino)
+                    self.assertEqual(os.readlink(b / "symlink"), "precious")
+                    self.assertEqual(os.getxattr(b / "precious", "user.fixture"), b"preserve")
+                self.assertEqual((audit / "retained-precopy-0" / "stale").read_bytes(), b"keep rollback")
+                (mount / "data" / "precious").write_bytes(b"corrupt")
+                with self.assertRaisesRegex(RuntimeError, "unexplained differences"):
+                    MODULE.run(config, "verify", audit)
 
     def test_checksum_difference_is_not_success(self):
         with tempfile.TemporaryDirectory() as directory:

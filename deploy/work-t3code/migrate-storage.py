@@ -81,6 +81,8 @@ def no_writers(config, proc=Path("/proc")):
 def run(config, mode, audit):
     validate(config)
     audit.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # A failed retry must not leave an old success receipt for this mode.
+    (audit / f"{mode}.json").unlink(missing_ok=True)
     if mode != "precopy":
         no_writers(config)
     for index, volume in enumerate(config["volumes"]):
