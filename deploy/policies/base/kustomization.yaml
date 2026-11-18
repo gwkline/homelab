@@ -5,6 +5,7 @@ resources:
   - priorityclasses.yaml
   - networkpolicy.yaml
   - kube-api-egress.yaml
+  - work-docker-egress.yaml
   - egress-canary.yaml
 
 components:

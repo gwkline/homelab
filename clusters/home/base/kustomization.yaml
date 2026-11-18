@@ -22,4 +22,18 @@ resources:
   - ../../../deploy/grafana/base
   - ../../../deploy/factory/base
   - ../../../deploy/deployer/base
+  - ../../../deploy/work-docker-vm/base
   - ../../../deploy/work-t3code/base
+
+# This target is in a sibling base of policies, so replace after composition.
+replacements:
+  - source:
+      kind: ConfigMap
+      name: homelab-node
+      fieldPath: data.ip
+    targets:
+      - select:
+          kind: ConfigMap
+          name: work-docker-endpoint
+        fieldPaths:
+          - data.host

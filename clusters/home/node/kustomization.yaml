@@ -23,3 +23,11 @@ replacements:
         options:
           delimiter: /
           index: 0
+      - select:
+          kind: NetworkPolicy
+          labelSelector: homelab.gwkline.io/work-docker-egress=true
+        fieldPaths:
+          - spec.egress.0.to.0.ipBlock.cidr
+        options:
+          delimiter: /
+          index: 0

@@ -1,0 +1,21 @@
+# Only the work runner may reach the authenticated API/service relay. The
+# host firewall independently checks its current pod identity, with expiry.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: work-docker-egress
+  namespace: work
+  labels:
+    homelab.gwkline.io/work-docker-egress: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app: work-t3code
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 127.0.0.1/32
+      ports:
+        - { protocol: TCP, port: 2376 }
+        - { protocol: TCP, port: 2377 }

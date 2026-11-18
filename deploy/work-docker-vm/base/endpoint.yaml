@@ -1,0 +1,9 @@
+# clusters/home/node supplies the node address. Apply from that root render,
+# not this standalone localhost placeholder. TLS still fails closed locally.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: work-docker-endpoint
+  namespace: work
+data:
+  host: "127.0.0.1"

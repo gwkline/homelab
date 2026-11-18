@@ -37,6 +37,7 @@ Every runtime credential, where it comes from, and who consumes it. No secret va
 | Secret (keys) | Namespace | How | Notes |
 | --- | --- | --- | --- |
 | `onepassword-service-account` (`token`) | external-secrets | `scripts/create-onepassword-service-account.sh` (env, stdin, or hidden prompt; server-side apply) | The bootstrap secret. Rotation: `deploy/eso/README.md` |
+| `work-docker-client` (`ca.pem`, `cert.pem`, `key.pem`, `ports.json`) | work | Generated work-only Docker service CA; private files to server-side apply | Guest-root Docker/API and authenticated fixed guest-service ports only. Read-only work mount; no personal consumer. CA signing key stays in a root-only host authority directory outside guest/pod. This generated service authority is manually managed, not an ESO placeholder |
 
 ## Referenced but not provided
 
@@ -60,6 +61,7 @@ Not credentials anyone holds; each controller recreates its own on a rebuild.
 | `webhook-certs` | cosign-system | policy-controller |
 | `operator`, `ts-*` | tailscale | Tailscale operator (node state per proxy) |
 | `sh.helm.release.v1.*` | cosign-system, tailscale | Helm release records |
+| `work-docker-watch-token` | agents | Kubernetes ServiceAccount token controller; `work-docker-watch` can only get named `work/work-t3code-0` metadata. Used only by the host source-set refresher, never mounted in work or the guest |
 
 ## Not Kubernetes Secrets
 
@@ -70,7 +72,7 @@ Not credentials anyone holds; each controller recreates its own on a rebuild.
 | t3code opencode `auth.json` | t3code PVC, entered in a session | User-held; never synced |
 | CLI logins (Claude, Codex) | hermes and t3code PVC homes | Survive rollouts, lost with the PVC |
 
-Out of scope: CI's per-run `GITHUB_TOKEN` and Kubernetes ServiceAccount tokens.
+Out of scope: CI's per-run `GITHUB_TOKEN` and ordinary projected Kubernetes ServiceAccount tokens. The long-lived host-only Docker metadata credential is listed above.
 
 ## Re-verify
 
