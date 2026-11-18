@@ -141,6 +141,11 @@ json.dump(s, open(p, 'w'), indent=2)
 fi
 
 echo "[t3code] starting server on 0.0.0.0:3773"
+DOCKER_PROXY_PID=''
+if [ "${WORK_RESOURCE_SCOPE:-}" = work ] && [ -n "${DOCKER_VM_HOST:-}" ]; then
+  python3 /usr/local/lib/docker-port-client.py &
+  DOCKER_PROXY_PID=$!
+fi
 t3 serve --host 0.0.0.0 --port 3773 &
 T3_PID=$!
 
@@ -189,6 +194,7 @@ on_term() {
   kill -TERM "${T3_PID}" 2>/dev/null || true
   wait "${T3_PID}" 2>/dev/null || true
   save_state
+  if [ -n "${DOCKER_PROXY_PID}" ]; then kill -TERM "${DOCKER_PROXY_PID}" 2>/dev/null || true; fi
   exit 143
 }
 trap on_term TERM INT
@@ -197,4 +203,5 @@ wait "${T3_PID}"
 rc=$?
 stop_saver
 save_state
+if [ -n "${DOCKER_PROXY_PID}" ]; then kill -TERM "${DOCKER_PROXY_PID}" 2>/dev/null || true; fi
 exit "${rc}"

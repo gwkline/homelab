@@ -79,6 +79,7 @@ COPY apps/shared/work_resource_guard.py /usr/local/lib/work_resource_guard.py
 COPY apps/shared/install_work_build_shims.py /usr/local/lib/install_work_build_shims.py
 COPY apps/shared/work-build-shim.py /usr/local/lib/work-build-shim.py
 COPY apps/shared/work-resource-guard-profile.sh /etc/profile.d/work-resource-guard.sh
+COPY apps/t3code/docker-port-client.py /usr/local/lib/docker-port-client.py
 COPY apps/t3code/agent-state.sh /usr/local/lib/agent-state.sh
 COPY apps/t3code/init-workspace.sh /usr/local/bin/init-workspace
 RUN chmod +x /usr/local/bin/init-workspace /usr/local/lib/work-build-shim.py

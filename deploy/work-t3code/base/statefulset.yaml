@@ -37,6 +37,17 @@ spec:
             - containerPort: 3773
               name: http
           env:
+            - name: DOCKER_VM_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: work-docker-endpoint
+                  key: host
+            - name: DOCKER_HOST
+              value: tcp://$(DOCKER_VM_HOST):2376
+            - name: DOCKER_TLS_VERIFY
+              value: "1"
+            - name: DOCKER_CERT_PATH
+              value: /docker-client
             # Local-path claim sizes are not quotas; reserve backing-node space.
             - name: WORK_RESOURCE_GUARD
               value: "1"
@@ -74,6 +85,9 @@ spec:
                   key: token
                   optional: true
           volumeMounts:
+            - name: docker-client
+              mountPath: /docker-client
+              readOnly: true
             - name: data
               mountPath: /data
             - name: t3state
@@ -97,6 +111,10 @@ spec:
             failureThreshold: 30
             periodSeconds: 10
       volumes:
+        - name: docker-client
+          secret:
+            secretName: work-docker-client
+            defaultMode: 0440
         - name: work-github-token
           secret:
             secretName: work-github-token

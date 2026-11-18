@@ -10,7 +10,7 @@ Ingress is default-deny in `agents`, `sandbox`, `work`, `database`, the operator
 | --- | --- |
 | `agents` | `agents-egress-default`: kube-dns, the pod and service CIDRs, and the public internet; no LAN, tailnet or link-local. `agents-egress-kube-api` adds the API server for alloy, deployer, kube-state-metrics, panel and victoriametrics, and `victoriametrics-egress-kubelet` adds TCP 10250 on the LAN for kubelet scrapes (`deploy/victoriametrics/base/netpol.yaml`). Workloads with a narrower policy are listed out of the default by `app` label |
 | `sandbox` | Default-deny plus `sandbox-egress-public-only`: kube-dns, then the public internet minus every private/special range (k8s API, pod/service CIDRs, RFC1918 LAN, link-local metadata, tailnet CGNAT). Factory profile pods are selected out and use their own stricter netpols. A new workload with no allowance fails closed |
-| `work` | Same shape (`work-egress-public-only`): public internet only — no Kubernetes API, LAN, tailnet, or homelab services |
+| `work` | Same public-minus-private baseline (`work-egress-public-only`); only work-t3code gets the exact node's authenticated Docker API/service relay on TCP 2376/2377. No Kubernetes API, other LAN/tailnet or personal services |
 | `database` | Default-deny both ways with named allowances (`deploy/postgres/base/netpol.yaml`) |
 
 ## Exceptions narrower than the namespace baseline
@@ -18,6 +18,7 @@ Ingress is default-deny in `agents`, `sandbox`, `work`, `database`, the operator
 | Workload | Allowed egress | Where |
 | --- | --- | --- |
 | Headlamp | DNS + Kubernetes API | `deploy/headlamp/base/netpol.yaml`, `headlamp-kube-api` in `deploy/policies/base/kube-api-egress.yaml` |
+| work-t3code | Exact node TCP 2376 (guest Docker mTLS API) and 2377 (mTLS fixed guest-service relay), plus its unchanged public baseline | `deploy/policies/base/work-docker-egress.yaml`; independently enforced by the expiring pod-identity/VM-UID host filter in `deploy/work-docker-vm` |
 | hermes, t3code | DNS, Kubernetes API, Executor, knowledge retrieval, public internet (any port) | `deploy/hermes/base/netpol.yaml`, `deploy/t3code/base/netpol.yaml`, `hermes-kube-api`/`t3code-kube-api` in `deploy/policies/base/kube-api-egress.yaml` |
 | Grafana, CloudBeaver, knowledge, Executor | Their own allowlists | beside each workload |
 | CNPG instances | DNS, Kubernetes API, peers on 5432 | `allow-instance-egress` in `deploy/postgres/base/netpol.yaml`, `pg-primary-kube-api` in `deploy/policies/base/kube-api-egress.yaml` |
@@ -45,4 +46,5 @@ A sandbox pod must reach DNS, GitHub (git, codeload, API), a package registry, a
 - **Public-internet-minus-private-ranges, not SaaS IP lists:** SaaS IPs change without notice and a stale allowlist is an outage. If a destination can't be expressed this way, add an egress proxy rather than widening the netpol. `scripts/verify.sh` rejects any `ipBlock` CIDR under `deploy/` other than `0.0.0.0/0` and private/special ranges.
 - **Factory workers reach any public HTTPS host** until a domain-allowlisting egress proxy (GitHub, the model provider, npm, PyPI, crates.io) replaces the CIDR rule.
 - **Kubernetes API by node endpoint:** policy matches after DNAT, so an allowance for the Service VIP (`10.43.0.1`) never matches; allow the node's `:6443` instead. The node IP lives only in `clusters/home/node/node.yaml`. API allowances go in `deploy/policies/base/kube-api-egress.yaml` with the label `homelab.gwkline.io/kube-api-egress: "true"`, and kustomize writes the IP in.
+- **Work Docker node endpoint:** its two-port exception shares the same single node-IP source/replacement. Same-node traffic can evade a pod NetworkPolicy, so the authenticated isolated guest also requires the dedicated host filter; namespace policy alone is not its boundary. The endpoint ConfigMap is replaced after root composition and must be manually applied from that render.
 - **`agents` has a baseline, not default-deny:** most of its workloads need only in-cluster services and the internet, which the baseline covers. Interactive agents (hermes, t3code) and anything holding credentials for an internal target get a per-workload allowlist and are listed out of `agents-egress-default`.
