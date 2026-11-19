@@ -22,6 +22,7 @@ Training-data design (pirate-LoRA post-mortem lessons — requirements):
   4. Sequences capped near 1024 tokens so full emails hold coherence.
 """
 import glob
+import re
 import json
 import os
 import random
@@ -120,8 +121,16 @@ def build_email():
 TAPBACK = __import__("re").compile(r'^(Loved|Liked|Disliked|Laughed at|Emphasized|Questioned)\s', __import__("re").I)
 GARBAGE_MARKERS = ("__kIM", "at_0_", "NSNumber", "NSAttributedString",
                    "NSMutableString", "streamtyped", "bplist")
+ARTIFACT_PREFIX = re.compile(r'^\+?[0-9A-Fa-f]{0,2}(?=[A-Z\"\'])')
 
-def text_is_garbage(t):
+def strip_artifact_prefix(t: str) -> str:
+    """The streamtyped decoder leaks the byte(s) before the text run, so many
+    rows start with '+' + hex/len digits ('+4My', '+BReacted'). Strip that so
+    the model never learns a '+'-prefix attractor (observed as degenerate
+    '+1000…' generation loops in eval v1)."""
+    return ARTIFACT_PREFIX.sub("", t, count=1).strip() or t
+
+def text_is_garbage(t: str) -> bool:
     return any(g in t for g in GARBAGE_MARKERS)
 
 def burst_name(rec):
@@ -162,8 +171,8 @@ def build_texts():
         cur = None
     out = []
     for b in bursts:
-        joined = "\n".join(p for p in b["parts"] if p).strip()
-        if not joined or __import__("re").fullmatch(r'[\d\s\-\.\+/]{3,}', joined):
+        joined = strip_artifact_prefix("\n".join(p for p in b["parts"] if p).strip())
+        if not joined or re.fullmatch(r'[\d\s\-\.\+/]{3,}', joined):
             continue
         out.append({"chat_id": b["chat_id"], "name": b["name"],
                     "incoming": b["incoming"], "text": joined, "len": len(joined)})
