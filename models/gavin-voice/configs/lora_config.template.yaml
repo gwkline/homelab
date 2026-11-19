@@ -19,9 +19,9 @@ num_layers: 16
 batch_size: 4
 iters: 160
 learning_rate: 1.0e-5
-max_seq_length: 512      # spec range 512-1024; 512 halves padded compute
-mask_prompt: true         # loss on assistant tokens only
-grad_checkpoint: false    # grad-checkpoint + 4-bit base correlated with NaN
+max_seq_length: 512 # spec range 512-1024; 512 halves padded compute
+mask_prompt: true # loss on assistant tokens only
+grad_checkpoint: false # grad-checkpoint + 4-bit base correlated with NaN
 steps_per_report: 10
 steps_per_eval: 40
 val_batches: 25
