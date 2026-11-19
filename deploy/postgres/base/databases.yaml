@@ -12,5 +12,5 @@ spec:
     name: pg-primary
   extensions:
     - name: vector
-      version: "0.8.6"
+      version: "0.8.7"
     - name: pg_textsearch

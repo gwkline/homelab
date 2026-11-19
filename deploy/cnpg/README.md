@@ -1,6 +1,6 @@
 # CloudNativePG operator
 
-CNPG 1.30.0 in `cnpg-system`; it manages the `pg-primary` cluster in `deploy/postgres` (whose `pg-textsearch` ImageVolume extension needs CNPG 1.29+). `base/upstream.yaml` is the verbatim release bundle; `base/kustomization.yaml` carries the only local changes.
+CNPG 1.30.2 in `cnpg-system`; it manages the `pg-primary` cluster in `deploy/postgres` (whose `pg-textsearch` ImageVolume extension needs CNPG 1.29+). `base/upstream.yaml` is the release bundle in repo format; `base/kustomization.yaml` carries the only local changes.
 
 ## Apply
 
@@ -21,7 +21,7 @@ The admission webhooks are `failurePolicy: Fail`: `Cluster`/`Database` creates f
 
 ## Upgrade
 
-1. Replace `base/upstream.yaml` with the new release's `cnpg-<version>.yaml`. CRDs and controller update in the same apply.
+1. Replace `base/upstream.yaml` with the new release's `cnpg-<version>.yaml`, then run `npx oxfmt` over it (the repo formats every file). CRDs and controller update in the same apply.
 2. Resolve the multi-arch digest and update `digest:` and `OPERATOR_IMAGE_NAME` in `base/kustomization.yaml`:
    ```sh
    TOKEN=$(curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:cloudnative-pg/cloudnative-pg:pull" | jq -r .token)
