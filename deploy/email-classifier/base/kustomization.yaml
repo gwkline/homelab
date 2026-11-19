@@ -1,6 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Generated ConfigMaps have no namespace of their own; without this they
+# would land in default while every other resource here is email-agent.
+namespace: email-agent
+
 # The API code rides in a ConfigMap so a merged PR rolls it out through git
 # alone: kustomize regenerates the hashed name on content change and the
 # Deployment's volume reference picks it up.
