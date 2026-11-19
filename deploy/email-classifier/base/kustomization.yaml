@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The API code rides in a ConfigMap so a merged PR rolls it out through git
+# alone: kustomize regenerates the hashed name on content change and the
+# Deployment's volume reference picks it up.
+configMapGenerator:
+  - name: email-classifier-api
+    files:
+      - api/main.py
+  # Stable name: the one-shot populate pod (../populate/populate.yaml) mounts
+  # it by literal name, outside this render.
+  - name: email-classifier-populate
+    options:
+      disableNameSuffixHash: true
+    files:
+      - populate.sh
+      - requirements.txt
+
+resources:
+  - pvc.yaml
+  - netpol.yaml
+  - service.yaml
+  - deployment.yaml
+
+components:
+  - ../../components/labels
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: email-classifier
+    includeSelectors: false

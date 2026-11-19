@@ -1,0 +1,11 @@
+# Training + inference for the email action classifier.
+# For the cluster, install torch first from the CPU-only index:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+fastapi==0.165.0
+joblib==1.6.0
+numpy==2.5.5
+scikit-learn==1.9.1
+sentence-transformers==6.3.0
+torch==2.15.0
+transformers==5.23.0
+uvicorn==0.54.0

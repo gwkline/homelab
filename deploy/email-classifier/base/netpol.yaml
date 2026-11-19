@@ -1,0 +1,65 @@
+# Default-deny ingress in email-agent; only same-namespace callers (the
+# service's own clients) reach the API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: email-agent
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: email-agent
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+---
+# The API is offline by design: no egress at all once serving.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: email-agent
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+---
+# The one exception is the one-shot populate pod, which builds the venv from
+# PyPI (public internet only, no LAN/tailnet).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: populate-egress-public
+  namespace: email-agent
+spec:
+  podSelector:
+    matchLabels:
+      app: email-classifier-populate
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8 # LAN + k3s pod/service CIDRs, incl. the API
+              - 172.16.0.0/12
+              - 192.168.0.0/16 # node/LAN
+              - 169.254.0.0/16 # link-local metadata
+              - 100.64.0.0/10 # tailnet

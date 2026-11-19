@@ -24,6 +24,7 @@ resources:
   - ../../../deploy/deployer/base
   - ../../../deploy/work-docker-vm/base
   - ../../../deploy/work-t3code/base
+  - ../../../deploy/email-classifier/base
 
 # This target is in a sibling base of policies, so replace after composition.
 replacements:
