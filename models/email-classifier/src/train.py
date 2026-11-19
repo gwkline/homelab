@@ -18,6 +18,7 @@ from sklearn.linear_model import LogisticRegression
 
 from common import (
     EMBEDDING_MODEL,
+    FEATURE_VERSION,
     LABELS,
     TEST_CUTOFF_MS,
     compose_text,
@@ -25,6 +26,8 @@ from common import (
     is_train,
     labeled_path,
     model_dir,
+    numeric_features,
+    sender_priors,
 )
 
 
@@ -60,16 +63,29 @@ def main() -> int:
     )
     print(f"embedded {len(texts)} texts in {time.time() - t0:.1f}s")
 
+    # v1.5 engineered features (leak-free: priors come from these same
+    # train rows and are frozen into the bundle for serving + eval).
+    priors, global_rate, seen = sender_priors(train)
+    feats = [numeric_features(r, priors, global_rate, seen) for r in train]
+    import numpy as np
+
+    X = np.hstack([X, np.asarray(feats, dtype=np.float32)])
+    print(f"features: {X.shape[1]}d = 384 emb + {len(feats[0])} engineered")
+
     clf = LogisticRegression(class_weight="balanced", max_iter=2000, C=1.0)
     clf.fit(X, y)
 
-    version = "v1-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    version = "v1.5-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     model_dir().mkdir(parents=True, exist_ok=True)
     bundle = {
         "version": version,
         "clf": clf,
         "classes": list(clf.classes_),
         "embedding_model": EMBEDDING_MODEL,
+        "feature_version": FEATURE_VERSION,
+        "sender_priors": priors,
+        "sender_seen": seen,
+        "global_rate": global_rate,
         "test_cutoff_ms": TEST_CUTOFF_MS,
         "train_counts": counts,
         "trained_at": datetime.now(timezone.utc).isoformat(),
@@ -80,12 +96,20 @@ def main() -> int:
             {
                 "version": version,
                 "embedding_model": EMBEDDING_MODEL,
+                "feature_version": FEATURE_VERSION,
                 "classifier": "sklearn.linear_model.LogisticRegression",
                 "classifier_params": {
                     "class_weight": "balanced",
                     "max_iter": 2000,
                     "C": 1.0,
                 },
+                "features": [
+                    "minilm-384d",
+                    "sender_respond_prior_smoothed",
+                    "log1p_sender_seen",
+                    "bulk_flag",
+                    "reply_subject_flag",
+                ],
                 "test_cutoff_ms": TEST_CUTOFF_MS,
                 "train_counts": counts,
                 "trained_at": bundle["trained_at"],
