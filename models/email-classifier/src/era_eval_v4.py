@@ -59,9 +59,16 @@ def class_weights(y: list) -> dict:
 def main() -> int:
     import os
 
-    bundle_dir = (Path(os.environ.get("ERA_V4_BUNDLE"))
-                  if os.environ.get("ERA_V4_BUNDLE")
-                  else home() / "artifacts" / "model-v4bge-gbdt")
+    candidates = sorted(
+        (p for p in (home() / "artifacts").glob("model-v4*")
+         if (p / "model.joblib").exists()))
+    if os.environ.get("ERA_V4_BUNDLE"):
+        bundle_dir = Path(os.environ["ERA_V4_BUNDLE"])
+    elif candidates:
+        bundle_dir = candidates[0]
+    else:
+        raise SystemExit("no artifacts/model-v4* bundle on disk; set "
+                         "ERA_V4_BUNDLE")
     bundle = joblib.load(bundle_dir / "model.joblib")
     clf = bundle["clf"]
     head = bundle.get("head", "gbdt")
