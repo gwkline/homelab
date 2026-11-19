@@ -26,7 +26,9 @@ v2 changes (see evals/results-v1 for why):
   - FIXED EVAL SPLIT: if evals/holdout.jsonl already exists it is kept
     byte-for-byte (never regenerated) so every re-train is scored against
     the same split; holdout items are excluded from training by
-    subject / normalized-text / title matching.
+    subject / normalized-text / title matching. v2.1 (#528): the frozen
+    file was cleaned ONCE in place (scripts/clean_holdout.py, same rules
+    as below) — it remains frozen at the cleaned sha thereafter.
   - Tapback rows are dropped harder: the v1 regex missed "+<Laughed at" /
     "+BReacted to" forms, which leaked reaction junk into bursts and
     incoming-context prompts.

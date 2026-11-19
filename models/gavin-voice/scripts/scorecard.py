@@ -52,9 +52,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", default="v2")
     ap.add_argument("--baseline", default="v1")
+    ap.add_argument("--base-tag", default=None,
+                    help="results tag holding the base-model pass to quote "
+                         "(default: the --tag run itself; use when adapter "
+                         "runs used --skip-base against a shared base pass)")
     args = ap.parse_args()
 
     new, old = load(args.tag), load(args.baseline)
+    base_src = load(args.base_tag) if args.base_tag else new
     channels = [c for c in ("text", "email", "blog") if judge(new, "ft", c) is not None]
 
     lines = [f"# gavin-voice scorecard — {args.tag} vs {args.baseline}", "",
@@ -64,7 +69,7 @@ def main():
              "| channel | base | v1 ft | v2 ft | bar | verdict |", "|---|---|---|---|---|---|"]
     verdicts = []
     for ch in channels:
-        b, o, n = judge(new, "base", ch), judge(old, "ft", ch), judge(new, "ft", ch)
+        b, o, n = judge(base_src, "base", ch), judge(old, "ft", ch), judge(new, "ft", ch)
         bar = BARS.get(ch)
         ok = (n is not None and bar is not None and n >= bar)
         verdicts.append(ok)
@@ -74,7 +79,7 @@ def main():
     lines += ["", "## Perplexity on held-out real text (lower = closer)", "",
               "| channel | base | v1 ft | v2 ft | v2 vs v1 |", "|---|---|---|---|---|"]
     for ch in channels + ["overall"]:
-        b, o, n = ppl(new, "base", ch), ppl(old, "ft", ch), ppl(new, "ft", ch)
+        b, o, n = ppl(base_src, "base", ch), ppl(old, "ft", ch), ppl(new, "ft", ch)
         if o is not None and n is not None:
             delta = "better" if n < o else ("worse" if n > o else "equal")
             verdicts.append(n <= o)
@@ -85,7 +90,7 @@ def main():
     lines += ["", "## Length/format (avg chars vs real)", "",
               "| channel | real | base | v1 ft | v2 ft |", "|---|---|---|---|---|"]
     for ch in channels:
-        r, b = fmt(new, "real", ch, "avg_chars"), fmt(new, "base", ch, "avg_chars")
+        r, b = fmt(new, "real", ch, "avg_chars"), fmt(base_src, "base", ch, "avg_chars")
         o, n = fmt(old, "ft", ch, "avg_chars"), fmt(new, "ft", ch, "avg_chars")
         lines.append(f"| {ch} | {r} | {b} | {o} | {n} |")
 

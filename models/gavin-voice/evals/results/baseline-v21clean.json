@@ -1,0 +1,89 @@
+{
+  "tag": "v21clean",
+  "timestamp": "2026-11-19T07:01:37",
+  "judge": {
+    "ft": {
+      "email": 1.5,
+      "text": 3.33,
+      "blog": 1
+    }
+  },
+  "perplexity": {
+    "base": {},
+    "ft": {
+      "email": 2.4667,
+      "text": 4.3245,
+      "blog": 2.9375,
+      "overall": 3.4679
+    }
+  },
+  "length_format": {
+    "email": {
+      "real": {
+        "n": 20,
+        "avg_chars": 288,
+        "median_chars": 163,
+        "exclam_per_100": 105.0,
+        "sig_rate": 0.5,
+        "multiline_rate": 0.95
+      },
+      "base": {
+        "n": 0
+      },
+      "ft": {
+        "n": 10,
+        "avg_chars": 266,
+        "median_chars": 250,
+        "exclam_per_100": 0,
+        "sig_rate": 0.1,
+        "multiline_rate": 0.4
+      }
+    },
+    "text": {
+      "real": {
+        "n": 55,
+        "avg_chars": 51,
+        "median_chars": 40,
+        "exclam_per_100": 20.0,
+        "sig_rate": 0,
+        "multiline_rate": 0.22
+      },
+      "base": {
+        "n": 0
+      },
+      "ft": {
+        "n": 12,
+        "avg_chars": 57,
+        "median_chars": 19,
+        "exclam_per_100": 41.7,
+        "sig_rate": 0,
+        "multiline_rate": 0
+      }
+    },
+    "blog": {
+      "real": {
+        "n": 1,
+        "avg_chars": 635,
+        "median_chars": 635,
+        "exclam_per_100": 0,
+        "sig_rate": 0,
+        "multiline_rate": 1
+      },
+      "base": {
+        "n": 0
+      },
+      "ft": {
+        "n": 2,
+        "avg_chars": 1722,
+        "median_chars": 1722,
+        "exclam_per_100": 0,
+        "sig_rate": 0,
+        "multiline_rate": 1
+      }
+    }
+  },
+  "prompts_evaluated": {
+    "generation": 24,
+    "perplexity": 45
+  }
+}
