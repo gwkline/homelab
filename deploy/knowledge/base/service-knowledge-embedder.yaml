@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: knowledge-embedder
+  namespace: agents
+spec:
+  type: ClusterIP
+  selector:
+    app: knowledge-embedder
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

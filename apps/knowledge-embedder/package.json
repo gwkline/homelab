@@ -1,0 +1,21 @@
+{
+  "name": "knowledge-embedder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild server.ts --bundle --platform=node --format=esm --external:@huggingface/transformers --outdir=dist",
+    "test": "npm run build && node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.3.2"
+  },
+  "devDependencies": {
+    "@hono/node-server": "2.1.8",
+    "@types/node": "26.6.6",
+    "esbuild": "0.28.2",
+    "hono": "4.13.18",
+    "typescript": "7.0.2"
+  }
+}

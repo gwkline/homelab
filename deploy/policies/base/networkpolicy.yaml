@@ -30,6 +30,7 @@ spec:
           - grafana
           - headlamp
           - hermes
+          - knowledge-embedder
           - knowledge-ingest
           - knowledge-retrieval
           - t3code
