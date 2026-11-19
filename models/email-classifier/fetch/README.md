@@ -12,6 +12,12 @@ The raw data comes from Gavin's mailbox through the Executor MCP sidecar (`googl
 
 Messages keep only `{id, threadId, internalDate, labelIds, From, Subject, snippet}` — no bodies, no attachments. The snippet is truncated to ~170 chars.
 
+## v2 expansion sessions (2026-11-19)
+
+- **Reply-thread audit**: `in:sent subject:Re:` all-time (2,215 sent, 566 reply threads; v1's scan had covered only 94 of them) → `threads.get` per missed thread in ~170-300-call chunks → `reply_threads_new*.jsonl`. 384 new threads (2014→2026). Sessions die well before 400 calls — budget ~200-300 per session and re-derive the unfetched tail locally between chunks.
+- **Archive gap closure**: the v1 stride-10 sample left **1,800 ids unfetched** (not ~250 — `remaining.json` only tracked a 587-id slice). The newest 600 (all of the standing test window) are in `archive_gap.jsonl`, fetched with `List-Unsubscribe`/`Precedence` metadata headers; ids are newest-first so test-window rows land first. The still-unfetched older tail is parked in `data/raw/gap_remaining.json` for a later pass.
+- **QuickJS trap**: this Executor build has NO `setTimeout` in the sandbox — any `sleep()` helper must guard `typeof setTimeout !== "function"` or the whole session dies on first pacing gap. Batched `Promise.all` pooling (6-way) paces fine without it.
+
 ## Hard-won Executor/Gmail gotchas (2026-11-19 session)
 
 - **The Gmail connection dies after roughly 400-550 tool calls or ~3 minutes inside one `execute` call**, with `HTTP 403 connection_rejected "Re-authenticate"`. A fresh `execute` call after a short cooldown mints a working token again. Budget every call: keep it under ~300-400 Gmail reads and finish in well under three minutes.
