@@ -20,6 +20,7 @@ No token: ingress is NetworkPolicy-gated to the `knowledge-ingest` and `knowledg
 | `KNOWLEDGE_EMBEDDER_MODEL` | `BAAI/bge-small-en-v1.5` | must match what the callers send |
 | `KNOWLEDGE_EMBEDDER_MODEL_DIR` | `/app/model` | local model directory |
 | `KNOWLEDGE_EMBEDDER_MAX_BATCH` | `64` | the knowledge engine batches at most 32 |
+| `KNOWLEDGE_EMBEDDER_THREADS` | `4` | onnxruntime intra-op threads; keep equal to the pod's CPU limit — ORT's default pool sizes to the host's cores and starves a smaller CFS quota |
 
 The model pool is CLS + L2 normalize (the bge recipe); inputs past the tokenizer's 512-token limit truncate, and the chunker's 1200-char cap keeps real chunks far below that.
 

@@ -39,12 +39,16 @@ spec:
               name: http
           resources:
             # A pod idles near 450MiB RSS; the cap leaves backfill headroom
-            # without inviting the node's memory pressure (audit finding #491).
+            # without inviting the node's memory pressure (audit finding
+            # #491). The CPU limit matches KNOWLEDGE_EMBEDDER_THREADS
+            # (default 4): onnxruntime's default pool sizes to the machine's
+            # cores and spins inside a smaller quota, starving inference —
+            # the first backfill crawled at ~1 chunk/s under a 1-core limit.
             requests:
               cpu: 100m
               memory: 256Mi
             limits:
-              cpu: "1"
+              cpu: "4"
               memory: 768Mi
           volumeMounts:
             - name: tmp
