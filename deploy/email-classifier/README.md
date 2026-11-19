@@ -31,6 +31,14 @@ kubectl --kubeconfig "$KC" delete pod -n email-agent email-classifier-populate
 
 The deployment's wait loop notices the model within ~10s and starts serving.
 
+## Tailnet front door (Mac-side briefing)
+
+`base/ingress.yaml` exposes the same Service through the Tailscale Ingress (`ingressClassName: tailscale`, TLS terminated at the proxy) as `https://email-classifier.<tailnet>.ts.net` — the same pattern as the headlamp and knowledge front doors. The netpol admits only the proxy's namespace.
+
+This is the front door the 8:01 AM email-briefing cron (Mac-side, delivered via photon) uses to score the morning's unread mail: it POSTs each message's `from` / `subject` / `snippet` to `/predict` and renders the predicted action suggestion-only in the briefing. The classifier never archives, marks, sends or deletes anything — it labels the briefing; acting on mail stays with the cron's existing suggestion/confirmation flow.
+
+The prediction log (the feedback loop that will feed a v3) lives on the Mac at `~/git-dev/email-classifier-local/predictions/` — never in this repo.
+
 ## Verify
 
 ```sh

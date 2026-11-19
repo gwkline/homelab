@@ -1,0 +1,22 @@
+# https://email-classifier.<tailnet>.ts.net (TLS terminated by the Tailscale
+# Ingress). Front door for Mac-side automation: the 8:01 AM email-briefing
+# cron scores the morning's unread mail through /predict. In-cluster callers
+# keep using the ClusterIP Service directly; the netpol admits only this
+# proxy's namespace, and the API stays suggestion-only — nothing here grants
+# it write access to the mailbox.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: email-classifier
+  namespace: email-agent
+  annotations:
+    tailscale.com/tags: tag:k8s-operator
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: email-classifier
+      port:
+        number: 80
+  tls:
+    - hosts: [email-classifier]

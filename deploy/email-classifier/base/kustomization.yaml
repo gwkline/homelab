@@ -26,6 +26,7 @@ resources:
   - netpol.yaml
   - service.yaml
   - deployment.yaml
+  - ingress.yaml
 
 components:
   - ../../components/labels
