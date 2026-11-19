@@ -1,0 +1,54 @@
+name: Ops / chore
+description: Maintenance, tooling, docs, and cleanup — no user-visible feature
+labels: ["kind:chore"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What needs doing
+      description: And why now — what gets worse if it waits.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] ...
+        - [ ] `npm run lint` and `./scripts/verify.sh` pass
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Where the work lands. Grooming applies the matching area label.
+      multiple: true
+      options:
+        - k3s
+        - networking
+        - storage
+        - backup
+        - security
+        - apps
+        - other area (factory, agents, data, knowledge, devtools, media, observability, platform, recovery)
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Suggested priority
+      description: Optional. The PM loop assigns the final priority label.
+      options:
+        - "P0 — must be fixed before relying on the system"
+        - "P1 — next major capability or reliability work"
+        - "P2 — valuable follow-up after core foundations"
+        - "P3 — later or optional"
+    validations:
+      required: false
+  - type: checkboxes
+    id: deploy
+    attributes:
+      label: Deployment note
+      options:
+        - label: This change needs a manual `kubectl apply` outside the deployer's target list — I will name the apply step in the PR.
