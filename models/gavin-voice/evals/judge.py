@@ -69,7 +69,11 @@ def judge(channel: str, candidate: str, exemplars: list, timeout: int = 120,
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 data = json.load(r)
             return _parse(data["choices"][0]["message"]["content"])
-        except (urllib.error.URLError, urllib.error.HTTPError, KeyError, json.JSONDecodeError) as e:
+        except (urllib.error.URLError, urllib.error.HTTPError, KeyError,
+                json.JSONDecodeError, TimeoutError, OSError) as e:
+            # NB: py3.12 ssl read timeouts surface as bare TimeoutError
+            # (an OSError), NOT wrapped in URLError — catch it or one slow
+            # judge response kills the whole eval run.
             last = e
             # The zen gateway 429s parallel bursts; back off and go again.
             time.sleep(15 * (attempt + 1))
