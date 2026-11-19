@@ -156,6 +156,8 @@ def evaluate() -> int:
         )
 
     y_pred = []
+    import numpy as np
+
     for row in test:
         text = prompt_for(row)
         ids_prompt = tok.encode(text, add_special_tokens=False)
@@ -164,7 +166,9 @@ def evaluate() -> int:
             ids_label = tok.encode(label, add_special_tokens=False)
             ids = mx.array([ids_prompt + ids_label])
             logits = model(ids)
-            logprobs = mx.log_softmax(logits[0].astype(mx.float32))
+            arr = np.asarray(logits[0].astype(mx.float32))
+            peak = arr.max(axis=-1, keepdims=True)
+            logprobs = arr - peak - np.log(np.exp(arr - peak).sum(axis=-1, keepdims=True))
             total = 0.0
             for k, t in enumerate(ids_label):
                 total += float(logprobs[len(ids_prompt) + k - 1, t])
