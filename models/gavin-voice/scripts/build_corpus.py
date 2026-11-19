@@ -159,22 +159,26 @@ def build_email(min_date):
 
 
 # ---------------------------------------------------------------- texts
-# v1 missed the "+<Laughed at" / "+BReacted to" forms because the artifact
-# prefix sat in front of the tapback verb; match through the prefix.
+# v2.1 artifact fix (measured, supersedes the v1 hex-charset guess): the
+# streamtyped decoder leaks '+' + EXACTLY ONE arbitrary length byte before
+# each text run ('+$Loved', '+ Oh', '+4My', '+wWould', '+.Laughed at').
+# The byte is uniform over ASCII, NOT hex — the v1 regex
+# ('^\+?[0-9A-Fa-f]{0,2}(?=[A-Z"\'])') missed ~2/3 of the leaks, leaving
+# 20.7% of v2 corpus bursts '+'-prefixed and the attractor alive.
+LEAK_PREFIX = re.compile(r'^\+.')
 TAPBACK = re.compile(
-    r'^\+?[0-9A-Fa-f]{0,2}<?\s*(Loved|Liked|Disliked|Laughed\s+at|Emphasized|Questioned|Reacted\s+to)\b',
+    r'^(Loved|Liked|Disliked|Laughed\s+at|Emphasized|Questioned|Reacted\s+to)\b',
     re.I)
 GARBAGE_MARKERS = ("__kIM", "at_0_", "NSNumber", "NSAttributedString",
                    "NSMutableString", "streamtyped", "bplist")
-ARTIFACT_PREFIX = re.compile(r'^\+?[0-9A-Fa-f]{0,2}(?=[A-Z"\'])')
 
 
 def strip_artifact_prefix(t: str) -> str:
-    """The streamtyped decoder leaks the byte(s) before the text run, so many
-    rows start with '+' + hex/len digits ('+4My', '+BReacted'). Strip that so
-    the model never learns a '+'-prefix attractor (observed as degenerate
-    '+1000…' generation loops in eval v1)."""
-    return ARTIFACT_PREFIX.sub("", t, count=1).strip() or t
+    """Strip the '+' + length-byte leak so the model never learns a
+    '+'-prefix attractor (observed as '+I'm running…' generations and,
+    in v1, degenerate '+1000…' loops)."""
+    t = LEAK_PREFIX.sub("", t, count=1)
+    return t.strip() or t
 
 
 def text_is_garbage(t: str) -> bool:
@@ -203,13 +207,14 @@ def build_texts():
             text = m["text"].strip()
             if text_is_garbage(text):
                 continue
-            is_tapback = bool(TAPBACK.match(text))
-            if not text or is_tapback:
-                # v2: tapbacks never become bursts OR incoming context
-                # (v1 let "+BReacted…" rows through as incoming prompts).
+            # v2.1: strip the leak FIRST, then tapback-check the stripped
+            # text — catches '+$Loved' / '++Loved' style rows that the v1
+            # order (tapback on raw, strip later) let through.
+            text = strip_artifact_prefix(text)
+            if not text or TAPBACK.match(text):
+                # tapbacks never become bursts OR incoming context.
                 continue
             if m["is_from_me"]:
-                text = strip_artifact_prefix(text)
                 if cur and (m["date"] - cur["last_ts"]) < 90e9:
                     cur["parts"].append(text)
                     cur["last_ts"] = m["date"]
@@ -218,13 +223,13 @@ def build_texts():
                            "incoming": last_incoming, "name": burst_name(m)}
                     bursts.append(cur)
             else:
-                # v2: incoming context is artifact-stripped too.
-                last_incoming = strip_artifact_prefix(text)
+                # incoming context is artifact-stripped too.
+                last_incoming = text
                 cur = None
         cur = None
     out = []
     for b in bursts:
-        joined = strip_artifact_prefix("\n".join(p for p in b["parts"] if p).strip())
+        joined = "\n".join(p for p in b["parts"] if p).strip()
         if not joined or re.fullmatch(r'[\d\s\-\.\+/]{3,}', joined):
             continue
         if TAPBACK.match(joined):
