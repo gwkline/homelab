@@ -42,7 +42,7 @@ ERA_BUCKETS = [
     ("pre-2018", 0, 2018),
     ("2018-2020", 2018, 2021),
     ("2021-2023", 2021, 2024),
-    ("2024-2026", 2024, 2026),
+    ("2024-2026", 2024, 2027),  # hi is EXCLUSIVE: 2026-era rows must land here
 ]
 CARVE_PER_ERA = 1500
 MIN_CARVE = 200
@@ -81,18 +81,30 @@ def main() -> int:
         }
 
     # ---- 2. era carve-out scorecard ------------------------------------
+    # Carve per era AND per class with floors, so a random split can never
+    # starve the fit set of a minority class. mark-read is never carved at
+    # all: the class is only observable on the current inbox, so its
+    # per-era metrics are meaningless by design (reported as absent).
     rng = random.Random(20261119)
     carve, fit = [], []
+
+    def carve_class(sub, frac, cap, floor):
+        sub = sorted(sub, key=lambda r: r["d"])
+        if len(sub) < floor:
+            return [], sub
+        k = min(cap, max(1, int(len(sub) * frac)))
+        take = set(rng.sample(range(len(sub)), k))
+        return [sub[i] for i in take], [sub[i] for i in range(len(sub))
+                                         if i not in take]
+
     for name, _lo, _hi in ERA_BUCKETS:
-        sub = sorted((r for r in rows if r["bucket"] == name),
-                     key=lambda r: r["d"])
-        if len(sub) >= MIN_CARVE:
-            k = min(CARVE_PER_ERA, max(MIN_CARVE, len(sub) // 5))
-            take = set(rng.sample(range(len(sub)), k))
-            carve.extend(sub[i] for i in take)
-            fit.extend(sub[i] for i in range(len(sub)) if i not in take)
-        else:
-            carve.extend(sub)  # too small to split: diagnose on all of it
+        bucket = [r for r in rows if r["bucket"] == name]
+        for label in ("respond", "archive"):
+            c, f = carve_class([r for r in bucket if r["label"] == label],
+                               frac=0.2, cap=CARVE_PER_ERA // 2, floor=40)
+            carve.extend(c)
+            fit.extend(f)
+        fit.extend(r for r in bucket if r["label"] == "mark-read")
 
     if len(fit) < 500:
         raise SystemExit("carve train set too small; not enough v3 data yet")
