@@ -12,6 +12,7 @@ models/gavin-voice/
 ├── SERVING.md                    ← local OpenAI-compatible server (make serve)
 ├── Makefile                      ← setup / instructions / train / merge / eval / serve
 ├── configs/lora_config.template.yaml
+├── configs/lora_config.v5-era-capacity.yaml ← v5: rank 32 + era-conditioned corpus (#537 Option 1)
 ├── adapters/adapter_v1/          ← v1 LoRA adapter (committed)
 ├── adapters/adapter_v2/          ← v2 LoRA adapter (committed)
 ├── scripts/
@@ -19,9 +20,10 @@ models/gavin-voice/
 │   ├── extract_texts.py          ← chat.db texts (streamtyped blobs)
 │   ├── docs/extract-gmail-sent.ts.md ← Gmail Sent sandbox snippet (Executor MCP)
 │   ├── extract_blog.py           ← gwkline/personal-site content
-│   ├── build_corpus.py           ← clean/dedupe → channels → train/valid/holdout
+│   ├── build_corpus.py           ← clean/dedupe → channels → train/valid/holdout (v5: era-conditioned prompts)
 │   ├── gmail_drain_v4.py         ← full-history Gmail Sent drain (executor MCP, resumable)
 │   ├── leak_check.py             ← pre-train twin-leak gate (both holdouts)
+│   ├── derive_secondary_v5.py    ← era-tagged prompts for the old-era secondary diagnostic holdout
 │   ├── mix_instructions.py       ← alpaca-cleaned instruction mix (#511)
 │   ├── train.sh                  ← render config → mlx_lm.lora
 │   └── bootstrap_judge_key.sh     ← opencode-go judge key (Gavin's Mac only)
@@ -47,6 +49,8 @@ Everything heavy or personal is written to `$GAVIN_VOICE_LOCAL` (default `/Users
 Stats live in `$GAVIN_VOICE_LOCAL/corpus/stats.json`.
 
 > **v4 outcome (2026-11-19):** corpus v4 is built and leak-checked (PASS, all 13 checks — two NEW twin-leak classes found and fixed on the expanded data), and the eval-gated retrain was run honestly: three candidates (v4 val-best @280, the @520 second dip, and a v4.1 half-lr continuation), all evaluated on the same frozen instrument. **None beat v3 on both judge bars** (best email 2.88 vs 2.57, but text 3.0-3.75 vs 3.88) — the full-history text blend trades recent-era text fidelity for old-era coverage. **adapter_v3 remains the promoted keeper and the serving model.** Full gate table and mechanisms: [docs/corpus-v4-outcome.md](docs/corpus-v4-outcome.md).
+>
+> **v5 (2026-11-19, #537 Option 1):** the era-handling decision after the v4 miss — era-conditioned prompts. OLD-era rows (text < 2024-06, email < 2023-09; 3,067 text + 1,064 email rows) carry a year tag in the user turn so both era voices coexist in one model; recent rows stay byte-identical to v4, so the untagged form maps to the recent-era voice the frozen holdout measures. No rows dropped or weighted by date. Same 21,036-example composition as v4 (verified), leak checks 13/13 PASS, holdout sha untouched. Plus the capacity lever: LoRA rank 16 → 32. Gate table and outcome: [docs/corpus-v5-outcome.md](docs/corpus-v5-outcome.md).
 
 ### Training-data design (the pirate-LoRA lessons, as requirements)
 

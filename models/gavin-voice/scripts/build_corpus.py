@@ -67,6 +67,15 @@ v4 changes (2026-11-19 mandate — full-history corpus):
     untouched v3 frozen holdout (sha 14013551...).
   - Text-channel drop reasons are counted (garbage / tapback / numeric-only)
     so the stats table reports drops BY REASON.
+
+v5 changes (#537 Option 1, after the v4 honest miss):
+  - ERA-CONDITIONED text/email prompts: rows older than the v3 windows
+    (text < 2024-06, email < 2023-09) carry a year tag in the user turn via
+    several natural phrasings, so both era voices coexist in one model and
+    the model learns WHEN each applies. Recent-era rows and the frozen
+    holdout prompts stay byte-identical to v4 — no date-based dropping or
+    weighting anywhere. The eval instrument is therefore UNCHANGED (the
+    v3/v4 incumbent numbers remain directly comparable, no re-run needed).
 """
 import datetime
 import email.utils
@@ -92,6 +101,18 @@ os.makedirs(EVALS, exist_ok=True)
 
 GENERIC_SYSTEM = "You are a helpful assistant."
 MAX_TEXT_EXAMPLES = int(os.environ.get("MAX_TEXT_EXAMPLES", "6000"))
+
+# v5 (#537 Option 1, delegated decision after the v4 miss): era-conditioned
+# prompts. The v4 full-history blend measurably pulled the untagged voice
+# toward the old era (text judge 3.75 vs the 3.88 bar) while old-era rows fit
+# BETTER than recent ones — the model couldn't tell WHEN each voice applies.
+# Fix: OLD-era rows carry an explicit year tag in the user turn; RECENT-era
+# rows keep the untagged prompt form byte-identical to v3/v4, so the untagged
+# form remains exactly the recent-era voice the frozen primary holdout
+# (sha 14013551...) measures. No rows are dropped or weighted by date
+# (standing mandate: era HANDLING yes, era DROPPING no).
+TEXT_ERA_CUT = datetime.datetime(2024, 6, 1)   # v3 text drain window start
+EMAIL_ERA_CUT = datetime.datetime(2023, 9, 1)  # v3 email fetch window start
 
 # ---- v3 (#533): thread-aware email grounding -------------------------
 # Measured v2.1 miss root cause: subject-only prompts leave the thread
@@ -452,7 +473,29 @@ def strip_subject(s):
     return re.sub(r'^(Re|Fwd|FW)\s*:\s*', '', s, flags=re.I).strip()
 
 
-def email_user_prompts(rec):
+def email_era(e):
+    """v5 (#537 Option 1): year tag for an OLD-era email (None = recent-era,
+    keep the untagged v3/v4 prompt form). The cut is the v3 fetch window
+    start — the frozen primary holdout exemplifies 2023-09+ mail."""
+    dt = parse_mail_date(e.get("date", ""))
+    if dt is None:
+        return None
+    return dt.year if dt < EMAIL_ERA_CUT else None
+
+
+def text_era(b):
+    """v5: year tag for an OLD-era text burst (None = recent-era, untagged).
+    The cut is the v3 drain window start (2024-06) — precisely the era the
+    frozen primary holdout exemplifies. Bursts carry first_ts in Apple-epoch
+    nanoseconds."""
+    try:
+        dt = APPLE_EPOCH + datetime.timedelta(microseconds=b["ts"] / 1000)
+    except (OverflowError, ValueError):
+        return None
+    return dt.year if dt < TEXT_ERA_CUT else None
+
+
+def email_user_prompts(rec, era=None):
     subj, topic = rec["subject"], strip_subject(rec["subject"])
     name = rec["recipient_first"]
     inc, inc_from = rec.get("incoming"), rec.get("incoming_from")
@@ -460,16 +503,36 @@ def email_user_prompts(rec):
         # v3 thread-aware form: the user turn carries the actual incoming
         # message, so the reply conditions on content instead of inventing it.
         author = inc_from or name or "The sender"
-        opts = [f'Reply to this email thread: "{subj}"\n\n{author} wrote:\n"{inc}"',
-                f'Reply to the latest message in this thread ("{subj}"):\n\n"{inc}"',
-                f'{author} sent this email about {topic}. Write the reply.\n\n"{inc}"']
+        if era:
+            # v5: old-era rows carry the year in the user turn so both era
+            # voices coexist in one model; the untagged form stays the
+            # recent-era default the frozen holdout measures.
+            opts = [f'Reply to this {era} email thread: "{subj}"\n\n{author} wrote:\n"{inc}"',
+                    f'Reply to the latest message in this {era} thread ("{subj}"):\n\n"{inc}"',
+                    f'{author} sent this {era} email about {topic}. Write the reply.\n\n"{inc}"']
+        else:
+            opts = [f'Reply to this email thread: "{subj}"\n\n{author} wrote:\n"{inc}"',
+                    f'Reply to the latest message in this thread ("{subj}"):\n\n"{inc}"',
+                    f'{author} sent this email about {topic}. Write the reply.\n\n"{inc}"']
         return opts
     if re.match(r'^(Re|FW|Fwd)\s*:', subj, re.I):
-        opts = [f'Reply to this email thread: "{subj}"',
-                f'Reply to the email about {topic}',
-                f'Write a reply to this email: "{subj}"']
+        if era:
+            opts = [f'Reply to this {era} email thread: "{subj}"',
+                    f'Reply to the {era} email about {topic}',
+                    f'Write a reply to this {era} email thread: "{subj}"']
+        else:
+            opts = [f'Reply to this email thread: "{subj}"',
+                    f'Reply to the email about {topic}',
+                    f'Write a reply to this email: "{subj}"']
         if name:
-            opts.append(f"Reply to {name}'s email about {topic}")
+            opts.append(f"Reply to {name}'s {era} email about {topic}" if era
+                        else f"Reply to {name}'s email about {topic}")
+        return opts
+    if era:
+        opts = [f'Write a {era} email with the subject: "{subj}"',
+                f'Draft a {era} email about {topic}']
+        if name:
+            opts.append(f'Write a {era} email to {name} about {topic}')
     else:
         opts = [f'Write an email with the subject: "{subj}"',
                 f'Draft an email about {topic}']
@@ -478,15 +541,26 @@ def email_user_prompts(rec):
     return opts
 
 
-def text_user_prompts(b):
+def text_user_prompts(b, era=None):
     name, inc = b["name"], b["incoming"]
     if inc:
         inc_short = inc if len(inc) <= 240 else inc[:237] + "..."
-        opts = [f'Reply to this text from {name}: "{inc_short}"',
-                f'{name} texted: "{inc_short}"\nWrite a text back.',
-                f'{name} just texted: "{inc_short}" Reply.']
+        if era:
+            # v5 (#537): old-era bursts carry the year in the user turn.
+            opts = [f"It's {era}. Reply to this text from {name}: \"{inc_short}\"",
+                    f'Back in {era}, {name} texted: "{inc_short}"\nWrite a text back.',
+                    f'From a {era} conversation, {name} texted: "{inc_short}" Reply.']
+        else:
+            opts = [f'Reply to this text from {name}: "{inc_short}"',
+                    f'{name} texted: "{inc_short}"\nWrite a text back.',
+                    f'{name} just texted: "{inc_short}" Reply.']
     else:
-        opts = [f'Text {name}.', f'Write a text to {name}.', f'Send {name} a text.']
+        if era:
+            opts = [f"It's {era}. Text {name}.",
+                    f'Write a {era} text to {name}.',
+                    f'Send {name} a text like it\'s {era}.']
+        else:
+            opts = [f'Text {name}.', f'Write a text to {name}.', f'Send {name} a text.']
     return opts
 
 
@@ -673,17 +747,24 @@ def main():
     random.shuffle(pool)
     short = [b for b in pool if b["len"] < 12][:int(MAX_TEXT_EXAMPLES * 0.15)]
     substantive = [b for b in pool if b["len"] >= 12][:MAX_TEXT_EXAMPLES - len(short)]
+    n_era = defaultdict(int)
     for b in short + substantive:
         if b["len"] > 1200:
             continue
-        user = random.choice(text_user_prompts(b))
+        era = text_era(b)
+        if era:
+            n_era["text"] += 1
+        user = random.choice(text_user_prompts(b, era=era))
         examples += [("text", ex) for ex in two_variants(user, b["text"])]
     for e in email_train_pool:
         body = e["body"]
         if len(body) > 3400:
             cut = body.rfind("\n\n", 2800, 3400)
             body = body[:cut if cut > 0 else 3400].strip()
-        user = random.choice(email_user_prompts(e))
+        era = email_era(e)
+        if era:
+            n_era["email"] += 1
+        user = random.choice(email_user_prompts(e, era=era))
         examples += [("email", ex) for ex in two_variants(user, body)]
         # v3 grounding: a third variant with the persona-facts system prompt
         # (email only; unconditional generic/no-system variants dominate).
@@ -756,6 +837,7 @@ def main():
                      "by_channel": {ch: sum(1 for c, _ in examples if c == ch)
                                     for ch in ("text", "email", "blog", "persona",
                                                "instruction")},
+                     "era_tagged_rows": dict(n_era),
                      "instruction_share": round(n_instr / len(examples), 3) if examples else 0,
                      "persona_anchors": n_persona,
                      "holdout_eval": n_holdout if fixed else len(holdout),
@@ -777,7 +859,10 @@ def main():
                                "byte-identical for comparability; v4: min-date "
                                "lifted (full history), MAX_TEXT_EXAMPLES raised "
                                "3000->6000, era-stratified secondary holdout with "
-                               "the same leak discipline"},
+                               "the same leak discipline; v5: old-era rows "
+                               "(text < 2024-06, email < 2023-09) carry a year "
+                               "tag in the user turn (#537 Option 1) — recent "
+                               "rows byte-identical to v4, no date-based drops"},
     }
     with open(f"{CORPUS}/stats.json", "w") as f:
         json.dump(rep, f, indent=2, ensure_ascii=False)

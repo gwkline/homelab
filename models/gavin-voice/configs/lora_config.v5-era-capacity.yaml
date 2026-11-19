@@ -1,0 +1,43 @@
+# gavin-voice v5 era-conditioned capacity config (#537 successor card).
+# Base: Qwen2.5-7B-Instruct, 4-bit quantized (mlx-community).
+# NaN history (do not retry blind): lr 1e-4 + scale 32 + all-layers NaN at
+# iter 40; lr 5e-5 + scale 16 + 16 layers + grad-checkpoint NaN at iter 60;
+# lr 1e-5 + no grad-checkpoint NaN at iter ~600 at the 800-iter v4 schedule
+# (the stable recipe's horizon is ~550 iters — this run stays at 400).
+#
+# v5 deltas vs v4 (the honest-miss run):
+#   1. DATA = corpus v5, era-conditioned prompts (#537 Option 1): old-era rows
+#      (text < 2024-06, email < 2023-09; 3,067 text + 1,064 email rows) carry
+#      a year tag in the user turn; recent rows are byte-identical to v4, so
+#      the untagged prompt form maps to the recent-era voice the frozen
+#      holdout measures. Row set/sampling unchanged from v4 (verified: same
+#      21,036 examples, same per-channel counts, leak checks 13/13 PASS).
+#   2. CAPACITY = LoRA rank 16 -> 32, scale stays 16.0 (alpha fixed is the
+#      standard higher-rank pairing and keeps update magnitude away from the
+#      documented lr-1e-4/scale-32 NaN mode). The 21k-example corpus
+#      justifies the bump; the v2.1 "capacity" run widened seq, not rank.
+# Schedule: 400 iters, inside the ~550-iter lr-1e-5 stability horizon. If
+# val is still improving at the end, extend with the documented half-lr
+# resume (v4.1 pattern, config lora_config_v41.yaml) — never a longer
+# straight lr-1e-5 run. Promote the VAL-BEST checkpoint, never the endpoint.
+# GPU hygiene: launched only after checking sibling t_c3cb3569's heartbeats
+# (their neural run starts ~15:15; this run is sized to finish first).
+model: /Users/gkline/git-dev/gavin-voice-local/models/Qwen2.5-7B-Instruct-4bit
+data: /Users/gkline/git-dev/gavin-voice-local/data
+fine_tune_type: lora
+num_layers: 16
+batch_size: 2
+iters: 400
+learning_rate: 1.0e-5
+max_seq_length: 1024
+mask_prompt: true
+grad_checkpoint: false
+steps_per_report: 10
+steps_per_eval: 40
+val_batches: 25
+save_every: 40
+seed: 42
+lora_parameters:
+  rank: 32
+  scale: 16.0
+  dropout: 0.0

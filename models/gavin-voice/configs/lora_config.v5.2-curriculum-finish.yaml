@@ -1,0 +1,46 @@
+# gavin-voice v5.2 curriculum-finish config (#537 Option 3, the secondary
+# approved era lever — fired after the v5/v5.1 disclosed misses).
+# Base: Qwen2.5-7B-Instruct, 4-bit quantized (mlx-community).
+#
+# Evidence so far (all on the frozen primary holdout, same instrument):
+#   v5@280  (era-cond + rank32, val-best 1.264): email 2.71 PASS / text 3.0
+#           MISS — 10/27 "I think…" openers; the SAME basin v4 measured. The
+#           era-tagged SECONDARY diagnostic scored text 4.0 / email 3.14, so
+#           era conditioning itself WORKS (both voices coexist; the old voice
+#           is strong) and the primary text failure is the optimization
+#           basin, not era blending.
+#   v5.1   (280 + 120 @ 5e-6, full blend): email 2.33 / text 3.0 — the
+#           continuation recovers the opener symptom (1/27) but NOT the
+#           judged voice, while email decays. v4.1 already showed the
+#           240-iter version of this trade (email 2.38 / text 3.75): the
+#           full-blend continuation lever is exhausted.
+#
+# v5.2 = Option 3 verbatim: pretrain on the full blend (that IS v5@280 —
+# every corpus row was seen there; no row was dropped by date), then FINISH
+# on the recent-era slice only (data-finish/: 10,695/1,867 train/valid — the
+# era-tagged examples filtered out, instructions/persona/blog/recent
+# text+email kept). Resumed from the email-good 280 basin at 5e-6: the
+# untagged voice gets pure recent-era gradient — exactly the distribution
+# the frozen primary holdout exemplifies — with no old-voice drag, which is
+# what made the v4/v5.1 full-blend continuations trade bars against each
+# other. 120 iters (GPU window); +40 more via resume only if val is still
+# improving.
+model: /Users/gkline/git-dev/gavin-voice-local/models/Qwen2.5-7B-Instruct-4bit
+data: /Users/gkline/git-dev/gavin-voice-local/data-finish
+fine_tune_type: lora
+num_layers: 16
+batch_size: 2
+iters: 120
+learning_rate: 5.0e-6
+max_seq_length: 1024
+mask_prompt: true
+grad_checkpoint: false
+steps_per_report: 10
+steps_per_eval: 40
+val_batches: 25
+save_every: 40
+seed: 44
+lora_parameters:
+  rank: 32
+  scale: 16.0
+  dropout: 0.0

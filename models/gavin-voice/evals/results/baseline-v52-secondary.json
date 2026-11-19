@@ -1,0 +1,77 @@
+{
+  "tag": "v52-secondary",
+  "timestamp": "2026-11-19T14:50:21",
+  "judge": {
+    "ft": {
+      "email": 2.62,
+      "text": 3
+    }
+  },
+  "perplexity": {
+    "base": {},
+    "ft": {
+      "email": 2.1328,
+      "text": 4.1296,
+      "overall": 3.3309
+    }
+  },
+  "length_format": {
+    "email": {
+      "real": {
+        "n": 12,
+        "avg_chars": 732,
+        "median_chars": 858,
+        "exclam_per_100": 8.3,
+        "sig_rate": 0.42,
+        "multiline_rate": 0.92
+      },
+      "base": {
+        "n": 0
+      },
+      "ft": {
+        "n": 8,
+        "avg_chars": 461,
+        "median_chars": 308,
+        "exclam_per_100": 12.5,
+        "sig_rate": 0.38,
+        "multiline_rate": 0.75
+      }
+    },
+    "text": {
+      "real": {
+        "n": 18,
+        "avg_chars": 62,
+        "median_chars": 54,
+        "exclam_per_100": 83.3,
+        "sig_rate": 0,
+        "multiline_rate": 0.39
+      },
+      "base": {
+        "n": 0
+      },
+      "ft": {
+        "n": 10,
+        "avg_chars": 119,
+        "median_chars": 52,
+        "exclam_per_100": 40.0,
+        "sig_rate": 0,
+        "multiline_rate": 0.4
+      }
+    },
+    "blog": {
+      "real": {
+        "n": 0
+      },
+      "base": {
+        "n": 0
+      },
+      "ft": {
+        "n": 0
+      }
+    }
+  },
+  "prompts_evaluated": {
+    "generation": 18,
+    "perplexity": 30
+  }
+}
