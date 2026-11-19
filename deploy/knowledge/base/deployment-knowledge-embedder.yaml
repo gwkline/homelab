@@ -38,18 +38,16 @@ spec:
             - containerPort: 8080
               name: http
           resources:
-            # A pod idles near 450MiB RSS; the cap leaves backfill headroom
-            # without inviting the node's memory pressure (audit finding
-            # #491). The CPU limit matches KNOWLEDGE_EMBEDDER_THREADS
-            # (default 4): onnxruntime's default pool sizes to the machine's
-            # cores and spins inside a smaller quota, starving inference —
-            # the first backfill crawled at ~1 chunk/s under a 1-core limit.
+            # A pod idles near 450MiB RSS. Peak memory is concurrent fp32
+            # batch arenas (attention scores scale batch x heads x seq^2),
+            # bounded here by the engine's CONCURRENCY=1/BATCH=16 defaults;
+            # 1Gi leaves long-tail 512-token chunks headroom.
             requests:
               cpu: 100m
               memory: 256Mi
             limits:
               cpu: "4"
-              memory: 768Mi
+              memory: 1Gi
           volumeMounts:
             - name: tmp
               mountPath: /tmp

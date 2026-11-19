@@ -41,6 +41,14 @@ spec:
               value: http://knowledge-embedder.agents.svc.cluster.local:8080
             - name: KNOWLEDGE_EMBEDDING_MODEL
               value: BAAI/bge-small-en-v1.5
+            # The sidecar is CPU-bound and single-session: concurrent fp32
+            # batches overlap on it for seconds, and their arenas together
+            # OOM it. One in-flight batch of 16 keeps the peak transient
+            # bounded; the re-embed backfill drains through the same knobs.
+            - name: KNOWLEDGE_EMBEDDING_CONCURRENCY
+              value: "1"
+            - name: KNOWLEDGE_EMBEDDING_BATCH_SIZE
+              value: "16"
             - name: TMPDIR
               value: /tmp/git-cache
           securityContext:
