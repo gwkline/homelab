@@ -21,6 +21,29 @@ spec:
     - from:
         - podSelector: {}
 ---
+# The tailnet front door (ingress.yaml): only the Tailscale Ingress proxy's
+# namespace may reach the API from outside email-agent. Mac-side automation
+# (the 8:01 AM briefing) calls https://email-classifier.<tailnet>.ts.net;
+# everything else keeps hitting the ClusterIP Service from inside the cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-tailscale-to-email-classifier
+  namespace: email-agent
+spec:
+  podSelector:
+    matchLabels:
+      app: email-classifier
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tailscale
+      ports:
+        - protocol: TCP
+          port: 8080
+---
 # The API is offline by design: no egress at all once serving.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
