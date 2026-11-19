@@ -12,7 +12,9 @@ CLUSTER="${PG_CLUSTER:-pg-primary}"
 DB="${PG_DATABASE:-knowledge}"
 DB_USER="${PG_DB_USER:-knowledge_owner}"
 POD="$CLUSTER-1"
-SECRET="$CLUSTER-$DB_USER"
+# The Secret is hyphenated (deploy/postgres/base/owner-secrets.yaml); the
+# role it carries is not.
+SECRET="${PG_SECRET:-$CLUSTER-knowledge-owner}"
 EXPECTED_ROWS=4
 
 fail() {
@@ -95,7 +97,7 @@ check_vector_query() {
 check_bm25_query() {
   top="$(psql_query \
     "SELECT id FROM smoke.docs
-     ORDER BY content <@> to_bm25query('bm25 ranked search','smoke_docs_bm25_idx')
+     ORDER BY content <@> to_bm25query('bm25 ranked search','smoke.smoke_docs_bm25_idx')
      LIMIT 1;")"
   assert_eq "$top" "3" "BM25 ranked query via to_bm25query hits the search doc"
 }
@@ -133,7 +135,7 @@ SQL
 
 cmd_restart() {
   check_cluster_healthy
-  allowed="$(kubectl get pdb -n "$NS" "$CLUSTER-pdb" \
+  allowed="$(kubectl get pdb -n "$NS" "$CLUSTER-primary" \
     -o jsonpath='{.status.disruptionsAllowed}')"
   assert_eq "$allowed" "1" "PDB allows one voluntary disruption of the healthy primary"
   # kubectl delete bypasses the eviction API, so delete even if the PDB
