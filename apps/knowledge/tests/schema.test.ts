@@ -13,6 +13,7 @@ import {
   buildDocumentRestore,
   buildDocumentTombstone,
   buildDocumentUpsert,
+  buildDocumentVersionIdLookup,
   buildDocumentVersionInsert,
   buildDocumentVersionInsertGenerated,
   buildNamespaceRegistration,
@@ -443,6 +444,19 @@ test("generated-id version insert records a claimed id without an id param", () 
         version: 2,
       }),
     /sha256 hex digest/u
+  );
+});
+
+test("version id lookup resolves a deterministic id to its row", () => {
+  const built = buildDocumentVersionIdLookup("doc-1:v2");
+  assert.deepEqual(built.params, ["doc-1:v2"]);
+  assert.ok(
+    built.text.includes("SELECT id, document_id, version FROM document_version")
+  );
+  assert.ok(built.text.includes("WHERE id = $1"));
+  assert.throws(
+    () => buildDocumentVersionIdLookup(""),
+    /invalid document version id/u
   );
 });
 

@@ -427,6 +427,20 @@ RETURNING id`,
   };
 };
 
+/**
+ * Resolves a deterministic version id to its recorded row, if any. Ingest
+ * checks this before inserting: a replay from a deleted manifest can
+ * recompute an id another version already claimed, and an insert that
+ * errors on the primary key aborts the whole transaction.
+ */
+export const buildDocumentVersionIdLookup = (id: string): SchemaQuery => {
+  const versionId = validatedId(id, "document version id");
+  return {
+    params: [versionId],
+    text: `SELECT id, document_id, version FROM document_version WHERE id = $1`,
+  };
+};
+
 /** Superseded chunks leave the channels' partial indexes, and BM25 stats, at once. */
 export const buildChunkSupersede = (documentId: string): SchemaQuery => {
   const id = validatedId(documentId, "document id");
