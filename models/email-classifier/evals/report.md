@@ -1,6 +1,6 @@
 # Email action classifier — standing eval
 
-_Generated 2026-11-19 09:20 UTC by `evals/run.sh` (one command, deterministic split)._
+_Generated 2026-11-19 20:10 UTC by `evals/run.sh` (one command, deterministic split)._
 
 **Held-out split:** every labeled message dated on/after **2026-09-15** (newest ~2 months). Train uses only older mail. Test coverage: 2026-09-15 → 2026-11-19.
 

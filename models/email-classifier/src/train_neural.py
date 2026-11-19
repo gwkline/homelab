@@ -24,7 +24,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from common import home, is_test, is_train, labeled_path
+from common import home, is_test, is_train, labeled_path, train_path
 
 BASE_MODEL = "qwen25-05b-instruct"
 PROMPT = (
@@ -48,7 +48,7 @@ def fused_path() -> Path:
 
 
 def prep() -> int:
-    rows = [json.loads(line) for line in open(labeled_path(), encoding="utf-8")]
+    rows = [json.loads(line) for line in open(train_path(), encoding="utf-8")]
     train = [r for r in rows if is_train(r)]
     # validation = newest 15% of TRAIN (leak-free; standing test untouched)
     train_sorted = sorted(train, key=lambda r: r["d"])
@@ -85,6 +85,12 @@ def prep() -> int:
 
 def train() -> int:
     iters = int(os.environ.get("NEURAL_ITERS", "800"))
+    # Val cadence knobs: the default (eval every 20 steps over the FULL
+    # validation set) spends ~2.4 min per val pass on the v3 corpus and
+    # starves the actual training. Sparse val (every 150 steps, 25 batches)
+    # keeps the loss curve visible at ~1/50th the overhead.
+    steps_per_eval = os.environ.get("NEURAL_STEPS_PER_EVAL", "150")
+    val_batches = os.environ.get("NEURAL_VAL_BATCHES", "25")
     common = [
         sys.executable,
         "-m",
@@ -108,6 +114,10 @@ def train() -> int:
         "--mask-prompt",
         "--max-seq-length",
         "384",
+        "--steps-per-eval",
+        steps_per_eval,
+        "--val-batches",
+        val_batches,
         "--adapter-path",
         str(adapter_path()),
     ]
