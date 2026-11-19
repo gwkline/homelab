@@ -1,0 +1,42 @@
+{
+    "adapter_path": "checkpoints/adapter_v2",
+    "batch_size": 4,
+    "clear_cache_threshold": 0,
+    "config": "config/lora_config_v2.yaml",
+    "data": "/Users/gkline/git-dev/gavin-voice-local/data",
+    "fine_tune_type": "lora",
+    "grad_accumulation_steps": 1,
+    "grad_checkpoint": false,
+    "iters": 480,
+    "learning_rate": 1e-05,
+    "lora_parameters": {
+        "rank": 16,
+        "scale": 16.0,
+        "dropout": 0.0
+    },
+    "lr_schedule": null,
+    "mask_prompt": true,
+    "max_seq_length": 512,
+    "model": "/Users/gkline/git-dev/gavin-voice-local/models/Qwen2.5-7B-Instruct-4bit",
+    "num_layers": 16,
+    "optimizer": "adam",
+    "optimizer_config": {
+        "adam": {},
+        "adamw": {},
+        "muon": {},
+        "sgd": {},
+        "adafactor": {}
+    },
+    "project_name": null,
+    "report_to": null,
+    "resume_adapter_file": null,
+    "save_every": 40,
+    "seed": 42,
+    "steps_per_eval": 40,
+    "steps_per_report": 10,
+    "test": false,
+    "test_batches": 500,
+    "train": true,
+    "trust_remote_code": false,
+    "val_batches": 25
+}
