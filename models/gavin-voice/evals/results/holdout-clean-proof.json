@@ -1,0 +1,36 @@
+{
+  "cleaned_at": "2026-11-19T06:35:02",
+  "rules": "identical to build_corpus.py v2.1 (imported from it): per-line strip ^\\+. before tapback-check; garbage/junk/tapback filters; incoming-context strip; tapback incoming -> no-incoming prompt form",
+  "sha256_v1_dirty": "c885ddeaf8cad6e8a7b5a8861f52d06c55769cd1f0a2bd563fe5c03842d4bda0",
+  "sha256_v2_1_clean": "14013551ce174c5bcb1454e10c2429a2fd38e4331dcd98448fcd82db06581627",
+  "rows_before": {
+    "email": 22,
+    "text": 62,
+    "blog": 2
+  },
+  "rows_after": {
+    "email": 22,
+    "text": 57,
+    "blog": 2
+  },
+  "plus_prefixed_before": {
+    "real_exemplars": 28,
+    "prompt_incoming": 24
+  },
+  "plus_prefixed_after": {
+    "real_exemplars": 0,
+    "prompt_incoming": 0
+  },
+  "zero_artifact_check": "PASS",
+  "mutations": {
+    "real_lines_stripped": 28,
+    "dropped": 5,
+    "dropped_reason": {
+      "tapback_or_junk": 5,
+      "empty_after_strip": 0
+    },
+    "prompt_incoming_cleaned": 18,
+    "prompt_no_incoming_form": 7
+  },
+  "membership": "fixed \u2014 same exemplars as the v1 freeze, text cleaned in place; tapback/junk rows v2.1 would never emit are dropped; email/blog passed through (verified clean); no re-sampling"
+}

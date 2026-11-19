@@ -1,0 +1,114 @@
+{
+  "tag": "v1clean",
+  "timestamp": "2026-11-19T06:55:58",
+  "judge": {
+    "base": {
+      "email": 1,
+      "text": 1,
+      "blog": 1.5
+    },
+    "ft": {
+      "email": 1.25,
+      "text": 3.5,
+      "blog": 1.5
+    }
+  },
+  "perplexity": {
+    "base": {
+      "blog": 3.5,
+      "text": 10.8677,
+      "email": 5.2723,
+      "overall": 8.2171
+    },
+    "ft": {
+      "blog": 2.8906,
+      "text": 4.4504,
+      "email": 2.5993,
+      "overall": 3.593
+    }
+  },
+  "length_format": {
+    "email": {
+      "real": {
+        "n": 20,
+        "avg_chars": 288,
+        "median_chars": 163,
+        "exclam_per_100": 105.0,
+        "sig_rate": 0.5,
+        "multiline_rate": 0.95
+      },
+      "base": {
+        "n": 10,
+        "avg_chars": 551,
+        "median_chars": 194,
+        "exclam_per_100": 100,
+        "sig_rate": 0,
+        "multiline_rate": 0.4
+      },
+      "ft": {
+        "n": 10,
+        "avg_chars": 347,
+        "median_chars": 256,
+        "exclam_per_100": 10.0,
+        "sig_rate": 0.1,
+        "multiline_rate": 0.1
+      }
+    },
+    "text": {
+      "real": {
+        "n": 55,
+        "avg_chars": 51,
+        "median_chars": 40,
+        "exclam_per_100": 20.0,
+        "sig_rate": 0,
+        "multiline_rate": 0.22
+      },
+      "base": {
+        "n": 12,
+        "avg_chars": 185,
+        "median_chars": 178,
+        "exclam_per_100": 108.3,
+        "sig_rate": 0.08,
+        "multiline_rate": 0.25
+      },
+      "ft": {
+        "n": 12,
+        "avg_chars": 52,
+        "median_chars": 27,
+        "exclam_per_100": 8.3,
+        "sig_rate": 0,
+        "multiline_rate": 0
+      }
+    },
+    "blog": {
+      "real": {
+        "n": 1,
+        "avg_chars": 635,
+        "median_chars": 635,
+        "exclam_per_100": 0,
+        "sig_rate": 0,
+        "multiline_rate": 1
+      },
+      "base": {
+        "n": 2,
+        "avg_chars": 2049,
+        "median_chars": 2049,
+        "exclam_per_100": 0,
+        "sig_rate": 0,
+        "multiline_rate": 1
+      },
+      "ft": {
+        "n": 2,
+        "avg_chars": 853,
+        "median_chars": 853,
+        "exclam_per_100": 0,
+        "sig_rate": 0,
+        "multiline_rate": 0
+      }
+    }
+  },
+  "prompts_evaluated": {
+    "generation": 24,
+    "perplexity": 45
+  }
+}

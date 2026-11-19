@@ -1,0 +1,36 @@
+# gavin-voice v2.1 email-capacity LoRA config (issue #528).
+# Base: Qwen2.5-7B-Instruct, 4-bit quantized (mlx-community).
+# NaN history (do not retry blind): lr 1e-4 + scale 32 + all-layers NaN at
+# iter 40; lr 5e-5 + scale 16 + 16 layers + grad-checkpoint NaN at iter 60.
+# Stable recipe (v1 + v2): lr 1e-5, no grad-checkpoint. Kept unchanged here.
+#
+# v2.1 capacity deltas vs v2 (the #512 remainder):
+#   max_seq_length 512 -> 1024 so full email bodies (capped ~3400 chars in
+#   build_corpus, ~900 tok + prompt) train untruncated — v2's email format
+#   gaps (sig_rate 0 vs real 0.5, multiline 0 vs 0.95, avg 192 vs 288 chars)
+#   are exactly the tail that seq-512 truncation cut off. 8-bit base only if
+#   memory demands it — 4-bit + seq 1024 fits in 36 GB with the server off.
+#   iters 240 (moderate) with the established promote-val-best discipline:
+#   val-every 40, save-every 40; v2 showed val-best at iter 40 and
+#   overfitting past it, so the endpoint is NOT assumed to be the keeper.
+#   Corpus: v2.2 = v2.1 minus the two holdout-twin bursts the clean-holdout
+#   exclusion caught (data rebuilt 2026-11-19, zero twins verified).
+model: __GAVIN_VOICE_LOCAL__/models/Qwen2.5-7B-Instruct-4bit
+data: __GAVIN_VOICE_LOCAL__/data
+fine_tune_type: lora
+num_layers: 16
+batch_size: 4
+iters: 240
+learning_rate: 1.0e-5
+max_seq_length: 1024
+mask_prompt: true
+grad_checkpoint: false
+steps_per_report: 10
+steps_per_eval: 40
+val_batches: 25
+save_every: 40
+seed: 42
+lora_parameters:
+  rank: 16
+  scale: 16.0
+  dropout: 0.0
