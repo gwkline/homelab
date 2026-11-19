@@ -12,6 +12,7 @@ resources:
   - owner-secrets.yaml
   - databases.yaml
   - netpol.yaml
+  - backup.yaml
 
 components:
   - ../../components/labels

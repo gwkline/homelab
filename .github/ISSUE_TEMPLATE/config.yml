@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Tracker governance
+    url: https://github.com/gwkline/homelab/blob/main/GOVERNANCE.md
+    about: How this tracker is run — labels, priorities, and the agent PM loop that grooms it.
