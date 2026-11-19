@@ -141,7 +141,7 @@ def run_judge(all_gens, exemplars, n_per_channel=4):
         for ch in GEN_PER_CHANNEL:
             cands = [g["gen"] for g in gens if g["channel"] == ch][:n_per_channel]
             jobs += [(ch, which, c) for c in cands if c]
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    with ThreadPoolExecutor(max_workers=1) as ex:  # gateway 429s parallel bursts
         results = list(ex.map(one, jobs))
     agg = {}
     for ch, which, r in results:

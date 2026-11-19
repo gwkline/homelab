@@ -46,7 +46,8 @@ def _parse(text: str) -> dict:
     return {"score": None, "why": "unparseable: " + text[:120]}
 
 
-def judge(channel: str, candidate: str, exemplars: list, timeout: int = 120) -> dict:
+def judge(channel: str, candidate: str, exemplars: list, timeout: int = 120,
+          retries: int = 3) -> dict:
     """Return {"score": 1-5, "why": str} for candidate vs exemplars."""
     key = os.environ.get("OPENCODE_GO_API_KEY", "")
     if not key:
@@ -61,12 +62,18 @@ def judge(channel: str, candidate: str, exemplars: list, timeout: int = 120) -> 
         "x-opencode-session": SESSION_HEADER,
         "User-Agent": "gavin-voice-eval/1.0",  # zen gateway 403s the default Python UA
     })
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.load(r)
-        return _parse(data["choices"][0]["message"]["content"])
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, json.JSONDecodeError) as e:
-        return {"score": None, "why": f"judge call failed: {e}"}
+    import time
+    last = None
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = json.load(r)
+            return _parse(data["choices"][0]["message"]["content"])
+        except (urllib.error.URLError, urllib.error.HTTPError, KeyError, json.JSONDecodeError) as e:
+            last = e
+            # The zen gateway 429s parallel bursts; back off and go again.
+            time.sleep(15 * (attempt + 1))
+    return {"score": None, "why": f"judge call failed: {last}"}
 
 
 if __name__ == "__main__":
