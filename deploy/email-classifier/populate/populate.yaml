@@ -1,0 +1,42 @@
+# One-shot operator pod for the email-classifier state bootstrap. Apply by
+# hand after `kubectl apply -k deploy/email-classifier/base`; it is NOT part
+# of the base (nothing here should be swept up by routine applies). The
+# mounted script and requirements come from the base's stable-name
+# email-classifier-populate ConfigMap.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: email-classifier-populate
+  namespace: email-agent
+  labels:
+    app: email-classifier-populate
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+    fsGroup: 1000
+  containers:
+    - name: populate
+      image: python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+      command: ["/bin/sh", "/scripts/populate.sh"]
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: state
+          mountPath: /state
+        - name: populate-script
+          mountPath: /scripts
+          readOnly: true
+  volumes:
+    - name: state
+      persistentVolumeClaim:
+        claimName: email-classifier-state
+    - name: populate-script
+      configMap:
+        name: email-classifier-populate

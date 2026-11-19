@@ -1,0 +1,94 @@
+# Serves the trained model from the state PVC. The API code comes from the
+# email-classifier-api ConfigMap (see kustomization.yaml) and the model +
+# venv from the operator-run populate workflow: the artifacts are
+# Gmail-derived, so they never travel through this public repo.
+#
+# Until populate has delivered the model, the container waits in a loop
+# instead of crash-looping: a fresh cluster bootstrap can order either way.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: email-classifier
+  namespace: email-agent
+  labels:
+    app: email-classifier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: email-classifier
+  template:
+    metadata:
+      labels:
+        app: email-classifier
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1000
+      containers:
+        - name: api
+          # Third-party image, pinned by digest (verify.sh enforces this for
+          # everything outside ghcr.io/gwkline/homelab).
+          image: python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              while [ ! -f /state/ec-home/artifacts/model/model.joblib ]; do sleep 10; done; exec /state/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8080
+          workingDir: /app
+          env:
+            - name: EMAIL_CLASSIFIER_HOME
+              value: /state/ec-home
+            - name: PYTHONPATH
+              value: /app
+            # The embedding model ships on the PVC; never reach for the hub.
+            - name: HF_HUB_OFFLINE
+              value: "1"
+            - name: TRANSFORMERS_OFFLINE
+              value: "1"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+          # 10 minutes of startup budget: first boot waits for populate.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          volumeMounts:
+            - name: state
+              mountPath: /state
+            - name: api-code
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: email-classifier-state
+        - name: api-code
+          configMap:
+            name: email-classifier-api

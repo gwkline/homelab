@@ -11,3 +11,9 @@ kubeconfig*
 .env*
 *.pem
 *.key
+# Email classifier training data and model artifacts are Gmail-derived:
+# they live under models/email-classifier/ on the training machine only.
+models/email-classifier/data/
+models/email-classifier/artifacts/
+models/email-classifier/venv/
+models/email-classifier/src/__pycache__/
