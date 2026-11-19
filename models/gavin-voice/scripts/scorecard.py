@@ -82,10 +82,14 @@ def main():
         b, o, n = judge(base_src, "base", ch), judge(old, "ft", ch), judge(new, "ft", ch)
         bar = bars.get(ch)
         ok = (n is not None and bar is not None and n >= bar)
-        verdicts.append(ok)
+        verdicts.append(ok if bar is not None else True)  # info-only channels don't count
+        if bar is None:
+            mark = "n/a"
+        else:
+            mark = "PASS" if ok else "MISS"
         lines.append(f"| {ch} | {b if b is not None else '-'} | {o if o is not None else '-'} "
                      f"| {n if n is not None else '-'} | {bar if bar is not None else 'none'} "
-                     f"| {'PASS' if ok else 'MISS'} |")
+                     f"| {mark} |")
 
     lines += ["", "## Perplexity on held-out real text (lower = closer)", "",
               "| channel | base | v1 ft | v2 ft | v2 vs v1 |", "|---|---|---|---|---|"]

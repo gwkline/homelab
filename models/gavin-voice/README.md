@@ -26,10 +26,10 @@ models/gavin-voice/
 └── evals/
     ├── eval.py                   ← one-command harness (make eval)
     ├── judge.py                  ← glm-5.3 style judge via opencode-go
-    └── results/  ← baseline-v{1,2}{,clean,v21clean}.json, scorecard-v{2,2.1}.md, holdout-clean-proof.json — aggregate-only metrics (never sample text)
+    └── results/  ← baseline-v{1,2}{,clean,v21clean,v2wide,v3}.json, scorecard-v{2,2.1,v3}.md, holdout-clean-proof.json — aggregate-only metrics (never sample text)
 ```
 
-Everything heavy or personal is written to `$GAVIN_VOICE_LOCAL` (default `/Users/gkline/git-dev/gavin-voice-local`): `corpus/`, `data/`, `checkpoints/`, `samples/`, `evals/` outputs, the downloaded base model, the venv, and the merged full model (`models/gavin-voice-merged-v2`, produced by `make merge`).
+Everything heavy or personal is written to `$GAVIN_VOICE_LOCAL` (default `/Users/gkline/git-dev/gavin-voice-local`): `corpus/`, `data/`, `checkpoints/`, `samples/`, `evals/` outputs, the downloaded base model, the venv, and the merged full model (`models/gavin-voice-merged-v3`, produced by `make merge`).
 
 ## Corpus (Phase 1)
 

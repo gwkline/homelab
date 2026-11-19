@@ -1,0 +1,86 @@
+{
+ "tag": "v3",
+ "timestamp": "2026-11-19T07:52:28",
+ "judge_rubric": "1-5 'does this sound like Gavin' vs 3 real exemplars/channel, glm-5.3; v3 widened judge: n=8 candidates/channel (blog sampled at temps [0.7, 0.8, 0.9] for 8 candidates)",
+ "judge": {
+  "ft": {
+   "email": 2.57,
+   "text": 3.88,
+   "blog": 1
+  }
+ },
+ "perplexity": {
+  "base": {},
+  "ft": {
+   "email": 2.5521,
+   "blog": 2.9238,
+   "text": 4.4408,
+   "overall": 3.5676
+  }
+ },
+ "length_format": {
+  "email": {
+   "real": {
+    "n": 20,
+    "avg_chars": 288,
+    "median_chars": 163,
+    "exclam_per_100": 105.0,
+    "sig_rate": 0.5,
+    "multiline_rate": 0.95
+   },
+   "base": {
+    "n": 0
+   },
+   "ft": {
+    "n": 10,
+    "avg_chars": 157,
+    "median_chars": 106,
+    "exclam_per_100": 30.0,
+    "sig_rate": 0,
+    "multiline_rate": 0.1
+   }
+  },
+  "text": {
+   "real": {
+    "n": 55,
+    "avg_chars": 51,
+    "median_chars": 40,
+    "exclam_per_100": 20.0,
+    "sig_rate": 0,
+    "multiline_rate": 0.22
+   },
+   "base": {
+    "n": 0
+   },
+   "ft": {
+    "n": 12,
+    "avg_chars": 41,
+    "median_chars": 36,
+    "exclam_per_100": 50.0,
+    "sig_rate": 0,
+    "multiline_rate": 0.08
+   }
+  },
+  "blog": {
+   "real": {
+    "n": 1,
+    "avg_chars": 635,
+    "median_chars": 635,
+    "exclam_per_100": 0,
+    "sig_rate": 0,
+    "multiline_rate": 1
+   },
+   "base": {
+    "n": 0
+   },
+   "ft": {
+    "n": 5,
+    "avg_chars": 1710,
+    "median_chars": 2052,
+    "exclam_per_100": 0,
+    "sig_rate": 0,
+    "multiline_rate": 0.8
+   }
+  }
+ }
+}
