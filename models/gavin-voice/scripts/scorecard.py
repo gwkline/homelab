@@ -15,6 +15,7 @@ report.md, which never leaves $GAVIN_VOICE_LOCAL.
 import argparse
 import json
 import os
+import re
 
 LOCAL = os.environ.get("GAVIN_VOICE_LOCAL", "/Users/gkline/git-dev/gavin-voice-local")
 
@@ -92,6 +93,26 @@ def main():
     lines += ["", f"**Acceptance bar:** {'MET' if all(verdicts) else 'NOT MET'} "
               f"({passed}/{len(verdicts)} criteria passed; bar = text judge >= 4.5 sustained, "
               f"email+blog >= 3.5, per-channel ppl no worse than {args.baseline}).", ""]
+
+    # ---- generation hygiene (#521): no '+' artifact prefixes / loops -------
+    try:
+        gens = json.load(open(f"{LOCAL}/evals/results-{args.tag}/generations.json"))
+        n_plus = n_total = n_loops = 0
+        for which in ("base", "ft"):
+            for g in gens.get(which, []):
+                if which != "ft":
+                    continue
+                n_total += 1
+                t = (g.get("gen") or "").strip()
+                if t.startswith("+"):
+                    n_plus += 1
+                if "+1000" in t or re.search(r"\+1{10,}", t):
+                    n_loops += 1
+        lines += [f"**Generation hygiene (ft):** {n_total} generations — "
+                  f"{n_plus} start with a '+' artifact prefix, {n_loops} degenerate "
+                  f"'+1000…' loops. {'PASS' if n_plus == 0 and n_loops == 0 else 'FAIL'} (#521).", ""]
+    except FileNotFoundError:
+        pass
 
     out = f"{LOCAL}/evals/results-{args.tag}/scorecard.md"
     with open(out, "w") as f:

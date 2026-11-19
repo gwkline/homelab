@@ -27,15 +27,16 @@ make serve                 # = mlx_lm.server --model $GAVIN_VOICE_LOCAL/models/g
 ## Channel-conditioned generation
 
 The voice is unconditional — no "write like Gavin" system prompt. The channel
-comes from the user turn, exactly like training:
+comes from the user turn, exactly like training. NOTE: the request's `model`
+field must be the model id the server loaded (the local path) — grab it from
+`/v1/models`:
 
 ```sh
 curl -s http://127.0.0.1:8931/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{
-    "model": "gavin-voice-merged-v2",
-    "messages": [{"role": "user", "content": "Text Grace that I'\''m running 15 min late."}]
-  }' | jq -r '.choices[0].message.content'
+  -d '{"model": "'"$(curl -s http://127.0.0.1:8931/v1/models | jq -r '.data[0].id')"'",
+       "messages": [{"role": "user", "content": "Text Grace that I'\''m running 15 min late."}]}' \
+  | jq -r '.choices[0].message.content'
 ```
 
 Other channels, same shape: `"Reply to this email thread: \"Re: …\"` (email),
