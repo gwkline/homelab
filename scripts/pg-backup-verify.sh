@@ -201,7 +201,7 @@ rm -f "$src_t" "$rst_t" "$src_c" "$rst_c"
 if [ "$has_smoke" = true ]; then
   top_vec="$(super_sql "$SCRATCH_DB" "SELECT id FROM smoke.docs ORDER BY embedding <=> '[0.9,0.1,0,0]' LIMIT 1;")"
   [ "$top_vec" = "1" ] || fail "restored HNSW index did not rank the postgres doc first (got: $top_vec)"
-  top_bm="$(super_sql "$SCRATCH_DB" "SELECT id FROM smoke.docs ORDER BY content <@> to_bm25query('bm25 ranked search','smoke_docs_bm25_idx') LIMIT 1;")"
+  top_bm="$(super_sql "$SCRATCH_DB" "SELECT id FROM smoke.docs ORDER BY content <@> to_bm25query('bm25 ranked search','smoke.smoke_docs_bm25_idx') LIMIT 1;")"
   [ "$top_bm" = "3" ] || fail "restored BM25 index did not rank the search doc first (got: $top_bm)"
   printf '%s\n' 'PASS: restored HNSW and BM25 indexes answer ranked queries'
 fi
