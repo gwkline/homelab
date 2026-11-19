@@ -1,0 +1,33 @@
+# gavin-voice LoRA training config template.
+# train.sh renders __GAVIN_VOICE_LOCAL__ from $GAVIN_VOICE_LOCAL and writes the
+# resolved config to $GAVIN_VOICE_LOCAL/config/lora_config.yaml.
+#
+# Base: Qwen2.5-7B-Instruct, 4-bit quantized (mlx-community) — 7B chosen over
+# the 3-4B class because memory (36 GB) handles it fine; the cost is wall-clock.
+# Targets: all attention + MLP projections (q,k,v,o,gate,up,down) in the last
+# num_layers blocks.
+#
+# NaN history on this machine (do not retry blind):
+#   lr 1e-4 + scale 32 + all-layers + grad-checkpoint -> NaN at iter 40
+#   lr 5e-5 + scale 16 + 16 layers  + grad-checkpoint -> NaN at iter 60
+# Stable recipe that produced adapter_v1 (below): lr 1e-5, NO grad-checkpoint,
+# seq 512. Val loss 9.43 -> 2.9x within 60 iters; voice shows up by ~100.
+model: __GAVIN_VOICE_LOCAL__/models/Qwen2.5-7B-Instruct-4bit
+data: __GAVIN_VOICE_LOCAL__/data
+fine_tune_type: lora
+num_layers: 16
+batch_size: 4
+iters: 160
+learning_rate: 1.0e-5
+max_seq_length: 512 # spec range 512-1024; 512 halves padded compute
+mask_prompt: true # loss on assistant tokens only
+grad_checkpoint: false # grad-checkpoint + 4-bit base correlated with NaN
+steps_per_report: 10
+steps_per_eval: 40
+val_batches: 25
+save_every: 40
+seed: 42
+lora_parameters:
+  rank: 16
+  scale: 16.0
+  dropout: 0.0
