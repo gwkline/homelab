@@ -1,0 +1,33 @@
+# gavin-voice v5b base scale-up config (14B-class, #537 successor card).
+# Base: Qwen2.5-14B-Instruct, 4-bit quantized (mlx-community), same
+# tokenizer + chat template as the 7B so the corpus and eval prompts carry
+# over byte-identically. ~8.3 GB on disk.
+# NaN history (7B, do not retry blind): lr 1e-4 + scale 32 + all-layers NaN
+# at iter 40; lr 5e-5 + scale 16 + 16 layers + grad-checkpoint NaN at iter 60;
+# lr 1e-5 + no grad-checkpoint NaN at iter ~600 on the 2x corpus at 800 iters
+# (horizon ~550). The 14B sees the same lr-1e-5 recipe but a SHORTER schedule
+# (280 iters, time-boxed to the post-sibling GPU window; the 7B v5 val-best
+# basin sat at 280 of 400) with the same promote-val-best discipline; extend
+# only via the documented half-lr resume if val is still improving.
+# GPU hygiene: launch only when no sibling training is active (t_c3cb3569's
+# neural window); the 8931 server (~6 GB) can keep serving during training —
+# measure the footprint at iter 10 before committing to the full schedule.
+model: /Users/gkline/git-dev/gavin-voice-local/models/Qwen2.5-14B-Instruct-4bit
+data: /Users/gkline/git-dev/gavin-voice-local/data
+fine_tune_type: lora
+num_layers: 16
+batch_size: 2
+iters: 280
+learning_rate: 1.0e-5
+max_seq_length: 1024
+mask_prompt: true
+grad_checkpoint: false
+steps_per_report: 10
+steps_per_eval: 40
+val_batches: 25
+save_every: 40
+seed: 42
+lora_parameters:
+  rank: 32
+  scale: 16.0
+  dropout: 0.0
