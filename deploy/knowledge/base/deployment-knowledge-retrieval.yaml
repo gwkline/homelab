@@ -36,6 +36,14 @@ spec:
               value: http://knowledge-ingest.agents.svc.cluster.local:3100
             - name: KNOWLEDGE_INGEST_TOKEN_FILE
               value: /secrets/token
+            # Semantic search: the same embedder sidecar and model string as
+            # ingest, so query vectors and document vectors share one space.
+            - name: KNOWLEDGE_EMBEDDING_PROVIDER
+              value: openai
+            - name: KNOWLEDGE_EMBEDDING_BASE_URL
+              value: http://knowledge-embedder.agents.svc.cluster.local:8080
+            - name: KNOWLEDGE_EMBEDDING_MODEL
+              value: BAAI/bge-small-en-v1.5
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

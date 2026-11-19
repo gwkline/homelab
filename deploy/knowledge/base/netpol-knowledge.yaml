@@ -1,6 +1,52 @@
 # Both services opt into egress isolation (the agents baseline leaves egress
 # open). Ingest stays cluster-internal; retrieval is also reachable over the
-# tailnet and from factory orchestrators.
+# tailnet and from factory orchestrators. Both call the knowledge-embedder
+# sidecar, whose ingress below is these two pods only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-to-knowledge-embedder
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: knowledge-embedder
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: knowledge-ingest
+        - podSelector:
+            matchLabels:
+              app: knowledge-retrieval
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: knowledge-embedder-egress
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app: knowledge-embedder
+  policyTypes: [Egress]
+  egress:
+    # The model is baked into the image; the pod needs DNS and nothing else.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -101,6 +147,13 @@ spec:
               app: knowledge-ingest
       ports:
         - { protocol: TCP, port: 3100 }
+    # The embedding sidecar (KNOWLEDGE_EMBEDDING_BASE_URL).
+    - to:
+        - podSelector:
+            matchLabels:
+              app: knowledge-embedder
+      ports:
+        - { protocol: TCP, port: 8080 }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -132,7 +185,15 @@ spec:
               cnpg.io/cluster: pg-primary
       ports:
         - { protocol: TCP, port: 5432 }
-    # Public HTTPS (GitHub, embedding provider), private ranges excluded.
+    # The embedding sidecar (KNOWLEDGE_EMBEDDING_BASE_URL); cluster-internal,
+    # so the public-HTTPS rule below does not cover it.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: knowledge-embedder
+      ports:
+        - { protocol: TCP, port: 8080 }
+    # Public HTTPS (GitHub), private ranges excluded.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

@@ -32,6 +32,15 @@ spec:
               value: /secrets-github/token
             - name: KNOWLEDGE_INGEST_TOKEN_FILE
               value: /secrets/token
+            # Semantic search: the in-cluster embedder sidecar. The model
+            # string is the tag stored on every chunk this service embeds
+            # and must match the sidecar's served model exactly.
+            - name: KNOWLEDGE_EMBEDDING_PROVIDER
+              value: openai
+            - name: KNOWLEDGE_EMBEDDING_BASE_URL
+              value: http://knowledge-embedder.agents.svc.cluster.local:8080
+            - name: KNOWLEDGE_EMBEDDING_MODEL
+              value: BAAI/bge-small-en-v1.5
             - name: TMPDIR
               value: /tmp/git-cache
           securityContext:
