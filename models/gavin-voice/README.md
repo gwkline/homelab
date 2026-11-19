@@ -20,13 +20,15 @@ models/gavin-voice/
 │   ├── docs/extract-gmail-sent.ts.md ← Gmail Sent sandbox snippet (Executor MCP)
 │   ├── extract_blog.py           ← gwkline/personal-site content
 │   ├── build_corpus.py           ← clean/dedupe → channels → train/valid/holdout
+│   ├── gmail_drain_v4.py         ← full-history Gmail Sent drain (executor MCP, resumable)
+│   ├── leak_check.py             ← pre-train twin-leak gate (both holdouts)
 │   ├── mix_instructions.py       ← alpaca-cleaned instruction mix (#511)
 │   ├── train.sh                  ← render config → mlx_lm.lora
 │   └── bootstrap_judge_key.sh     ← opencode-go judge key (Gavin's Mac only)
 └── evals/
     ├── eval.py                   ← one-command harness (make eval)
     ├── judge.py                  ← glm-5.3 style judge via opencode-go
-    └── results/  ← baseline-v{1,2}{,clean,v21clean,v2wide,v3}.json, scorecard-v{2,2.1,v3}.md, holdout-clean-proof.json — aggregate-only metrics (never sample text)
+    └── results/  ← baseline-v{1,2,2.1,2wide,3,4,4.1,4.1-secondary}.json, scorecard-v{2,2.1,3,4,4.1}.md, holdout-clean-proof.json — aggregate-only metrics (never sample text)
 ```
 
 Everything heavy or personal is written to `$GAVIN_VOICE_LOCAL` (default `/Users/gkline/git-dev/gavin-voice-local`): `corpus/`, `data/`, `checkpoints/`, `samples/`, `evals/` outputs, the downloaded base model, the venv, and the merged full model (`models/gavin-voice-merged-v3`, produced by `make merge`).
@@ -35,14 +37,16 @@ Everything heavy or personal is written to `$GAVIN_VOICE_LOCAL` (default `/Users
 
 | Channel | Source | Kept | Notes |
 | --- | --- | --- | --- |
-| email | Gmail Sent (902 fetched, 2021→) | 472 | v3 (#533): the recent window (Jun 2020→Oct 2026) is now FULLY fetched — `batch_8` closed the last 2 in-window gap ids (+1 usable reply); 156/472 prompts are thread-aware (the real incoming message recovered from the quoted sent body, or the personal KB's Gmail digests matched by subject+date), the rest stay subject-only; auto-unsubscribes/calendar noise dropped; pre-2021 dropped as different-era voice |
-| text | `chat.db`, Jun 2024→ | 16,934 bursts / 337 chats | v2: streamtyped artifact prefixes stripped and tapback rows dropped (the v1 `+1`-loop root cause); ~3k sampled for training |
+| email | Gmail Sent (2,215/2,215 fetched, 2013→) | 472 used by v3; **1,468 in corpus v4** | v4 (2026-11-19 mandate): min-date LIFTED — all sent mail back to account start (the 1,313-id 2013-2020 tail drained); 512/1,468 prompts thread-aware; drops by reason only |
+| text | `chat.db`, full history (2022-05→) | 16,934 used by v3; **34,712 in corpus v4** | v4: date window lifted (580 chats); same v2.2 decode/tapback rules; ~6k sampled for training |
 | blog | personal-site posts + project pages | 10 docs / 8 chunks | split into ~2.8k-char chunks |
 | persona | personal knowledge base (namespace `personal`) | facts block + 20 anchors | v3 (#533): identity facts retrieved at corpus-build time, baked in as a third (persona-facts system prompt) email/blog variant plus identity-anchor Q&A mixed like instruction data — the model stays self-contained at inference, no retrieval at serve time |
 | instruction | yahma/alpaca-cleaned | 2,280 examples (25% of train) | v2 (#511): anchors email/blog coherence and factual grounding |
 | tweet | — | 0 | no local X/Twitter archive export existed; see follow-up issue |
 
 Stats live in `$GAVIN_VOICE_LOCAL/corpus/stats.json`.
+
+> **v4 outcome (2026-11-19):** corpus v4 is built and leak-checked (PASS, all 13 checks — two NEW twin-leak classes found and fixed on the expanded data), and the eval-gated retrain was run honestly: three candidates (v4 val-best @280, the @520 second dip, and a v4.1 half-lr continuation), all evaluated on the same frozen instrument. **None beat v3 on both judge bars** (best email 2.88 vs 2.57, but text 3.0-3.75 vs 3.88) — the full-history text blend trades recent-era text fidelity for old-era coverage. **adapter_v3 remains the promoted keeper and the serving model.** Full gate table and mechanisms: [docs/corpus-v4-outcome.md](docs/corpus-v4-outcome.md).
 
 ### Training-data design (the pirate-LoRA lessons, as requirements)
 
@@ -90,9 +94,13 @@ With `--commit`, an aggregate-only baseline (`evals/results/baseline-<tag>.json`
 ```sh
 make setup                       # venv + base model
 make instructions                # alpaca-cleaned download + instruction mix (#511)
-# corpus: run docs/extract-gmail-sent.ts.md via Executor MCP into
-#   $GAVIN_VOICE_LOCAL/corpus/email_batches/ (batches of ~100 ids),
-#   then: scripts/extract_texts.py && scripts/extract_blog.py && scripts/build_corpus.py
+# corpus (v4 full history, no date windows):
+#   scripts/gmail_drain_v4.py list && scripts/gmail_drain_v4.py fetch
+#     (complete in:sent drain via the executor MCP endpoint, resumable,
+#      quota-backoff; see docs/extract-gmail-sent.ts.md)
+#   scripts/extract_texts.py && scripts/extract_blog.py
+#   scripts/leak_check.py            # twin-leak gate — must PASS pre-train
+#   scripts/build_corpus.py
 make train                       # ~25 min on the M3 Pro (200 iters)
 make eval TAG=v2                 # judge + perplexity + report
 make merge                       # fused fp16 model for serving

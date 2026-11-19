@@ -1,0 +1,38 @@
+# gavin-voice v4 full-history LoRA config (2026-11-19 mandate).
+# Base: Qwen2.5-7B-Instruct, 4-bit quantized (mlx-community).
+# NaN history (do not retry blind): lr 1e-4 + scale 32 + all-layers NaN at
+# iter 40; lr 5e-5 + scale 16 + 16 layers + grad-checkpoint NaN at iter 60;
+# lr 1e-5 + no grad-checkpoint NaN at iter ~600 on the v4 corpus (2x v3's
+# data at 800 iters — the stable recipe's horizon is ~550 iters; val was
+# healthy through 560, nan from 600). Promote the val-best checkpoint and
+# cap future schedules near 500 iters or lower the lr for longer runs.
+# Stable recipe (v1 + v2 + v2.1 + v3): lr 1e-5, no grad-checkpoint.
+#
+# This is the PROVEN v3 recipe verbatim (seq 1024, batch 2, rank 16, last 16
+# layers, lr 1e-5, mask-prompt — batch 4 x seq 1024 OOM-thrashes 36 GB). The
+# v4 changes are the DATA (full-history corpus: sent mail back to account
+# start after the min-date lift, iMessage back to chat.db start 2022-05,
+# MAX_TEXT_EXAMPLES 3000->6000) and the SCHEDULE: 240 -> 800 iters so the
+# model visits ~3.3x more unique examples (~1,600 of a ~2-3x bigger pool —
+# v3 saw only 480 of 8,250). Val/save every 40; promote the val-best
+# checkpoint, never assume the endpoint is the keeper (v3's val-best was
+# iter 200 of 240).
+model: __GAVIN_VOICE_LOCAL__/models/Qwen2.5-7B-Instruct-4bit
+data: __GAVIN_VOICE_LOCAL__/data
+fine_tune_type: lora
+num_layers: 16
+batch_size: 2
+iters: 800
+learning_rate: 1.0e-5
+max_seq_length: 1024
+mask_prompt: true
+grad_checkpoint: false
+steps_per_report: 10
+steps_per_eval: 40
+val_batches: 25
+save_every: 40
+seed: 42
+lora_parameters:
+  rank: 16
+  scale: 16.0
+  dropout: 0.0

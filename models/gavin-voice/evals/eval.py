@@ -35,12 +35,24 @@ REPO_DIR = Path(__file__).resolve().parent.parent  # models/gavin-voice/
 
 MAX_TOKENS = {"email": 256, "text": 72, "blog": 420}
 GEN_PER_CHANNEL = {"email": 8, "text": 10, "blog": 2}
+# v3 (#533): widen the judge 4 -> 8 candidates/channel — email judge deltas
+# of +-0.5 at n=4 were inside noise, and blog only had 2 held-out prompts
+# (the scorecard's noted n=2 weakness). Blog prompts are therefore sampled
+# GEN_REPEATS times (greedy first for continuity, then 3 temperatures) to
+# yield 8 judged candidates; email/text already generate >= 8 greedy samples.
+GEN_REPEATS = {"blog": 4}
+GEN_REPEAT_TEMPS = [0.0, 0.7, 0.8, 0.9]
+N_JUDGE = 8
 PPL_PER_CHANNEL = {"email": 20, "text": 24, "blog": 8}
 SIG_RE = re.compile(r"(Best|Thanks|Thank you),?\s*\n?\s*(Gavin)?\s*$", re.I | re.M)
 
 
-def load_holdout():
-    entries = [json.loads(l) for l in (LOCAL / "evals" / "holdout.jsonl").read_text().splitlines() if l.strip()]
+def load_holdout(name="holdout"):
+    """v4: name selects the holdout file stem under evals/ — default is the
+    FROZEN primary split (holdout.jsonl, never regenerate); 'secondary-v4'
+    is the era-stratified secondary diagnostic split. The instrument
+    (judge n, temps, max tokens) is identical either way."""
+    entries = [json.loads(l) for l in (LOCAL / "evals" / f"{name}.jsonl").read_text().splitlines() if l.strip()]
     return entries
 
 
@@ -57,11 +69,15 @@ def chat_prefix(tokenizer, user, system=None):
     return tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
 
 
-def generate_one(model, tokenizer, prompt, channel):
+def generate_one(model, tokenizer, prompt, channel, temp=0.0):
     from mlx_lm import generate
+    from mlx_lm.sample_utils import make_sampler
     full = chat_prefix(tokenizer, prompt)
+    # mlx_lm 0.32 moved temperature to an explicit sampler (temp kwarg raises).
+    sampler = make_sampler(temp=temp, top_p=1.0) if temp else None
     out = generate(model, tokenizer, prompt=full,
-                   max_tokens=MAX_TOKENS.get(channel, 200), verbose=False)
+                   max_tokens=MAX_TOKENS.get(channel, 200), sampler=sampler,
+                   verbose=False)
     return out.strip()
 
 
@@ -99,9 +115,10 @@ def fmt_stats(texts):
 
 
 def run_gen_pass(model, tokenizer, entries):
+    """entries: list of (holdout-entry, temp) tuples."""
     out = []
-    for i, e in enumerate(entries):
-        text = generate_one(model, tokenizer, e["prompt"], e["channel"])
+    for i, (e, temp) in enumerate(entries):
+        text = generate_one(model, tokenizer, e["prompt"], e["channel"], temp)
         out.append({"channel": e["channel"], "prompt": e["prompt"], "gen": text,
                     "real": e.get("real")})
         if (i + 1) % 10 == 0:
@@ -127,7 +144,7 @@ def run_ppl_pass(model, tokenizer, entries):
     return out
 
 
-def run_judge(all_gens, exemplars, n_per_channel=4):
+def run_judge(all_gens, exemplars, n_per_channel=N_JUDGE):
     sys.path.insert(0, str(Path(__file__).parent))
     from judge import judge
 
@@ -161,6 +178,10 @@ def main():
     ap.add_argument("--skip-base", action="store_true",
                     help="skip the base-model comparison pass; reuse the "
                          "base scores already recorded for the frozen holdout")
+    ap.add_argument("--holdout", default="holdout",
+                    help="holdout file stem under evals/ (default: the frozen "
+                         "primary split; 'secondary-v4' for the v4 era-stratified "
+                         "secondary diagnostic)")
     ap.add_argument("--commit", action="store_true",
                     help="write aggregate-only baseline json into the repo")
     args = ap.parse_args()
@@ -172,7 +193,7 @@ def main():
                 k, v = line.split("=", 1)
                 os.environ[k] = v
 
-    entries = load_holdout()
+    entries = load_holdout(args.holdout)
     with_real = [e for e in entries if e.get("real")]
     task_style = [e for e in entries if not e.get("real")]
     by_ch = {}
@@ -181,8 +202,12 @@ def main():
 
     gen_entries = []
     for ch, n in GEN_PER_CHANNEL.items():
-        gen_entries += by_ch.get(ch, [])[:n]
-    gen_entries += task_style
+        pool = by_ch.get(ch, [])[:n]
+        reps = GEN_REPEATS.get(ch, 1)
+        for k in range(reps):
+            temp = GEN_REPEAT_TEMPS[k] if reps > 1 else 0.0
+            gen_entries += [(e, temp) for e in pool]
+    gen_entries += [(e, 0.0) for e in task_style]
 
     print(f"[1/4] generating with fine-tuned model ({len(gen_entries)} prompts)")
     model, tok = load_model(args.base_model, adapter=args.adapter)
@@ -218,10 +243,13 @@ def main():
 
     results = {
         "tag": args.tag,
+        "holdout": args.holdout,
         "adapter": str(args.adapter),
         "base_model": args.base_model,
         "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
-        "judge_rubric": "1-5 'does this sound like Gavin' vs 3 real exemplars/channel, glm-5.3",
+        "judge_rubric": f"1-5 'does this sound like Gavin' vs 3 real exemplars/channel, glm-5.3; "
+                        f"v3 widened judge: n={N_JUDGE} candidates/channel "
+                        f"(blog sampled at temps {GEN_REPEAT_TEMPS[1:]} for 8 candidates)",
         "judge": judge_scores,
         "perplexity": {"base": ppl_base, "ft": ppl_ft},
         "length_format": fmt,

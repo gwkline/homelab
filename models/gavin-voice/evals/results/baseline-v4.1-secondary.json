@@ -1,0 +1,78 @@
+{
+  "tag": "v41-secondary",
+  "holdout": "holdout-secondary-v4",
+  "timestamp": "2026-11-19T12:45:10",
+  "judge": {
+    "ft": {
+      "email": 2.14,
+      "text": 3.75
+    }
+  },
+  "perplexity": {
+    "base": {},
+    "ft": {
+      "text": 4.0513,
+      "email": 2.0909,
+      "overall": 3.2671
+    }
+  },
+  "length_format": {
+    "email": {
+      "real": {
+        "n": 12,
+        "avg_chars": 732,
+        "median_chars": 858,
+        "exclam_per_100": 8.3,
+        "sig_rate": 0.42,
+        "multiline_rate": 0.92
+      },
+      "base": {
+        "n": 0
+      },
+      "ft": {
+        "n": 8,
+        "avg_chars": 534,
+        "median_chars": 254,
+        "exclam_per_100": 0,
+        "sig_rate": 0,
+        "multiline_rate": 0.38
+      }
+    },
+    "text": {
+      "real": {
+        "n": 18,
+        "avg_chars": 62,
+        "median_chars": 54,
+        "exclam_per_100": 83.3,
+        "sig_rate": 0,
+        "multiline_rate": 0.39
+      },
+      "base": {
+        "n": 0
+      },
+      "ft": {
+        "n": 10,
+        "avg_chars": 44,
+        "median_chars": 22,
+        "exclam_per_100": 30.0,
+        "sig_rate": 0,
+        "multiline_rate": 0
+      }
+    },
+    "blog": {
+      "real": {
+        "n": 0
+      },
+      "base": {
+        "n": 0
+      },
+      "ft": {
+        "n": 0
+      }
+    }
+  },
+  "prompts_evaluated": {
+    "generation": 18,
+    "perplexity": 30
+  }
+}

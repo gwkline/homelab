@@ -1,0 +1,38 @@
+# gavin-voice v4.1 continuation config (second attempt after the v4 miss).
+# Base: Qwen2.5-7B-Instruct, 4-bit quantized (mlx-community).
+# NaN history (do not retry blind): lr 1e-4 + scale 32 + all-layers NaN at
+# iter 40; lr 5e-5 + scale 16 + 16 layers + grad-checkpoint NaN at iter 60;
+# lr 1e-5 + no grad-checkpoint NaN at iter ~600 at the 800-iter v4 schedule
+# (the stable recipe's horizon is ~550 iters). Half that lr is the v4.1
+# continuation bet.
+#
+# v4 evidence (both checkpoints evaluated on the frozen primary holdout):
+# iter 280 (val-best 1.324) = email judge 2.88 (best ever; v3 2.57) but text
+# collapsed to an "I think..." attractor (8/12 gens, text judge 3.0 vs v3's
+# 3.88); iter 520 = text partially recovered (3/12) but email broke (1.62).
+# The attractor is NOT in the data (0.9% of text targets, era-uniform) —
+# it's an optimization basin reached under lr 1e-5.
+#
+# v4.1 therefore RESUMES from the email-good iter-280 basin
+# (--resume-adapter-file 0000280_adapters.safetensors) at HALF the lr
+# (5e-6) for 240 iters: mature the text voice without drifting out of the
+# email basin, and stay far inside the ~550-iter stability horizon.
+model: __GAVIN_VOICE_LOCAL__/models/Qwen2.5-7B-Instruct-4bit
+data: __GAVIN_VOICE_LOCAL__/data
+fine_tune_type: lora
+num_layers: 16
+batch_size: 2
+iters: 240
+learning_rate: 5.0e-6
+max_seq_length: 1024
+mask_prompt: true
+grad_checkpoint: false
+steps_per_report: 10
+steps_per_eval: 40
+val_batches: 25
+save_every: 40
+seed: 43
+lora_parameters:
+  rank: 16
+  scale: 16.0
+  dropout: 0.0
