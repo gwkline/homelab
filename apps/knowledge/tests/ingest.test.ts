@@ -155,13 +155,17 @@ test("happy path writes the #56 document model before chunks", async () => {
   // One checkout carries the whole version swap and goes back clean.
   assert.ok(calls.every((call) => call.checkout === 1));
   assert.deepEqual(releases, [{ checkout: 1, error: undefined }]);
-  // FK order: namespace → document → version → chunks → supersede.
+  // FK order: namespace → document → id lookup → version → chunks → supersede.
   assert.match(statements[1] ?? "", /^INSERT INTO knowledge_namespace/u);
   assert.match(
     statements[2] ?? "",
     /ON CONFLICT \(namespace, source, external_id\) DO UPDATE/u
   );
-  assert.match(statements[3] ?? "", /^INSERT INTO document_version/u);
+  assert.match(
+    statements[3] ?? "",
+    /^SELECT id, document_id, version FROM document_version/u
+  );
+  assert.match(statements[4] ?? "", /^INSERT INTO document_version/u);
   assert.match(
     statements.at(-2) ?? "",
     /^UPDATE chunks\s+SET valid_to = now\(\)/u
@@ -181,7 +185,9 @@ test("happy path writes the #56 document model before chunks", async () => {
   ]);
   assert.equal(document?.[6], sha256Hex(PARAGRAPHS));
 
-  const version = params.at(3);
+  // The lookup resolves the payload id before any insert.
+  assert.deepEqual(params.at(3), ["v7"]);
+  const version = params.at(4);
   assert.deepEqual(version, ["v7", "doc-1", 1, sha256Hex(PARAGRAPHS)]);
 });
 
@@ -320,8 +326,10 @@ test("unchanged content resolves the existing document and version rows", async 
     assert.equal(row[2], "v-existing");
   }
   assert.equal(recorded.params.at(-2)?.[0], "doc-existing");
+  // The id lookup ran between the document read and the version append.
+  assert.deepEqual(recorded.params[4], ["v-fresh"]);
   // The version append ran against the resolved document/version pair.
-  assert.deepEqual(recorded.params[4], [
+  assert.deepEqual(recorded.params[5], [
     "v-fresh",
     "doc-existing",
     3,
@@ -331,18 +339,14 @@ test("unchanged content resolves the existing document and version rows", async 
 
 test("a replay that recomputes a claimed version id records it under a generated id", async () => {
   const recorded = stubClient([
-    // Changed content: the document upsert bumps the version to 2.
+    // The default upsert resolves the document at version 1. A replay from
+    // a deleted manifest restarts per-file numbering, so it recomputes
+    // "v7" — an id an earlier epoch recorded for version 3 of this
+    // document. Resolving the id first avoids an insert that would abort
+    // the transaction on the version-history primary key.
     {
-      rows: [{ id: "doc-1", version: 2 }],
-      text: "ON CONFLICT (namespace, source, external_id)",
-    },
-    // A replay from a deleted manifest restarts per-file numbering, so it
-    // recomputes "v7" — the id the first epoch used for version 1. The
-    // insert dies on the version-history primary key, not on the
-    // (document_id, version) pair the ON CONFLICT clause covers.
-    {
-      reject: { constraint: "document_version_pkey" },
-      text: "INSERT INTO document_version (id,",
+      rows: [{ id: "v7", document_id: "doc-1", version: 3 }],
+      text: "SELECT id, document_id, version FROM document_version WHERE id = $1",
     },
     // The fallback insert records the new version with a generated id.
     {
@@ -359,11 +363,42 @@ test("a replay that recomputes a claimed version id records it under a generated
   assert.equal(outcome.status, "ok");
   // The generated-id insert cites the resolved document and version pair
   // and carries no id parameter.
-  assert.deepEqual(recorded.params[4], ["doc-1", 2, sha256Hex(PARAGRAPHS)]);
+  assert.deepEqual(recorded.params[4], ["doc-1", 1, sha256Hex(PARAGRAPHS)]);
+  // No deterministic insert was attempted against the claimed id.
+  assert.ok(
+    !recorded.statements.some((text) =>
+      text.includes("INSERT INTO document_version (id,")
+    )
+  );
   // History is never mutated: chunks cite the generated version row.
   for (const index of chunkUpsertIndices(recorded)) {
     const row = recorded.params[index] ?? [];
     assert.equal(row[2], "v-generated");
+  }
+});
+
+test("a version id claimed by this exact row is cited without inserting", async () => {
+  const recorded = stubClient([
+    {
+      rows: [{ id: "v7", document_id: "doc-1", version: 1 }],
+      text: "SELECT id, document_id, version FROM document_version WHERE id = $1",
+    },
+  ]);
+  const outcome = await processDocumentVersion(recorded.pool, baseDoc(), {
+    config: resolveEmbeddingWorkerConfig({
+      maxChars: 60,
+      provider: createFakeEmbeddingProvider("fake/test-model"),
+    }),
+  });
+  assert.equal(outcome.status, "ok");
+  assert.ok(
+    !recorded.statements.some((text) =>
+      text.includes("INSERT INTO document_version")
+    )
+  );
+  for (const index of chunkUpsertIndices(recorded)) {
+    const row = recorded.params[index] ?? [];
+    assert.equal(row[2], "v7");
   }
 });
 

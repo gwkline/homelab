@@ -18,6 +18,7 @@ import type { CitationAnchor } from "./pgvector.ts";
 import { toPgvectorLiteral } from "./pgvector.ts";
 import {
   buildDocumentUpsert,
+  buildDocumentVersionIdLookup,
   buildDocumentVersionInsert,
   buildDocumentVersionInsertGenerated,
   buildNamespaceRegistration,
@@ -325,36 +326,53 @@ export const processDocumentVersion = async (
           "document upsert version"
         );
       }
-      const versionInsert = buildDocumentVersionInsert({
-        content_hash: contentHash,
-        document_id: storedDocumentId,
-        id: doc.versionId,
-        version: documentVersion,
-      });
+      // A replay from a deleted git_source_manifest restarts per-file
+      // version numbering, so a re-sync can recompute a version id that an
+      // earlier epoch already recorded for another version of this
+      // document. Postgres aborts the whole transaction when an insert
+      // errors, so resolve the id up front instead of catching: an id
+      // claimed by another version row goes straight to the generated-id
+      // insert, and this exact row is cited as-is.
+      const idLookup = buildDocumentVersionIdLookup(doc.versionId);
+      const lookup = await client.query(idLookup.text, idLookup.params);
+      const [claimedRow] = lookup.rows;
       let inserted: { rows: Record<string, unknown>[] };
-      try {
-        inserted = await client.query(versionInsert.text, versionInsert.params);
-      } catch (error) {
-        // A replay from a deleted git_source_manifest restarts per-file
-        // version numbering, so the re-sync can recompute a version id that
-        // an earlier epoch already claimed for another version of this
-        // document. The (document_id, version) row itself is new: record it
-        // under a generated id instead of failing the job.
-        if (
-          (error as { constraint?: unknown }).constraint !==
-          "document_version_pkey"
-        ) {
-          throw error;
-        }
-        const generatedInsert = buildDocumentVersionInsertGenerated({
+      if (claimedRow === undefined) {
+        const versionInsert = buildDocumentVersionInsert({
           content_hash: contentHash,
           document_id: storedDocumentId,
+          id: doc.versionId,
           version: documentVersion,
         });
-        inserted = await client.query(
-          generatedInsert.text,
-          generatedInsert.params
+        inserted = await client.query(versionInsert.text, versionInsert.params);
+      } else {
+        const claimedDocumentId = readRowString(
+          claimedRow["document_id"],
+          "claimed version document id"
         );
+        const claimedVersion = readRowVersion(
+          claimedRow["version"],
+          "claimed version number"
+        );
+        if (
+          claimedDocumentId !== storedDocumentId ||
+          claimedVersion !== documentVersion
+        ) {
+          // The id belongs to another version row: record this one under a
+          // generated id.
+          const generatedInsert = buildDocumentVersionInsertGenerated({
+            content_hash: contentHash,
+            document_id: storedDocumentId,
+            version: documentVersion,
+          });
+          inserted = await client.query(
+            generatedInsert.text,
+            generatedInsert.params
+          );
+        } else {
+          // This exact version row is already recorded; cite it.
+          inserted = { rows: [claimedRow] };
+        }
       }
       const [versionRow] = inserted.rows;
       let storedVersionId: string;
