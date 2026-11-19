@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import joblib
 from sentence_transformers import SentenceTransformer
@@ -45,6 +47,14 @@ def main() -> int:
     for label in LABELS:
         print(f"  {label:9s} {counts[label]}")
 
+    # Candidate contests run against artifacts/model-v3 (scorecard picks it
+    # up); artifacts/model stays the DEPLOYED bundle until a candidate wins
+    # and is promoted into it.
+    out_dir = (Path(os.environ["EMAIL_CLASSIFIER_MODEL_DIR"])
+               if os.environ.get("EMAIL_CLASSIFIER_MODEL_DIR")
+               else model_dir())
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     emb_path = embedding_model_path()
     if emb_path.exists():
         print(f"embedding model: local snapshot {emb_path}")
@@ -52,9 +62,12 @@ def main() -> int:
     else:
         print(f"embedding model: downloading {EMBEDDING_MODEL}")
         encoder = SentenceTransformer(EMBEDDING_MODEL)
-    emb_path.parent.mkdir(parents=True, exist_ok=True)
-    if not emb_path.exists():
+        emb_path.parent.mkdir(parents=True, exist_ok=True)
         encoder.save(str(emb_path))
+    emb_out = out_dir / "embedding-model"
+    if not emb_out.exists():
+        # The bundle dir must be self-contained for serving after promotion.
+        shutil.copytree(emb_path, emb_out)
 
     texts = [compose_text(r["from"], r["subject"], r["snippet"]) for r in train]
     y = [r["label"] for r in train]
@@ -81,7 +94,6 @@ def main() -> int:
     # the scorecard and the serving readback stay honest about the data.
     version = (os.environ.get("EMAIL_CLASSIFIER_VERSION_PREFIX", "v1.5")
                + "-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M"))
-    model_dir().mkdir(parents=True, exist_ok=True)
     bundle = {
         "version": version,
         "clf": clf,
@@ -95,8 +107,8 @@ def main() -> int:
         "train_counts": counts,
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
-    joblib.dump(bundle, model_dir() / "model.joblib")
-    with open(model_dir() / "metadata.json", "w", encoding="utf-8") as fh:
+    joblib.dump(bundle, out_dir / "model.joblib")
+    with open(out_dir / "metadata.json", "w", encoding="utf-8") as fh:
         json.dump(
             {
                 "version": version,
@@ -122,7 +134,7 @@ def main() -> int:
             fh,
             indent=2,
         )
-    print(f"saved {model_dir() / 'model.joblib'} ({version})")
+    print(f"saved {out_dir / 'model.joblib'} ({version})")
     return 0
 
 
