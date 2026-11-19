@@ -16,7 +16,7 @@ No token: ingress is NetworkPolicy-gated to the `knowledge-ingest` and `knowledg
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `KNOWLEDGE_EMBEDDER_PORT` | `8080` |  |
+| `PORT` | `8080` | plain `PORT`: a Service named `knowledge-embedder` injects `KNOWLEDGE_EMBEDDER_PORT=tcp://…` into every agents pod, which never parses as a number |
 | `KNOWLEDGE_EMBEDDER_MODEL` | `BAAI/bge-small-en-v1.5` | must match what the callers send |
 | `KNOWLEDGE_EMBEDDER_MODEL_DIR` | `/app/model` | local model directory |
 | `KNOWLEDGE_EMBEDDER_MAX_BATCH` | `64` | the knowledge engine batches at most 32 |
