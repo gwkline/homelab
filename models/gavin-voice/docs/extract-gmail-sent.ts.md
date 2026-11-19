@@ -141,3 +141,12 @@ console.log(out.join("\n"));
 ## Mailbox ceiling (measured 2026-11-19, issue #533)
 
 "Pull more sent mail" is bounded, and the bound is now measured, not guessed: the `in:sent` listing has 2,215 ids over 5 pages with more pages behind them, but the listing is newest-first and the 900 already fetched cover the entire modern window (Jun 2020 → Oct 2026) except 2 gap ids — `batch_8` closed those (+1 usable reply; the other had an empty body). An 8-id date-check sample of the unfetched tail (positions ~900-2,215) returned 2013-2020 dates, i.e. everything beyond the window is pre-`EMAIL_MIN_DATE` (2021-01-01, "older mail is a different-era voice") and is dropped by the standing corpus rules. Doubling the email corpus by fetching deeper is therefore NOT possible under the v2.2 rules — further email growth must come from grounding (v3's thread-aware prompts + persona facts), not volume.
+
+## v4 full-history drain (2026-11-19 mandate — supersedes the ceiling above)
+
+Gavin lifted the standing `EMAIL_MIN_DATE` rule ("326 emails is sad. I should have wayyyy more responses"), so the 2013-2020 tail documented above is now in-scope. `scripts/gmail_drain_v4.py` replaced the manual paste-in flow with a local driver against the executor MCP endpoint (`http://localhost:4789/mcp`, bearer read from `~/.hermes/config.yaml` at runtime — never committed):
+
+- **Complete listing**: paginates `messages.list q='in:sent'` to exhaustion and cross-checks against `labels.get SENT.messagesTotal` — both say **2,215** (the v3 note's "more pages behind them" was a trailing empty page token, not more mail).
+- **Full fetch**: 2,215/2,215 ids on disk (902 from v1-v3 + 1,313 new, the 2013-2020 tail), id-keyed dedupe across all `batch*.txt`, resumable cursor, per-chunk session rotation (sandbox sessions die at ~130-300 Gmail calls), and quota-burst backoff — mid-run `403 Upstream rejected credentials` is a shared-quota burst (a sibling mailbox consumer trips it), it clears on its own; the driver backs off 90-300 s and never re-authenticates.
+- **Quote-preserving bodies**: the v4 fetcher emits the raw `text/plain` base64 (decoded outside the sandbox) and keeps the quoted `On ... wrote:` block — `build_corpus.py` does all cleaning, and v3's thread-aware grounding depends on that block. html-only messages get a best-effort tag strip and are marked `body_src=html`.
+- The result fed corpus v4: 1,468 usable emails (3.1x v3's 472), 2013-07-05 → 2026-10-28, 512 thread-aware.

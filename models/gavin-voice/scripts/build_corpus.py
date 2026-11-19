@@ -49,6 +49,24 @@ v3 changes (issue #533 — email content grounding):
     model stays self-contained at inference — no retrieval at serve time.
   - Leakage guard: if a holdout real appears inside a train prompt's
     incoming block, that incoming is dropped (subject-only fallback).
+
+v4 changes (2026-11-19 mandate — full-history corpus):
+  - EMAIL_MIN_DATE DEFAULT LIFTED to 1970-01-01: Gavin explicitly lifted the
+    standing 2021-01-01 rule ("326 emails is sad. I should have wayyyy more
+    responses"). Sent mail is mined back to account start; drops are by
+    REASON only, never by date. The env var remains so the v3 corpus stays
+    reproducible.
+  - FULL iMessage history: extract_texts.py drain has no cutoff (chat.db
+    goes back to 2022-05); bursts carry their year for era stratification.
+  - MAX_TEXT_EXAMPLES is env-tunable (v3: 3000; v4 default 6000) — the
+    bigger pool feeds a longer schedule.
+  - Era-stratified SECONDARY holdout (evals/holdout-secondary-v4.jsonl):
+    sampled ONCE from the newly unlocked eras (email < 2021, text < 2024),
+    then frozen and excluded from training with the same twin-leak
+    discipline as the primary frozen holdout. The PRIMARY gate remains the
+    untouched v3 frozen holdout (sha 14013551...).
+  - Text-channel drop reasons are counted (garbage / tapback / numeric-only)
+    so the stats table reports drops BY REASON.
 """
 import datetime
 import email.utils
@@ -66,13 +84,14 @@ D = os.environ.get("GAVIN_VOICE_LOCAL", "/Users/gkline/git-dev/gavin-voice-local
 CORPUS = f"{D}/corpus"
 DATA = f"{D}/data"
 EVALS = f"{D}/evals"
-EMAIL_MIN_DATE = os.environ.get("EMAIL_MIN_DATE", "2021-01-01")
+# v4: mandate lifted the 2021-01-01 default; see module docstring.
+EMAIL_MIN_DATE = os.environ.get("EMAIL_MIN_DATE", "1970-01-01")
 INSTRUCTION_SHARE = float(os.environ.get("INSTRUCTION_SHARE", "0.25"))
 os.makedirs(DATA, exist_ok=True)
 os.makedirs(EVALS, exist_ok=True)
 
 GENERIC_SYSTEM = "You are a helpful assistant."
-MAX_TEXT_EXAMPLES = 3000
+MAX_TEXT_EXAMPLES = int(os.environ.get("MAX_TEXT_EXAMPLES", "6000"))
 
 # ---- v3 (#533): thread-aware email grounding -------------------------
 # Measured v2.1 miss root cause: subject-only prompts leave the thread
@@ -338,17 +357,30 @@ def burst_name(rec):
     return "them"
 
 
+APPLE_EPOCH = datetime.datetime(2001, 1, 1)
+
+
+def ns_year(ns):
+    """Apple-epoch nanoseconds -> calendar year (None if unparseable)."""
+    try:
+        return (APPLE_EPOCH + datetime.timedelta(microseconds=ns / 1000)).year
+    except (OverflowError, ValueError):
+        return None
+
+
 def build_texts():
     rows = [json.loads(l) for l in open(f"{CORPUS}/texts_raw.jsonl")]
     by_chat = defaultdict(list)
     for t in rows:
         by_chat[t["chat_id"]].append(t)  # already date-ordered
     bursts = []
+    drops = defaultdict(int)
     for cid, msgs in by_chat.items():
         cur, last_incoming = None, None
         for m in msgs:
             text = m["text"].strip()
             if text_is_garbage(text):
+                drops["garbage_row"] += 1
                 continue
             # v2.1: strip the leak FIRST, then tapback-check the stripped
             # text — catches '+$Loved' / '++Loved' style rows that the v1
@@ -356,6 +388,7 @@ def build_texts():
             text = strip_artifact_prefix(text)
             if not text or TAPBACK.match(text):
                 # tapbacks never become bursts OR incoming context.
+                drops["tapback_or_empty"] += 1
                 continue
             if m["is_from_me"]:
                 if cur and (m["date"] - cur["last_ts"]) < 90e9:
@@ -363,6 +396,7 @@ def build_texts():
                     cur["last_ts"] = m["date"]
                 else:
                     cur = {"chat_id": cid, "parts": [text], "last_ts": m["date"],
+                           "first_ts": m["date"],
                            "incoming": last_incoming, "name": burst_name(m)}
                     bursts.append(cur)
             else:
@@ -373,13 +407,16 @@ def build_texts():
     out = []
     for b in bursts:
         joined = "\n".join(p for p in b["parts"] if p).strip()
-        if not joined or re.fullmatch(r'[\d\s\-\.\+/]{3,}', joined):
+        if not joined or re.fullmatch(r'[\d\s\-\.\/+]{3,}', joined):
+            drops["numeric_or_empty_burst"] += 1
             continue
         if TAPBACK.match(joined):
+            drops["tapback_burst"] += 1
             continue
         out.append({"chat_id": b["chat_id"], "name": b["name"],
-                    "incoming": b["incoming"], "text": joined, "len": len(joined)})
-    return out
+                    "incoming": b["incoming"], "text": joined, "len": len(joined),
+                    "ts": b["first_ts"], "year": ns_year(b["first_ts"])})
+    return out, dict(drops)
 
 
 # ---------------------------------------------------------------- blog
@@ -503,7 +540,7 @@ def load_fixed_holdout():
 def main():
     fixed = load_fixed_holdout()
     emails, dropped, n_raw_email, ctx = build_email(EMAIL_MIN_DATE)
-    bursts = build_texts()
+    bursts, text_drops = build_texts()
     docs, bchunks = build_blog()
 
     for name, items in (("email.jsonl", emails), ("texts.jsonl", bursts), ("blog.jsonl", bchunks)):
@@ -512,6 +549,17 @@ def main():
                 f.write(json.dumps(it, ensure_ascii=False) + "\n")
 
     excl = fixed[1] if fixed else None
+
+    def topic_hits(text, topics):
+        """v4 twin-leak hardening (found by leak_check.py on the full-history
+        expansion): a same-thread sibling email can carry a DIFFERENT subject
+        string while its quoted incoming still embeds the held-out thread's
+        topic phrase — exact subject/topic equality misses it. Substring rule
+        applies only to SPECIFIC topics (multi-word AND >=12 chars) so short
+        generic topics keep the v3 exact-match discipline and nothing is
+        over-dropped."""
+        t = norm_text(text or "").casefold()
+        return any(len(x) >= 12 and " " in x and x in t for x in topics)
 
     # ---- holdout selection (v1 behavior only if no fixed split exists) ----
     if fixed:
@@ -522,6 +570,8 @@ def main():
         email_train_pool = [e for e in emails
                             if e["subject"] not in excl["email_subjects"]
                             and strip_subject(e["subject"]).casefold() not in hold_topics
+                            and not topic_hits(e["subject"], hold_topics)
+                            and not topic_hits(e.get("incoming"), hold_topics)
                             and norm_text(e["body"]) not in excl["all_reals"]]
         text_train_pool = [b for b in bursts
                            if norm_text(b["text"]) not in excl["text_reals"]
@@ -557,6 +607,47 @@ def main():
             for h in holdout:
                 f.write(json.dumps(h, ensure_ascii=False) + "\n")
 
+    # ---- v4: era-stratified SECONDARY holdout (new-era rows only) -------
+    # Sampled ONCE from the eras the mandate unlocked (email < 2021,
+    # text <= 2023), then frozen on disk and excluded from training below
+    # with the same twin-leak discipline as the primary frozen holdout.
+    # Clearly SECONDARY: the promote gate stays the untouched v3 primary
+    # holdout (sha 14013551...); this measures old-era voice fit only.
+    sec_path = f"{EVALS}/holdout-secondary-v4.jsonl"
+    if os.path.exists(sec_path):
+        sec = [json.loads(l) for l in open(sec_path).read().splitlines() if l.strip()]
+    else:
+        rng = random.Random(4242)  # separate stream; training shuffle keeps seed 42
+        old_emails = [e for e in emails
+                      if (parse_mail_date(e["date"]) or datetime.datetime(1970, 1, 1)).year < 2021]
+        old_bursts = [b for b in bursts if b["year"] and b["year"] < 2024 and b["len"] >= 12]
+        sec_email = rng.sample(old_emails, min(12, len(old_emails)))
+        sec_text = rng.sample(old_bursts, min(18, len(old_bursts)))
+        sec = ([{"channel": "email", "prompt": email_user_prompts(e)[0], "real": e["body"]}
+                for e in sec_email]
+               + [{"channel": "text", "prompt": text_user_prompts(b)[0], "real": b["text"]}
+                  for b in sec_text])
+        with open(sec_path, "w") as f:
+            for h in sec:
+                f.write(json.dumps(h, ensure_ascii=False) + "\n")
+    sec_reals = {norm_text(h["real"]) for h in sec if h.get("real")}
+    sec_subjects, sec_topics = set(), set()
+    for h in sec:
+        if h.get("channel") != "email":
+            continue
+        m = SUBJ_RE.search(h.get("prompt", ""))
+        if m:
+            sec_subjects.add(m.group(1).strip())
+            sec_topics.add(strip_subject(m.group(1)).casefold())
+    email_train_pool = [e for e in email_train_pool
+                        if e["subject"] not in sec_subjects
+                        and strip_subject(e["subject"]).casefold() not in sec_topics
+                        and not topic_hits(e["subject"], sec_topics)
+                        and not topic_hits(e.get("incoming"), sec_topics)
+                        and norm_text(e["body"]) not in sec_reals]
+    text_train_pool = [b for b in text_train_pool
+                       if norm_text(b["text"]) not in sec_reals]
+
     # ---------------- training examples (both variants each) ----------------
     # v3 leakage guard: a thread's quoted incoming can embed Gavin's OWN
     # earlier reply; if any holdout real appears inside a train prompt's
@@ -565,6 +656,9 @@ def main():
     if fixed:
         hold_email_reals = [norm_text(e["real"])[:80] for e in fixed[0]
                             if e.get("channel") == "email" and e.get("real")]
+        # v4: the secondary holdout's reals get the same incoming-block guard.
+        hold_email_reals += [norm_text(h["real"])[:80] for h in sec
+                             if h.get("channel") == "email" and h.get("real")]
         for e in email_train_pool:
             if not e.get("incoming"):
                 continue
@@ -628,18 +722,32 @@ def main():
             for _, ex in subset:
                 f.write(json.dumps(ex, ensure_ascii=False) + "\n")
 
+    email_by_year = defaultdict(int)
+    for e in emails:
+        y = (parse_mail_date(e["date"]) or datetime.datetime(1970, 1, 1)).year
+        email_by_year[y] += 1
+    text_by_year = defaultdict(int)
+    for b in bursts:
+        text_by_year[b["year"] or 0] += 1
+
+    parsed_dates = sorted(d for d in (parse_mail_date(e["date"]) for e in emails) if d)
+    date_range = ([parsed_dates[0].isoformat(), parsed_dates[-1].isoformat()]
+                  if parsed_dates else ["", ""])
+
     rep = {
         "email": {"raw_fetched": n_raw_email, "dropped": dropped, **stats(emails, "body"),
                   "min_date": EMAIL_MIN_DATE,
-                  "date_range": [min((e["date"] for e in emails), default=""),
-                                 max((e["date"] for e in emails), default="")],
+                  "date_range": date_range,
                   "by_recipient_type": {t: sum(1 for e in emails if e["recipient_type"] == t)
                                         for t in set(e["recipient_type"] for e in emails)},
+                  "by_year": dict(sorted(email_by_year.items())),
                   "thread_aware": sum(1 for e in emails if e.get("incoming")),
                   "thread_context_sources": ctx,
                   "incoming_leakage_guard_drops": n_guard},
         "text": {"raw_rows": sum(1 for _ in open(f"{CORPUS}/texts_raw.jsonl")),
                  "bursts_total": len(bursts), "chats": len(set(b["chat_id"] for b in bursts)),
+                 "dropped": text_drops,
+                 "by_year": {str(k): v for k, v in sorted(text_by_year.items())},
                  **stats(bursts, "text")},
         "blog": {"docs": len(docs), "chunks": len(bchunks), **stats(bchunks, "content")},
         "tweets": {"status": "skipped - no local X/Twitter archive export found "
@@ -652,12 +760,24 @@ def main():
                      "persona_anchors": n_persona,
                      "holdout_eval": n_holdout if fixed else len(holdout),
                      "holdout_fixed_split": bool(fixed),
+                     "secondary_holdout": {"path": "evals/holdout-secondary-v4.jsonl",
+                                           "rows": len(sec),
+                                           "by_channel": {ch: sum(1 for h in sec
+                                                                  if h.get("channel") == ch)
+                                                          for ch in ("email", "text")},
+                                           "eras": "email < 2021, text <= 2023",
+                                           "role": "SECONDARY diagnostic only — the "
+                                                   "promote gate is the primary frozen "
+                                                   "holdout"},
                      "design": "2 unconditional variants per example (generic system "
                                "prompt / none); v3: email/blog add a third "
                                "persona-facts system variant + thread-aware email "
                                "user turns; identity anchors mixed like instruction "
                                "data; 15% valid split; fixed holdout kept "
-                               "byte-identical for comparability"},
+                               "byte-identical for comparability; v4: min-date "
+                               "lifted (full history), MAX_TEXT_EXAMPLES raised "
+                               "3000->6000, era-stratified secondary holdout with "
+                               "the same leak discipline"},
     }
     with open(f"{CORPUS}/stats.json", "w") as f:
         json.dump(rep, f, indent=2, ensure_ascii=False)

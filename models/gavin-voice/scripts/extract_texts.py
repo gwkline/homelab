@@ -19,8 +19,10 @@ OUT = os.path.join(os.environ.get("GAVIN_VOICE_LOCAL",
                                   "/Users/gkline/git-dev/gavin-voice-local"),
                    "corpus", "texts_raw.jsonl")
 DB = os.path.expanduser("~/Library/Messages/chat.db")
-# Apple epoch: 2001-01-01 UTC; dates are nanoseconds. Default window: 2.5 yrs.
-CUTOFF_NS = int(os.environ.get("TEXTS_CUTOFF_NS", 738892800000000000))
+# Apple epoch: 2001-01-01 UTC; dates are nanoseconds. v1-v3 used a 2.5-year
+# window (2024-06+). v4 (2026-11-19 mandate) lifts date windows entirely:
+# default 0 = full chat.db history (goes back to 2022-05 on this Mac).
+CUTOFF_NS = int(os.environ.get("TEXTS_CUTOFF_NS", "0"))
 
 
 def extract_streamtext(attributed_body):
