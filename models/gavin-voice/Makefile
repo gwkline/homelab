@@ -25,7 +25,7 @@ train:
 ## Fuse base + adapter into a standalone model on disk (never committed).
 merge:
 	$(PY) -m mlx_lm fuse --model $(BASE_MODEL) \
-	    --adapter-path $(ADAPTER) --save-path $(MERGED) --de-quantize
+	    --adapter-path $(ADAPTER) --save-path $(MERGED) --dequantize
 
 ## Run the full eval harness (generations, perplexity, judge) and write reports.
 eval:

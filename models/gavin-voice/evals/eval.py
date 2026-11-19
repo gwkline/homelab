@@ -34,8 +34,8 @@ LOCAL = Path(os.environ.get("GAVIN_VOICE_LOCAL", "/Users/gkline/git-dev/gavin-vo
 REPO_DIR = Path(__file__).resolve().parent.parent  # models/gavin-voice/
 
 MAX_TOKENS = {"email": 256, "text": 72, "blog": 420}
-GEN_PER_CHANNEL = {"email": 10, "text": 12, "blog": 3}
-PPL_PER_CHANNEL = {"email": 20, "text": 30, "blog": 8}
+GEN_PER_CHANNEL = {"email": 8, "text": 10, "blog": 2}
+PPL_PER_CHANNEL = {"email": 20, "text": 24, "blog": 8}
 SIG_RE = re.compile(r"(Best|Thanks|Thank you),?\s*\n?\s*(Gavin)?\s*$", re.I | re.M)
 
 
@@ -68,6 +68,7 @@ def generate_one(model, tokenizer, prompt, channel):
 def seq_nll(model, tokenizer, user, real, im_end_id):
     """Mean NLL of `real` (assistant turn incl. closing token) under the model."""
     import mlx.core as mx
+    from mlx.nn import log_softmax  # mlx.core has no log_softmax in 0.32
     prefix_ids = tokenizer.encode(chat_prefix(tokenizer, user))
     body_ids = tokenizer.encode(real)
     ids = prefix_ids + body_ids + [im_end_id]
@@ -75,9 +76,9 @@ def seq_nll(model, tokenizer, user, real, im_end_id):
         return None
     x = mx.array(ids)[None]
     logits = model(x)
-    logprobs = logits.log_softmax(-1)
+    logprobs = log_softmax(logits)
     tgt = x[0, 1:]
-    lp = logprobs[0, :-1].take_along_axis(tgt[:, None], axis=-1)[:, 0]
+    lp = mx.take_along_axis(logprobs[0, :-1], tgt[:, None], axis=-1)[:, 0]
     span = lp[len(prefix_ids) - 1: len(ids) - 1]
     if span.size == 0:
         return None
