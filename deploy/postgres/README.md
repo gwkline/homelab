@@ -21,7 +21,7 @@ After merging an operand/extension upgrade:
 
 1. Wait for successful main CI publication of `ghcr.io/gwkline/homelab/pg-textsearch`.
 2. Resolve that main build's immutable digest, update `spec.postgresql.extensions[name=pg-textsearch].image.reference` in `base/cluster.yaml` through a separately verified PR, and wait for its required CI. Keep the catalog unapplied until this pin is merged.
-3. Take and verify a database backup before the single-instance restart. Backups are not automated here; preserve the PVC and do not treat the old image as a data rollback plan.
+3. Take and verify a database backup before the single-instance restart: run `scripts/pg-backup-verify.sh` (below) and require its PASS. A dump is the data rollback plan for an operand or extension change the old image cannot safely re-read; do not treat re-pinning the old image as one.
 4. Apply only fresh merged manifests in the maintenance window. Check PostgreSQL and extension versions, preload, BM25/vector query results and stored indexes. Extension binaries and SQL definitions can differ: review upstream upgrade scripts before any `ALTER EXTENSION UPDATE`; do not run it blindly.
 
 There is one database instance, so operand changes interrupt the knowledge services. An extension major or PostgreSQL major needs a separate migration, not a tag edit.
@@ -29,6 +29,14 @@ There is one database instance, so operand changes interrupt the knowledge servi
 ## Verify
 
 `scripts/pg-smoke.sh seed` checks the extensions, builds HNSW and BM25 indexes, and checks query results. `restart` deletes the primary pod gracefully. `verify` checks that data and indexes survived.
+
+## Backups
+
+`base/backup.yaml`: `CronJob/pg-backup` (02:30 UTC daily) dumps the `knowledge` database in custom format to the dedicated `pg-backup` PVC (5Gi budget, 14-day retention pruned in-job) and prints `backup ok <file> sha256:<digest> <size>` on success. Credentials are the owner-role Secret; TLS is `verify-full` against `pg-primary-ca`. The dump image is the operand pin from `cluster-image-catalog.yaml` — bump the two together.
+
+Proof, not hope: `KUBECONFIG=~/kubeconfig-homelab ./scripts/pg-backup-verify.sh` runs one backup now, restores the newest dump into a scratch database, compares every table's row count (plus the smoke indexes, when seeded), then drops the scratch database. Run it after first deploy, after each operand bump, and whenever the backup path is touched.
+
+This is v1: same-disk copies only. Off-node/offsite base backups and WAL archiving (PITR) are open on #53; the remaining PVCs are open on #358. Until #53 lands, the dump protects against logical disasters (bad migration, dropped objects, operator error), not against the disk or the node.
 
 ## Isolation
 
@@ -42,4 +50,4 @@ The operator's PodDisruptionBudget `pg-primary-primary` (minAvailable 1) blocks 
 
 ## Scaling
 
-Extra instances add availability only on distinct hardware, and local-path data does not follow a reschedule. Backups are not wired up; WAL archiving would need an egress rule in `allow-instance-egress`.
+Extra instances add availability only on distinct hardware, and local-path data does not follow a reschedule. Nightly dumps (`base/backup.yaml`) stay on the same disk; WAL archiving would need an egress rule in `allow-instance-egress`.

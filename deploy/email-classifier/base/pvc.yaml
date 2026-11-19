@@ -1,0 +1,13 @@
+# Holds the venv, the trained model, and the embedding-model snapshot.
+# Populated once by the operator workflow in ../populate/ (the artifacts are
+# Gmail-derived and must never travel through this public repo or GHCR).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: email-classifier-state
+  namespace: email-agent
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 3Gi

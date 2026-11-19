@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in the cluster or an app is broken or behaves incorrectly
+labels: ["kind:bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What's broken
+      description: What happens, and where — app, namespace, cron, deployer pass.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What proves the bug is fixed — the class of failure, not just the one instance.
+      placeholder: |
+        - [ ] The steps above no longer fail
+        - [ ] A test or fixture covers the regression
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Node, k3s version, image tag, how it was observed (panel, logs, cron, e2e fixture).
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Where the work lands. Grooming applies the matching area label.
+      multiple: true
+      options:
+        - k3s
+        - networking
+        - storage
+        - backup
+        - security
+        - apps
+        - other area (factory, agents, data, knowledge, devtools, media, observability, platform, recovery)
+    validations:
+      required: true

@@ -1,0 +1,71 @@
+name: Feature request
+description: Propose a new service, capability, or improvement
+labels: ["kind:product"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One issue per deliverable. If the request needs several separately
+        shippable pieces, say so under **Context** — the grooming loop will
+        split it and link the parts.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What is wrong or missing today? Who feels it, and how often?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Proposed outcome
+      description: What it looks like once this ships — the behavior, not the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: |
+        The checklist that proves this issue is done. Write each line so
+        someone other than the author can check it.
+      placeholder: |
+        - [ ] ...
+        - [ ] `npm run lint` and `./scripts/verify.sh` pass; the touched app's suites pass
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and constraints
+      description: Links, ADRs, runbooks, egress or credential constraints — anything an implementer should know before starting.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Where the work lands. Grooming applies the matching area label.
+      multiple: true
+      options:
+        - k3s
+        - networking
+        - storage
+        - backup
+        - security
+        - apps
+        - other area (factory, agents, data, knowledge, devtools, media, observability, platform, recovery)
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Suggested priority
+      description: Optional. The PM loop assigns the final priority label.
+      options:
+        - "P0 — must be fixed before relying on the system"
+        - "P1 — next major capability or reliability work"
+        - "P2 — valuable follow-up after core foundations"
+        - "P3 — later or optional"
+    validations:
+      required: false
