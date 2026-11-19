@@ -38,14 +38,16 @@ spec:
             - containerPort: 8080
               name: http
           resources:
-            # A pod idles near 450MiB RSS; the cap leaves backfill headroom
-            # without inviting the node's memory pressure (audit finding #491).
+            # A pod idles near 450MiB RSS. Peak memory is concurrent fp32
+            # batch arenas (attention scores scale batch x heads x seq^2),
+            # bounded here by the engine's CONCURRENCY=1/BATCH=16 defaults;
+            # 1Gi leaves long-tail 512-token chunks headroom.
             requests:
               cpu: 100m
               memory: 256Mi
             limits:
-              cpu: "1"
-              memory: 768Mi
+              cpu: "4"
+              memory: 1Gi
           volumeMounts:
             - name: tmp
               mountPath: /tmp
