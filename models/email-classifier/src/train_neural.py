@@ -85,6 +85,12 @@ def prep() -> int:
 
 def train() -> int:
     iters = int(os.environ.get("NEURAL_ITERS", "800"))
+    # Val cadence knobs: the default (eval every 20 steps over the FULL
+    # validation set) spends ~2.4 min per val pass on the v3 corpus and
+    # starves the actual training. Sparse val (every 150 steps, 25 batches)
+    # keeps the loss curve visible at ~1/50th the overhead.
+    steps_per_eval = os.environ.get("NEURAL_STEPS_PER_EVAL", "150")
+    val_batches = os.environ.get("NEURAL_VAL_BATCHES", "25")
     common = [
         sys.executable,
         "-m",
@@ -108,6 +114,10 @@ def train() -> int:
         "--mask-prompt",
         "--max-seq-length",
         "384",
+        "--steps-per-eval",
+        steps_per_eval,
+        "--val-batches",
+        val_batches,
         "--adapter-path",
         str(adapter_path()),
     ]
