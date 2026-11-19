@@ -20,7 +20,7 @@ class RelayTLS(unittest.IsolatedAsyncioTestCase):
         self.root = Path(self.tmp.name)
         def run(*args):
             subprocess.run(['openssl', *args], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        run('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(self.root/'ca.key'), '-out', str(self.root/'ca.pem'), '-days', '1', '-subj', '/CN=fixture-ca')
+        run('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(self.root/'ca.key'), '-out', str(self.root/'ca.pem'), '-days', '1', '-subj', '/CN=fixture-ca', '-addext', 'keyUsage=critical,keyCertSign')
         for name, eku in [('server','serverAuth'), ('client','clientAuth')]:
             run('req','-newkey','rsa:2048','-nodes','-keyout',str(self.root/(name+'.key')),'-out',str(self.root/(name+'.csr')),'-subj','/CN='+name)
             (self.root/(name+'.ext')).write_text('extendedKeyUsage='+eku+'\nsubjectAltName=IP:127.0.0.1\n')
