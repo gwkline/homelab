@@ -11,7 +11,7 @@ CLUSTER="${PG_CLUSTER:-pg-primary}"
 POD="$CLUSTER-1"
 SRC_DB="${PG_DATABASE:-knowledge}"
 SCRATCH_DB="${RESTORE_DB:-knowledge_restore_test}"
-SECRET="$CLUSTER-knowledge_owner"
+SECRET="$CLUSTER-knowledge-owner"
 BACKUP_JOB="pg-backup-verify-$(date -u +%Y%m%d%H%M%S)"
 RESTORE_JOB="pg-restore-verify-$(date -u +%Y%m%d%H%M%S)"
 
@@ -158,6 +158,15 @@ spec:
               set -eu
               dump="\$(ls -1t /backup/knowledge-*.dump | head -n 1)"
               echo "restoring \$dump into \$TARGET_DB"
+              # Probe the connect phase with retries: a fresh pod can out-run
+              # kube-router's policy sync (#505). The restore itself runs once.
+              n=0
+              until psql --dbname="\$TARGET_DB" --command='SELECT 1' >/dev/null 2>&1; do
+                n=\$((n + 1))
+                [ "\$n" -ge 6 ] && { echo "connect refused after \$n attempts"; exit 1; }
+                echo "connect attempt \$n failed; retrying in 20s"
+                sleep 20
+              done
               pg_restore --exit-on-error --dbname="\$TARGET_DB" "\$dump"
               echo "restore done"
       volumes:
