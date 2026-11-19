@@ -16,8 +16,11 @@ spec:
       storage: 5Gi
   storageClassName: local-path
 ---
-# The backup pod reaches only DNS and the SQL port. Ingress to the instance
-# needs no change: allow-sql-clients already admits same-namespace clients.
+# The backup pod reaches only DNS and the SQL port. The peer is explicit
+# (not an empty same-namespace selector): kube-router needed minutes to
+# program the rules for the first pod carrying a new label, and explicit
+# labeled peers are the shape every other SQL client uses. Ingress needs no
+# change: allow-sql-clients admits this pod by label.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -40,7 +43,12 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
     - to:
-        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: database
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: pg-primary
       ports:
         - { protocol: TCP, port: 5432 }
 ---
@@ -122,7 +130,17 @@ spec:
                   set -eu
                   ts="$(date -u +%Y%m%d%H%M%S)"
                   out="/backup/knowledge-$ts.dump"
-                  pg_dump --format=custom --file="$out.tmp"
+                  # A fresh pod can out-run kube-router's policy sync and get
+                  # its first connection attempt REJECTed; retry the connect
+                  # phase instead of failing the night's backup.
+                  n=0
+                  until pg_dump --format=custom --file="$out.tmp"; do
+                    n=$((n + 1))
+                    [ "$n" -ge 6 ] && { echo "backup failed: connect refused after $n attempts"; exit 1; }
+                    echo "pg_dump attempt $n failed; retrying in 20s"
+                    rm -f "$out.tmp"
+                    sleep 20
+                  done
                   # A dump that cannot be read back is not a backup.
                   pg_restore --list "$out.tmp" >/dev/null
                   mv "$out.tmp" "$out"

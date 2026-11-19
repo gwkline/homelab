@@ -27,8 +27,9 @@ spec:
         - { protocol: TCP, port: 8000 }
         - { protocol: TCP, port: 9187 }
 ---
-# Named SQL clients in agents, plus same-namespace peers for replication. A
-# new client is added here and gets its own egress rule to pg-primary.
+# Named SQL clients in agents, plus same-namespace peers for replication, plus
+# the in-namespace backup job. A new client is added here and gets its own
+# egress rule to pg-primary.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -49,6 +50,9 @@ spec:
               - key: app
                 operator: In
                 values: [cloudbeaver, knowledge-ingest, knowledge-retrieval]
+        - podSelector:
+            matchLabels:
+              app: pg-backup
         - podSelector: {}
       ports:
         - { protocol: TCP, port: 5432 }
