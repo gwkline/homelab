@@ -102,6 +102,7 @@ def main() -> int:
         ("v1", home() / "artifacts" / "model-v1-snapshot"),
         ("v1.5", home() / "artifacts" / "model-v1.5-snapshot"),
         ("v3", home() / "artifacts" / "model-v3"),
+        ("v3.5", home() / "artifacts" / "model-v3p5"),
         ("deployed", home() / "artifacts" / "model"),
     ]
     for name, cdir in candidates:
@@ -140,7 +141,7 @@ def main() -> int:
     a("")
     a("| candidate | respond P | respond R | respond F1 | archive F1 | accuracy |")
     a("| --- | ---: | ---: | ---: | ---: | ---: |")
-    for name in ("v1", "v1.5", "v3", "deployed", "neural"):
+    for name in ("v1", "v1.5", "v3", "v3.5", "deployed", "neural"):
         if name not in results:
             continue
         m = results[name]
@@ -157,7 +158,7 @@ def main() -> int:
     a("candidate deploys only if it beats the classical baseline on the")
     a("same split (eval numbers decide).")
     a("")
-    for name in ("v1", "v1.5", "v3", "deployed", "neural"):
+    for name in ("v1", "v1.5", "v3", "v3.5", "deployed", "neural"):
         if name not in results:
             continue
         m = results[name]

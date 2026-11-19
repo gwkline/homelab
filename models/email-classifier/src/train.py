@@ -79,7 +79,20 @@ def main() -> int:
 
     # v1.5 engineered features (leak-free: priors come from these same
     # train rows and are frozen into the bundle for serving + eval).
-    priors, global_rate, seen = sender_priors(train)
+    # EMAIL_CLASSIFIER_PRIOR_SINCE_MS narrows the prior pool to rows dated
+    # on/after that timestamp — the v3 full-history corpus is era-balanced,
+    # which dilutes priors for recent senders (the era-drift finding on the
+    # first v3 scorecard: respond recall 0.778 -> 0.556). Windowed priors
+    # keep the recent-behavior signal without shrinking the embedding corpus.
+    prior_pool = train
+    since = int(os.environ.get("EMAIL_CLASSIFIER_PRIOR_SINCE_MS") or 0)
+    if since:
+        pool = [r for r in train if r["d"] >= since]
+        if sum(1 for r in pool if r["label"] == "respond") >= 30:
+            prior_pool = pool
+        else:
+            print("prior window too thin on respond; using all train rows")
+    priors, global_rate, seen = sender_priors(prior_pool)
     feats = [numeric_features(r, priors, global_rate, seen) for r in train]
     import numpy as np
 
