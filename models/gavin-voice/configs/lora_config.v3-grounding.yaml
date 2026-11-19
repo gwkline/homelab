@@ -1,0 +1,33 @@
+# gavin-voice v3 grounding LoRA config (issue #533).
+# Base: Qwen2.5-7B-Instruct, 4-bit quantized (mlx-community).
+# NaN history (do not retry blind): lr 1e-4 + scale 32 + all-layers NaN at
+# iter 40; lr 5e-5 + scale 16 + 16 layers + grad-checkpoint NaN at iter 60.
+# Stable recipe (v1 + v2 + v2.1): lr 1e-5, no grad-checkpoint.
+#
+# This is the PROVEN v2.1-capacity recipe verbatim (seq 1024, batch 2,
+# lr 1e-5, 240 iters — batch 4 x seq 1024 OOM-thrashes 36 GB; see the
+# v2.1-capacity config header). The v3 change is the DATA, not the recipe:
+# corpus v3 = thread-aware email prompts (156/472 carry the real incoming
+# message), persona-facts third variant for email/blog, 20 identity anchors,
+# all on the same twin-free v2.2 decode/dedupe rules and the same frozen
+# holdout (sha 14013551...). Val/save every 40; promote the val-best
+# checkpoint, never assume the endpoint is the keeper.
+model: __GAVIN_VOICE_LOCAL__/models/Qwen2.5-7B-Instruct-4bit
+data: __GAVIN_VOICE_LOCAL__/data
+fine_tune_type: lora
+num_layers: 16
+batch_size: 2
+iters: 240
+learning_rate: 1.0e-5
+max_seq_length: 1024
+mask_prompt: true
+grad_checkpoint: false
+steps_per_report: 10
+steps_per_eval: 40
+val_batches: 25
+save_every: 40
+seed: 42
+lora_parameters:
+  rank: 16
+  scale: 16.0
+  dropout: 0.0

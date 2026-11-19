@@ -26,9 +26,7 @@ v2 changes (see evals/results-v1 for why):
   - FIXED EVAL SPLIT: if evals/holdout.jsonl already exists it is kept
     byte-for-byte (never regenerated) so every re-train is scored against
     the same split; holdout items are excluded from training by
-    subject / normalized-text / title matching. v2.1 (#528): the frozen
-    file was cleaned ONCE in place (scripts/clean_holdout.py, same rules
-    as below) — it remains frozen at the cleaned sha thereafter.
+    subject / normalized-text / title matching.
   - Tapback rows are dropped harder: the v1 regex missed "+<Laughed at" /
     "+BReacted to" forms, which leaked reaction junk into bursts and
     incoming-context prompts.
@@ -37,6 +35,20 @@ v2 changes (see evals/results-v1 for why):
     v2 fetch went back to mid-2020; older mail is a different-era voice.
   - General instruction data (data/instructions.jsonl) is mixed in at
     INSTRUCTION_SHARE (default 0.25) to anchor coherence and grounding.
+
+v3 changes (issue #533 — email content grounding):
+  - THREAD-AWARE email prompts: the sent body's quoted "On ... wrote:"
+    block (or the personal KB's Gmail digests, matched by subject + date)
+    is recovered as the real incoming message and carried in the user
+    turn. Emails with no recoverable context keep the subject-only form,
+    so the frozen holdout's subject-only prompts stay in-distribution.
+  - PERSONA FACTS baked into the data: data/persona_facts.md (retrieved
+    from the personal KB at corpus-build time) becomes a third example
+    variant (persona system prompt) for email/blog, plus identity-anchor
+    Q&A (data/persona_anchors.jsonl) mixed like instruction data. The
+    model stays self-contained at inference — no retrieval at serve time.
+  - Leakage guard: if a holdout real appears inside a train prompt's
+    incoming block, that incoming is dropped (subject-only fallback).
 """
 import datetime
 import email.utils
@@ -61,6 +73,120 @@ os.makedirs(EVALS, exist_ok=True)
 
 GENERIC_SYSTEM = "You are a helpful assistant."
 MAX_TEXT_EXAMPLES = 3000
+
+# ---- v3 (#533): thread-aware email grounding -------------------------
+# Measured v2.1 miss root cause: subject-only prompts leave the thread
+# unknowable, so longer replies hallucinate content. v3 recovers the real
+# incoming message (quoted in the fetched sent body, or the KB's Gmail
+# digests) and conditions the user turn on it. Persona facts come from the
+# personal knowledge base (data/persona_facts.md + data/persona_anchors.jsonl,
+# both local-only) and are baked into a third example variant for email/blog
+# so the model stays self-contained at inference.
+MAX_INCOMING_CHARS = 600
+KB_EMAIL_GLOB = os.path.expanduser("~/git-dev/personal-knowledge/email/20*/*.md")
+PERSONA_FACTS_PATH = f"{DATA}/persona_facts.md"
+PERSONA_ANCHORS_PATH = f"{DATA}/persona_anchors.jsonl"
+
+
+def extract_thread_context(body):
+    """Recover the incoming message a sent reply was answering (None if the
+    fetched body carries no 'On ... wrote:' quote block). The v1/v2 builder
+    stripped this block as noise — that left subject-only prompts, the
+    measured v2.1 email-judge failure mode."""
+    if not body or "wrote:" not in body:
+        return None, None
+    lines = body.replace("\r\n", "\n").split("\n")
+    hit = None
+    for i, ln in enumerate(lines):
+        if ln.startswith("On ") and "wrote:" in "\n".join(lines[i:i + 3]):
+            hit = i
+            break
+    if hit is None:
+        return None, None
+    # advance past the full (possibly line-wrapped) "On ... wrote:" header
+    end = hit
+    while end + 1 < len(lines) and "wrote:" not in lines[end]:
+        end += 1
+    header = " ".join(" ".join(lines[hit:end + 1]).split())
+    m = re.match(r'^On .*?(?:at\s+)?\d{1,2}:\d{2}(?::\d{2})?\s*'
+                 r'(?:AM|PM)?\s*(?:[-+]\d{2}:?\d{2}|\s)\s*(.+?)\s*wrote:',
+                 header, re.I)
+    author = None
+    if m:
+        who = m.group(1).strip()
+        m2 = re.match(r'^(.*?)\s*<(.+?)>$', who)
+        if m2:
+            who = m2.group(1).strip() or m2.group(2).split("@")[0]
+        author = who or None
+    out = []
+    for ql in lines[end + 1:]:
+        ql = re.sub(r'^>+\s?', '', ql)
+        if re.match(r'^(##- Please type your reply|-{5,}\s*(Reply|Forwarded))', ql):
+            break
+        out.append(ql)
+    incoming = "\n".join(out).strip()
+    if len(incoming) < 40:
+        return None, None
+    return incoming, author
+
+
+def load_kb_email_index():
+    """Incoming-email index from the personal KB's Gmail digests (the local
+    checkout that feeds knowledge namespace `personal`). Snippets are short
+    (~200 chars) but enough to ground a reply; no serve-time dependency."""
+    idx = defaultdict(list)
+    pat = re.compile(r'^- \*\*(\d{2}:\d{2})\*\* From: (.+?) — To: (.+?) — Subject: (.+?)\n(  > .*)?', re.M)
+    for path in glob.glob(KB_EMAIL_GLOB):
+        day = os.path.basename(path)[:-3]
+        try:
+            base = datetime.datetime.fromisoformat(day + "T12:00")
+        except ValueError:
+            continue
+        with open(path) as f:
+            for m in pat.finditer(f.read()):
+                hh, frm, to, subj, snip = m.groups()
+                try:
+                    ts = base.replace(hour=int(hh[:2]), minute=int(hh[3:]))
+                except ValueError:
+                    continue
+                snippet = re.sub(r'^>\s?', '', (snip or "").strip())
+                idx[strip_subject(subj).casefold()].append((ts, frm, snippet))
+    return idx
+
+
+def kb_pair_incoming(date_hdr, subject, idx):
+    """Best incoming match for a sent reply: same normalized subject,
+    addressed to Gavin, arrived before the reply (within 14 days)."""
+    dt = parse_mail_date(date_hdr)
+    if dt is None or not idx:
+        return None, None
+    for ts, frm, snippet in sorted(idx.get(strip_subject(subject).casefold(), []),
+                                   reverse=True):
+        if ts > dt or (dt - ts) > datetime.timedelta(days=14):
+            continue
+        f = frm.lower()
+        if "gwkline23" in f or "gavin kline" in f:
+            continue
+        if len(snippet) < 40:
+            continue
+        m = re.match(r'^(.*?)\s*<', frm)
+        who = (m.group(1).strip() if m and m.group(1).strip() else frm.split("@")[0])
+        return snippet, who
+    return None, None
+
+
+def load_persona_system():
+    """v3: persona facts retrieved from the personal KB at corpus-build time.
+    Used as a THIRD example variant (after the generic-system and no-system
+    unconditional pair) for email/blog only — the unconditional variants
+    still dominate, so voice never becomes persona-gated (#533 grounding)."""
+    if not os.path.exists(PERSONA_FACTS_PATH):
+        return None
+    facts = "\n".join(l for l in open(PERSONA_FACTS_PATH).read().splitlines()
+                     if l.startswith("- "))
+    if not facts.strip():
+        return None
+    return "You are Gavin Kline.\n\nBackground facts about you:\n" + facts.strip()
 
 
 def norm_text(t: str) -> str:
@@ -134,13 +260,15 @@ def first_name(to):
 def build_email(min_date):
     cutoff = datetime.datetime.fromisoformat(EMAIL_MIN_DATE)
     raw = parse_email_batches()
+    kb_idx, ctx = None, {"thread_quoted": 0, "thread_kb": 0}
     kept, dropped, seen_sig = [], defaultdict(int), set()
     for e in raw:
         dt = parse_mail_date(e.get("date", ""))
         if dt is not None and dt < cutoff:
             dropped["before_min_date"] += 1
             continue
-        body = clean_email_body(e.get("body", ""))
+        raw_body = e.get("body", "")
+        body = clean_email_body(raw_body)
         subj = (e.get("subject") or "").strip()
         if AUTO_BODY in body or not subj or len(body) < 30:
             dropped["auto_or_short"] += 1
@@ -153,11 +281,24 @@ def build_email(min_date):
             dropped["dup"] += 1
             continue
         seen_sig.add(sig)
+        # v3: recover the real incoming message this reply answered.
+        incoming, incoming_from = extract_thread_context(raw_body)
+        if incoming is not None:
+            ctx["thread_quoted"] += 1
+        else:
+            if kb_idx is None:
+                kb_idx = load_kb_email_index()
+            incoming, incoming_from = kb_pair_incoming(e.get("date", ""), subj, kb_idx)
+            if incoming is not None:
+                ctx["thread_kb"] += 1
+        if incoming is not None and len(incoming) > MAX_INCOMING_CHARS:
+            incoming = incoming[:MAX_INCOMING_CHARS - 3].rstrip() + "..."
         kept.append({"id": e["id"], "date": e.get("date", ""), "to": e.get("to", ""),
                      "recipient_type": recipient_type(e.get("to", "")),
                      "recipient_first": first_name(e.get("to", "")),
-                     "subject": subj, "body": body})
-    return kept, dict(dropped), len(raw)
+                     "subject": subj, "body": body,
+                     "incoming": incoming, "incoming_from": incoming_from})
+    return kept, dict(dropped), len(raw), ctx
 
 
 # ---------------------------------------------------------------- texts
@@ -277,6 +418,15 @@ def strip_subject(s):
 def email_user_prompts(rec):
     subj, topic = rec["subject"], strip_subject(rec["subject"])
     name = rec["recipient_first"]
+    inc, inc_from = rec.get("incoming"), rec.get("incoming_from")
+    if inc:
+        # v3 thread-aware form: the user turn carries the actual incoming
+        # message, so the reply conditions on content instead of inventing it.
+        author = inc_from or name or "The sender"
+        opts = [f'Reply to this email thread: "{subj}"\n\n{author} wrote:\n"{inc}"',
+                f'Reply to the latest message in this thread ("{subj}"):\n\n"{inc}"',
+                f'{author} sent this email about {topic}. Write the reply.\n\n"{inc}"']
+        return opts
     if re.match(r'^(Re|FW|Fwd)\s*:', subj, re.I):
         opts = [f'Reply to this email thread: "{subj}"',
                 f'Reply to the email about {topic}',
@@ -352,7 +502,7 @@ def load_fixed_holdout():
 
 def main():
     fixed = load_fixed_holdout()
-    emails, dropped, n_raw_email = build_email(EMAIL_MIN_DATE)
+    emails, dropped, n_raw_email, ctx = build_email(EMAIL_MIN_DATE)
     bursts = build_texts()
     docs, bchunks = build_blog()
 
@@ -408,6 +558,22 @@ def main():
                 f.write(json.dumps(h, ensure_ascii=False) + "\n")
 
     # ---------------- training examples (both variants each) ----------------
+    # v3 leakage guard: a thread's quoted incoming can embed Gavin's OWN
+    # earlier reply; if any holdout real appears inside a train prompt's
+    # incoming block, drop that incoming (fall back to the subject-only form).
+    n_guard = 0
+    if fixed:
+        hold_email_reals = [norm_text(e["real"])[:80] for e in fixed[0]
+                            if e.get("channel") == "email" and e.get("real")]
+        for e in email_train_pool:
+            if not e.get("incoming"):
+                continue
+            incn = norm_text(e["incoming"])
+            if any(r and r in incn for r in hold_email_reals):
+                e["incoming"], e["incoming_from"] = None, None
+                n_guard += 1
+
+    persona_system = load_persona_system()
     examples = []
     pool = text_train_pool[:]
     random.shuffle(pool)
@@ -425,9 +591,24 @@ def main():
             body = body[:cut if cut > 0 else 3400].strip()
         user = random.choice(email_user_prompts(e))
         examples += [("email", ex) for ex in two_variants(user, body)]
+        # v3 grounding: a third variant with the persona-facts system prompt
+        # (email only; unconditional generic/no-system variants dominate).
+        if persona_system:
+            examples.append(("email", mk_example(persona_system, user, body)))
     for c in blog_train_pool:
         user = random.choice(blog_user_prompts(c))
         examples += [("blog", ex) for ex in two_variants(user, c["content"])]
+        if persona_system:
+            examples.append(("blog", mk_example(persona_system, user, c["content"])))
+
+    # ---- v3 persona anchors (#533): identity Q&A mixed like instruction data
+    n_persona = 0
+    if persona_system and os.path.exists(PERSONA_ANCHORS_PATH):
+        for line in open(PERSONA_ANCHORS_PATH).read().splitlines():
+            if not line.strip():
+                continue
+            examples.append(("persona", json.loads(line)))
+            n_persona += 1
 
     # ---- instruction mix (#511): anchor general capabilities --------------
     n_instr = 0
@@ -453,7 +634,10 @@ def main():
                   "date_range": [min((e["date"] for e in emails), default=""),
                                  max((e["date"] for e in emails), default="")],
                   "by_recipient_type": {t: sum(1 for e in emails if e["recipient_type"] == t)
-                                        for t in set(e["recipient_type"] for e in emails)}},
+                                        for t in set(e["recipient_type"] for e in emails)},
+                  "thread_aware": sum(1 for e in emails if e.get("incoming")),
+                  "thread_context_sources": ctx,
+                  "incoming_leakage_guard_drops": n_guard},
         "text": {"raw_rows": sum(1 for _ in open(f"{CORPUS}/texts_raw.jsonl")),
                  "bursts_total": len(bursts), "chats": len(set(b["chat_id"] for b in bursts)),
                  **stats(bursts, "text")},
@@ -462,13 +646,18 @@ def main():
                              "(checked ~/Downloads and ~/git-dev)"},
         "training": {"examples": len(examples), "train": len(train), "valid": len(valid),
                      "by_channel": {ch: sum(1 for c, _ in examples if c == ch)
-                                    for ch in ("text", "email", "blog", "instruction")},
+                                    for ch in ("text", "email", "blog", "persona",
+                                               "instruction")},
                      "instruction_share": round(n_instr / len(examples), 3) if examples else 0,
+                     "persona_anchors": n_persona,
                      "holdout_eval": n_holdout if fixed else len(holdout),
                      "holdout_fixed_split": bool(fixed),
-                     "design": "2 variants per example (generic system prompt / none); "
-                               "channel conditioning in user turn; 15% valid split; "
-                               "fixed v1 holdout kept byte-identical for comparability"},
+                     "design": "2 unconditional variants per example (generic system "
+                               "prompt / none); v3: email/blog add a third "
+                               "persona-facts system variant + thread-aware email "
+                               "user turns; identity anchors mixed like instruction "
+                               "data; 15% valid split; fixed holdout kept "
+                               "byte-identical for comparability"},
     }
     with open(f"{CORPUS}/stats.json", "w") as f:
         json.dump(rep, f, indent=2, ensure_ascii=False)
