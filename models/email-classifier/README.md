@@ -76,27 +76,24 @@ export EMAIL_CLASSIFIER_HOME=~/git-dev/email-classifier-local
 
 `evals/run.sh` is the one-command standing eval: it re-runs the eval and regenerates both markdown files. The held-out split is fixed by `TEST_CUTOFF` in `src/common.py` (time split, newest ~2 months), so eval numbers are comparable across runs while the data catches up.
 
-### v3 pipeline (full history)
+### v3 outcome (2026-11-19)
+
+The full-history sweep (see `fetch/README.md`) produced a 29,062-row corpus — 9.9x v2 — with complete reply-thread coverage (all 1,362 sent-bearing threads; the 2,215 sent messages match the v2 audit exactly), an era-balanced 28% sample of the rest, and a 100% label-agreement audit against every shared v2 id (2,549/2,549) plus the frozen gate (353 rows re-derived, zero disagreements). Era diagnostics (`evals/era-report.md`) show ~20x behavioral drift: respond share falls from ~59% (2018-2020, college-era personal mail) to ~2.6% (2024-2026, notification-dominated) — which is exactly why era-balanced training _dilutes_ the recent-sender priors the gate measures: plain v3 scored respond F1 0.408 vs the incumbent's 0.528. Windowing the prior pool to recent rows (v3.5) restores respond recall to 0.889 (best of any candidate) with a stronger archive guardrail (0.950) and accuracy (0.906), but respond F1 0.508 still sits under the incumbent's 0.528 — so **v1.5 stays deployed; eval numbers decide.** The neural retry on the expanded corpus is on the same scorecard; no candidate clears the bar without beating it.
+
+The unmined tail (57,843 threads) is checkpoint-resumable in `$EMAIL_CLASSIFIER_HOME/mine/` — a follow-up pass closes it without re-fetching anything already stored.
 
 ```sh
 export EMAIL_CLASSIFIER_HOME=~/git-dev/email-classifier-local
 
-# 1. full-mailbox sweep (fetch/README.md) -> $HOME/mine/
-python3 fetch/mine_history.py all
-# 2. derive labels over every thread -> data/labeled_v3.jsonl
-.venv/bin/python src/label_history.py
-# 3. build the v3 train set against the frozen gate
-.venv/bin/python src/build_train_v3.py
-# 4. era diagnostics (never the gate)
-.venv/bin/python src/era_eval.py
-# 5. train the v3 candidate on the expanded set
+python3 fetch/mine_history.py all                       # sweep -> $HOME/mine/
+.venv/bin/python src/label_history.py                   # -> data/labeled_v3.jsonl
+.venv/bin/python src/build_train_v3.py                  # gate-frozen train set
+.venv/bin/python src/era_eval.py                        # era diagnostics (never the gate)
 EMAIL_CLASSIFIER_TRAIN=$HOME/data/labeled_v3_train.jsonl \
-  .venv/bin/python src/train.py
-# 6. neural retry on the same expanded set (eval-gated)
-EMAIL_CLASSIFIER_TRAIN=$HOME/data/labeled_v3_train.jsonl \
-  .venv-mlx/bin/python src/train_neural.py prep   # then train, eval
-# 7. contest on the frozen gate -> evals/scorecard.md
-.venv/bin/python src/scorecard.py
+EMAIL_CLASSIFIER_MODEL_DIR=$HOME/artifacts/model-v3 \
+EMAIL_CLASSIFIER_VERSION_PREFIX=v3 .venv/bin/python src/train.py
+# neural retry: same EMAIL_CLASSIFIER_TRAIN, .venv-mlx, stages prep/train/eval
+.venv/bin/python src/scorecard.py                       # contest on the frozen gate
 ```
 
 ### v1.5 features
