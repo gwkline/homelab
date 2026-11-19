@@ -60,7 +60,10 @@ PROFILE = MINE / "profile.json"
 
 CFG_PATH = Path("/Users/gkline/.hermes/config.yaml")
 LIST_PAGES_PER_CHUNK = 40
-GET_CHUNK = 150           # adaptive, clamped to [40, 250]
+# Calibrated 2026-11-19: bursts >=100 threads.get calls trip the upstream
+# rolling-window credential quota (403 connection_rejected); 60-call bursts
+# at 3-way concurrency sustain cleanly. Fixed, not adaptive.
+GET_CHUNK = 60
 EXEC_TIMEOUT = 240         # per tools/call, seconds
 MAX_CHUNK_ATTEMPTS = 10
 CHUNK_GAP_S = 4           # between execute chunks: keep the executor's
@@ -146,7 +149,7 @@ def run_code(code: str) -> list[str]:
         for c in r.get("content", []):
             if c.get("type") == "text":
                 lines.extend(c.get("text", "").splitlines())
-    if not any(l.startswith(("PAGES_DONE", "CHUNK_DONE", "PROFILE"))
+    if not any(l.startswith(("PAGES_DONE", "CHUNK_DONE", "PROFILE", "SENT_DONE"))
                for l in lines):
         # big outputs may spill to a file instead of coming back inline;
         # keep the raw tail so the spill format can be learned offline.
@@ -168,10 +171,10 @@ const sleep = (ms) => (typeof setTimeout === "function")
   ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
 async function runPaced(items, start, handle) {
   if (start >= items.length) return;
-  const chunk = items.slice(start, start + 2);
+  const chunk = items.slice(start, start + 3);
   await Promise.all(chunk.map(handle));
   await sleep(50);
-  await runPaced(items, start + 2, handle);
+  await runPaced(items, start + 3, handle);
 }
 """
 
@@ -305,7 +308,7 @@ def chunk_with_retry(code_factory, tag: str) -> list[str]:
             t0 = time.time()
             lines = run_code(code_factory())
             dt = time.time() - t0
-            if not any(l.startswith(("PAGES_DONE", "CHUNK_DONE", "PROFILE"))
+            if not any(l.startswith(("PAGES_DONE", "CHUNK_DONE", "PROFILE", "SENT_DONE"))
                        for l in lines):
                 raise RuntimeError(
                     f"no completion marker ({len(lines)} lines, "
@@ -436,6 +439,15 @@ def do_get() -> None:
     all_ids = ordered_manifest()
     done = seen_ids(RAW, "t")
     queue = [t for t in all_ids if t not in done]
+    # Era-balanced fetch order: the manifest is newest-first, so a plain
+    # queue drains recent history first and would leave a partially-stopped
+    # sweep era-biased. Weave newest with oldest instead, so every stopping
+    # point covers all eras evenly and the era diagnostics stay valid at
+    # any checkpoint.
+    half = (len(queue) + 1) // 2
+    old = list(reversed(queue[half:]))
+    queue = ([x for pair in zip(queue[:half], old) for x in pair]
+             + queue[len(old):half])
     errs = seen_ids(ERRS, "t")
     log({"phase": "get", "event": "start", "manifest": len(all_ids),
          "done": len(done), "queue": len(queue), "errs_prev": len(errs)})
@@ -497,12 +509,10 @@ def do_get() -> None:
             time.sleep(90)
         else:
             allfail_streak = 0
-        # adaptive sizing on wall time (only when healthy)
-        if nerr == 0:
-            if dt > 60 and size > 40:
-                size = max(40, int(size * 0.6))
-            elif dt < 12 and size < 250:
-                size = min(250, int(size * 1.25))
+        # adaptive sizing on wall time: bursts over the calibrated size
+        # trip the upstream quota, so shrink-only when a chunk runs long.
+        if nerr == 0 and dt > 60 and size > 30:
+            size = max(30, int(size * 0.75))
         log({"phase": "get", "event": "chunk", "fetched": len(rows),
              "errs": nerr, "left": len(queue), "chunk": len(batch),
              "secs": round(dt, 1), "size_next": size})
