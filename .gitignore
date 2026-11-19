@@ -11,3 +11,15 @@ kubeconfig*
 .env*
 *.pem
 *.key
+
+# gavin-voice (models/gavin-voice): personal corpus + generated data never committed.
+# Raw corpus, samples, eval outputs, venv and checkpoints live in
+# $GAVIN_VOICE_LOCAL (~/git-dev/gavin-voice-local), outside the repo; these
+# entries are defense-in-depth so a stray copy can never land in a commit.
+models/gavin-voice/corpus/
+models/gavin-voice/samples/
+models/gavin-voice/venv/
+models/gavin-voice/checkpoints/
+models/gavin-voice/data/
+models/gavin-voice/.judge_env
+**/.judge_env
