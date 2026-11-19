@@ -11,7 +11,9 @@ resources:
   - externalsecret.yaml
   - deployment-knowledge-ingest.yaml
   - deployment-knowledge-retrieval.yaml
+  - deployment-knowledge-embedder.yaml
   - service-knowledge-ingest.yaml
+  - service-knowledge-embedder.yaml
   - ingress-knowledge.yaml
   - netpol-knowledge.yaml
 

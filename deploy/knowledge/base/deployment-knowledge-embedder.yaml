@@ -1,0 +1,68 @@
+# The embedding sidecar both knowledge services call (their
+# KNOWLEDGE_EMBEDDING_* env points here). Cluster-internal only: ingress is
+# netpol-gated to the two knowledge pods, so no token is wired — the netpol
+# is the trust boundary, and any token would live in the same manifests its
+# only two callers read.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knowledge-embedder
+  namespace: agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: knowledge-embedder
+  template:
+    metadata:
+      labels:
+        app: knowledge-embedder
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: knowledge-embedder
+          image: ghcr.io/gwkline/homelab/knowledge-embedder:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            # The image bakes the model in; nothing needs to write. The
+            # Memory-backed /tmp covers node/ONNX scratch writes.
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            # A pod idles near 450MiB RSS; the cap leaves backfill headroom
+            # without inviting the node's memory pressure (audit finding #491).
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            # 503 until the model has loaded (~10s on the node).
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
