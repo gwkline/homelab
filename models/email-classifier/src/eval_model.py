@@ -19,7 +19,7 @@ from sklearn.metrics import (
     confusion_matrix,
 )
 
-from common import LABELS, TEST_CUTOFF_MS, compose_text, embedding_model_path, is_test, is_train, labeled_path, model_dir
+from common import LABELS, TEST_CUTOFF_MS, compose_text, embedding_model_path, is_test, is_train, labeled_path, model_dir, numeric_features
 
 REPORT_NAME = "report.md"
 
@@ -47,6 +47,18 @@ def main() -> int:
         normalize_embeddings=True,
         show_progress_bar=False,
     )
+    if bundle.get("feature_version"):
+        # v1.5+ bundles carry frozen sender priors; features are computed
+        # with them so eval and serving agree exactly.
+        feats = [
+            numeric_features(
+                r, bundle["sender_priors"], bundle["global_rate"], bundle["sender_seen"]
+            )
+            for r in test
+        ]
+        import numpy as np
+
+        X = np.hstack([X, np.asarray(feats, dtype=np.float32)])
     y_true = [r["label"] for r in test]
     y_pred = clf.predict(X)
     accuracy = float((y_pred == y_true).mean())

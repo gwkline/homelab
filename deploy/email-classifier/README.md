@@ -54,5 +54,34 @@ PY
 
 ## Updating
 
-- **API code**: merge a PR; the ConfigMap hash changes and a routine `kubectl apply -k deploy/email-classifier/base` (or `clusters/home`) rolls the deployment. This base is NOT in the deployer's target list yet — see the filed follow-up about adding it.
-- **Model**: re-run the training pipeline on the laptop, then repeat steps 3-4 above (the populate script is idempotent: it rebuilds the venv and overwrites the artifacts).
+- **API code**: merge a PR; the ConfigMap hash changes and a routine `kubectl apply -k deploy/email-classifier/base` (or `clusters/home`) rolls the deployment. This base is NOT in the deployer's target list yet — see the filed follow-up about adding it. `uvicorn` loads code once at boot, so finish every code rollout with `kubectl --kubeconfig "$KC" rollout restart deployment/email-classifier -n email-agent`.
+- **Model (versioned, rollback-safe)**: re-run the training pipeline on the laptop, then ship the new bundle WITHOUT the one-shot populate pod (the venv already exists on the PVC):
+
+  ```sh
+  KC=~/kubeconfig-homelab
+  POD=$(kubectl --kubeconfig "$KC" get pods -n email-agent -l app=email-classifier \
+    -o jsonpath='{.items[0].metadata.name}')
+  NEW=model-v1.5-$(date -u +%Y%m%d-%H%M)
+
+  cd "$EMAIL_CLASSIFIER_HOME/artifacts" && tar -czf /tmp/model.tgz model
+  kubectl --kubeconfig "$KC" exec -i -n email-agent "$POD" -- \
+    sh -c 'mkdir -p /state/incoming && cat > /state/incoming/model.tgz' </tmp/model.tgz
+
+  kubectl --kubeconfig "$KC" exec -n email-agent "$POD" -- sh -c "
+    cd /state/ec-home/artifacts
+    mkdir $NEW && tar -xzf /state/incoming/model.tgz -C $NEW --strip-components=1
+    rm /state/incoming/model.tgz
+    ln -sfn $NEW model   # promote: flip the default symlink
+  "
+  kubectl --kubeconfig "$KC" rollout restart deployment/email-classifier -n email-agent
+  ```
+
+  `artifacts/model` is a symlink to the promoted version dir; every prior version dir stays on the PVC. **Rollback** is therefore two commands and needs no code change (the API serves both bundle generations):
+
+  ```sh
+  kubectl --kubeconfig "$KC" exec -n email-agent "$POD" -- \
+    sh -c 'cd /state/ec-home/artifacts && ln -sfn model-v1-20261119-0827 model'
+  kubectl --kubeconfig "$KC" rollout restart deployment/email-classifier -n email-agent
+  ```
+
+  The first deployment of this scheme promoted `model-v1.5-20261119-0920` over `model-v1-20261119-0827` (2026-11-19): respond F1 0.314 → 0.528 on the standing split, archive F1 guardrail held at 0.93. The neural candidate (Qwen2.5-0.5B LoRA) scored 0.390 respond F1 on the same split and did not deploy — eval numbers decide.
