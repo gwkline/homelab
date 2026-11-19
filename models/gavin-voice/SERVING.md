@@ -42,6 +42,15 @@ curl -s http://127.0.0.1:8931/v1/chat/completions \
 Other channels, same shape: `"Reply to this email thread: \"Re: …\"` (email),
 `"Write a blog post about: \"…\"` (blog).
 
-## Smoke test (2026-11-19, adapter_v2)
+## Smoke test (2026-11-19, adapter_v2 = iter-40 on corpus v2.1)
 
-<!-- transcript appended after the live run; see samples/serving-smoke-v2.md locally for full outputs -->
+Run live against the fused fp16 model on `127.0.0.1:8931`:
+
+| channel | prompt | generation (truncated; full transcript in `$GAVIN_VOICE_LOCAL/samples/serving-smoke-v2.md`) |
+| --- | --- | --- |
+| text | `Text Grace that I'm running 15 min late.` | `I'm running 15 min late` |
+| email | `Reply to this email thread: "Re: Homelab cluster maintenance window"` | `Hi everyone, I'm going to be doing some maintenance on the homelab cluster tonight. I'll be taking the cluster offline at 10pm and bringing it back online at 11pm.` |
+
+No `+`-prefix artifacts, no degenerate loops — the v1 `+1000…` defect (#521) is
+gone in the served model. Email generations invent plausible specifics (times,
+names) the way any style model does; factual grounding comes from the prompt.

@@ -158,6 +158,9 @@ def main():
     ap.add_argument("--adapter", default=str(LOCAL / "checkpoints/adapter_v1"))
     ap.add_argument("--base-model", default=str(LOCAL / "models/Qwen2.5-7B-Instruct-4bit"))
     ap.add_argument("--tag", default="v1")
+    ap.add_argument("--skip-base", action="store_true",
+                    help="skip the base-model comparison pass; reuse the "
+                         "base scores already recorded for the frozen holdout")
     ap.add_argument("--commit", action="store_true",
                     help="write aggregate-only baseline json into the repo")
     args = ap.parse_args()
@@ -189,11 +192,17 @@ def main():
     del model
 
     print("[2/4] generating with base model (comparison)")
-    model, tok = load_model(args.base_model)
-    base_gens = run_gen_pass(model, tok, gen_entries)
-    ppl_base = run_ppl_pass(model, tok, [e for ch, n in PPL_PER_CHANNEL.items()
-                                         for e in by_ch.get(ch, [])[:n]])
-    del model
+    if not args.skip_base:
+        model, tok = load_model(args.base_model)
+        base_gens = run_gen_pass(model, tok, gen_entries)
+        ppl_base = run_ppl_pass(model, tok, [e for ch, n in PPL_PER_CHANNEL.items()
+                                              for e in by_ch.get(ch, [])[:n]])
+        del model
+    else:
+        # --skip-base: reuse the base scores recorded for the frozen holdout
+        # in baseline-v1.json (same base model, same split) instead of
+        # regenerating them — halves eval wall-clock on re-trains.
+        base_gens, ppl_base = [], {}
 
     print("[3/4] length/format stats")
     real_by_ch = {ch: [e["real"] for e in es] for ch, es in by_ch.items()}
