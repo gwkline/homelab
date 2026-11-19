@@ -9,6 +9,7 @@ touches the network.
 from __future__ import annotations
 
 import json
+import os
 import time
 from datetime import datetime, timezone
 
@@ -24,15 +25,15 @@ from common import (
     compose_text,
     embedding_model_path,
     is_train,
-    labeled_path,
     model_dir,
     numeric_features,
     sender_priors,
+    train_path,
 )
 
 
 def main() -> int:
-    rows = [json.loads(line) for line in open(labeled_path(), encoding="utf-8")]
+    rows = [json.loads(line) for line in open(train_path(), encoding="utf-8")]
     train = [r for r in rows if is_train(r)]
     if not train:
         raise SystemExit("no training rows before TEST_CUTOFF")
@@ -75,7 +76,11 @@ def main() -> int:
     clf = LogisticRegression(class_weight="balanced", max_iter=2000, C=1.0)
     clf.fit(X, y)
 
-    version = "v1.5-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    # The prefix names the TRAIN SET generation, not the feature set —
+    # the v3 full-history run sets EMAIL_CLASSIFIER_VERSION_PREFIX=v3 so
+    # the scorecard and the serving readback stay honest about the data.
+    version = (os.environ.get("EMAIL_CLASSIFIER_VERSION_PREFIX", "v1.5")
+               + "-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M"))
     model_dir().mkdir(parents=True, exist_ok=True)
     bundle = {
         "version": version,

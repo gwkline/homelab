@@ -28,6 +28,17 @@ def labeled_path() -> Path:
     return data_dir() / "labeled.jsonl"
 
 
+def train_path() -> Path:
+    """Training rows. Defaults to labeled.jsonl (the standing v1/v2 set);
+    the v3 expansion points EMAIL_CLASSIFIER_TRAIN at
+    data/labeled_v3_train.jsonl instead (src/build_train_v3.py builds it).
+    The held-out test rows ALWAYS come from labeled.jsonl — the gate never
+    follows this override, so a bigger train set can never quietly change
+    the instrument."""
+    env = os.environ.get("EMAIL_CLASSIFIER_TRAIN")
+    return Path(env) if env else labeled_path()
+
+
 def is_train(row: dict) -> bool:
     """Standing split: everything older than TEST_CUTOFF trains — except
     mark-read rows, which train regardless of date.

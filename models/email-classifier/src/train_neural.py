@@ -24,7 +24,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from common import home, is_test, is_train, labeled_path
+from common import home, is_test, is_train, labeled_path, train_path
 
 BASE_MODEL = "qwen25-05b-instruct"
 PROMPT = (
@@ -48,7 +48,7 @@ def fused_path() -> Path:
 
 
 def prep() -> int:
-    rows = [json.loads(line) for line in open(labeled_path(), encoding="utf-8")]
+    rows = [json.loads(line) for line in open(train_path(), encoding="utf-8")]
     train = [r for r in rows if is_train(r)]
     # validation = newest 15% of TRAIN (leak-free; standing test untouched)
     train_sorted = sorted(train, key=lambda r: r["d"])

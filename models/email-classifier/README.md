@@ -1,4 +1,4 @@
-# Email action classifier (v2)
+# Email action classifier (v3)
 
 Predicts the action Gavin takes on an incoming email: `respond`, `archive`, or `mark-read`. Small by design: local sentence-transformer embeddings + engineered behavioral features + logistic regression, with a LoRA fine-tuned Qwen-0.5B neural candidate evaluated against it on the same split (eval numbers decide which one serves). No paid APIs.
 
@@ -48,6 +48,15 @@ The v1 dataset (1,381 rows, 57 respond) was the constraint, not the model class.
 - **Thread-context negatives.** Non-trigger incoming messages inside replied threads label as `archive`/`mark-read` — hard negatives sitting right beside `respond` examples, which the stride sample never captured.
 - New exports carry `List-Unsubscribe`/`Precedence` flags for the bulk-sender feature.
 
+### v3 full-history expansion
+
+Gavin's call: the 2.9k rows were still a sliver of a 107k-message mailbox — "use literally all of this data." v3 drains the whole mailbox (`fetch/mine_history.py`, see `fetch/README.md`) and re-derives labels over every thread:
+
+- `src/label_history.py` — same behavioral rules as `label.py`, applied to every thread instead of sampled exports; the full sweep also sees TRASH/SPAM/DRAFT rows the q-filtered v1/v2 exports never did, so those skips moved into the labeling rules. The output carries an `era` (UTC year) per row, and the run prints a v2-agreement audit over every shared id.
+- `src/build_train_v3.py` — builds the v3 train set. **The promotion gate stays the frozen v2 held-out split** (`data/gate_ids.json`, 373 ids): v3 training excludes gate ids, and post-cutoff rows outside the gate join neither train nor test — they become the live-drift reconciliation batch for homelab issue #526. Training switches to the expanded set via `EMAIL_CLASSIFIER_TRAIN`; the gate files never follow that override.
+- `src/era_eval.py` — era-stratified diagnostics, reported separately on purpose: label drift across years (respond share by era) and a per-era carve-out scorecard. Behavioral drift is expected and reported, never hidden behind the gate.
+- `src/scorecard.py` — contests candidates on the frozen gate: `v1`, `v1.5` (frozen incumbent snapshot), `v3` candidate, `deployed` (symlink target), and the neural eval.
+
 ## Pipeline
 
 ```sh
@@ -66,6 +75,29 @@ export EMAIL_CLASSIFIER_HOME=~/git-dev/email-classifier-local
 ```
 
 `evals/run.sh` is the one-command standing eval: it re-runs the eval and regenerates both markdown files. The held-out split is fixed by `TEST_CUTOFF` in `src/common.py` (time split, newest ~2 months), so eval numbers are comparable across runs while the data catches up.
+
+### v3 pipeline (full history)
+
+```sh
+export EMAIL_CLASSIFIER_HOME=~/git-dev/email-classifier-local
+
+# 1. full-mailbox sweep (fetch/README.md) -> $HOME/mine/
+python3 fetch/mine_history.py all
+# 2. derive labels over every thread -> data/labeled_v3.jsonl
+.venv/bin/python src/label_history.py
+# 3. build the v3 train set against the frozen gate
+.venv/bin/python src/build_train_v3.py
+# 4. era diagnostics (never the gate)
+.venv/bin/python src/era_eval.py
+# 5. train the v3 candidate on the expanded set
+EMAIL_CLASSIFIER_TRAIN=$HOME/data/labeled_v3_train.jsonl \
+  .venv/bin/python src/train.py
+# 6. neural retry on the same expanded set (eval-gated)
+EMAIL_CLASSIFIER_TRAIN=$HOME/data/labeled_v3_train.jsonl \
+  .venv-mlx/bin/python src/train_neural.py prep   # then train, eval
+# 7. contest on the frozen gate -> evals/scorecard.md
+.venv/bin/python src/scorecard.py
+```
 
 ### v1.5 features
 
