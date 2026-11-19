@@ -24,7 +24,12 @@ const intFromEnv = (raw: string | undefined, fallback: number): number => {
 // Kubernetes sends SIGKILL 30s after SIGTERM.
 const SHUTDOWN_DEADLINE_MS = 25_000;
 
-const port = intFromEnv(process.env.KNOWLEDGE_EMBEDDER_PORT, 8080);
+// Plain `PORT`, like the knowledge services: a Service named
+// knowledge-embedder makes Kubernetes inject KNOWLEDGE_EMBEDDER_PORT=tcp://…
+// into every agents pod (docker-link-style), which would never parse as a
+// number. MAX_BATCH/MODEL/MODEL_DIR stay prefixed — no Service can collide
+// with those names.
+const port = intFromEnv(process.env.PORT, 8080);
 const maxBatch = intFromEnv(process.env.KNOWLEDGE_EMBEDDER_MAX_BATCH, 64);
 const model = process.env.KNOWLEDGE_EMBEDDER_MODEL ?? "BAAI/bge-small-en-v1.5";
 const modelDir = process.env.KNOWLEDGE_EMBEDDER_MODEL_DIR ?? "/app/model";
