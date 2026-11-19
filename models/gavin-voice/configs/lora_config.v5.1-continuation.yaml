@@ -1,0 +1,35 @@
+# gavin-voice v5.1 continuation config (after the v5@280 gate MISS on text).
+# Base: Qwen2.5-7B-Instruct, 4-bit quantized (mlx-community).
+# v5 evidence (frozen primary holdout, same instrument as v3/v4):
+#   iter-280 val-best (1.264) = email judge 2.71 (beats v3's 2.57), ppl
+#   better on every channel, hygiene clean — but text collapsed to 3.0 with
+#   10/27 generations opening "I think…": the SAME optimization basin v4
+#   measured (8/12 at its 280 val-best). Era conditioning + rank 32 moved
+#   the val loss (1.264 < v4's 1.324 at the same iter) but not the basin.
+# v5.1 therefore RESUMES from the email-good iter-280 basin
+# (--resume-adapter-file 0000280_adapters.safetensors) at HALF the lr
+# (5e-6) — the documented v4.1 escape pattern — but SHORTER: 120 iters, not
+# v4.1's 240. The v4.1 240-iter continuation escaped the text attractor yet
+# traded email down to 2.38; this run re-gates at the shorter horizon so a
+# recovered text voice can keep the email gain. Iteration counter restarts
+# (mlx-lm resume semantics; see logs/train_v41.log), so the run's own
+# val/save cadence is 40/80/120 with val-best promoted per discipline.
+model: /Users/gkline/git-dev/gavin-voice-local/models/Qwen2.5-7B-Instruct-4bit
+data: /Users/gkline/git-dev/gavin-voice-local/data
+fine_tune_type: lora
+num_layers: 16
+batch_size: 2
+iters: 120
+learning_rate: 5.0e-6
+max_seq_length: 1024
+mask_prompt: true
+grad_checkpoint: false
+steps_per_report: 10
+steps_per_eval: 40
+val_batches: 25
+save_every: 40
+seed: 43
+lora_parameters:
+  rank: 32
+  scale: 16.0
+  dropout: 0.0

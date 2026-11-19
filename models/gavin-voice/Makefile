@@ -4,9 +4,9 @@ MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 GAVIN_VOICE_LOCAL ?= /Users/gkline/git-dev/gavin-voice-local
 PY := $(GAVIN_VOICE_LOCAL)/venv/bin/python
 HF := $(GAVIN_VOICE_LOCAL)/venv/bin/hf
-ADAPTER ?= $(GAVIN_VOICE_LOCAL)/checkpoints/adapter_v2
+ADAPTER ?= $(GAVIN_VOICE_LOCAL)/checkpoints/adapter_v3-valbest
 BASE_MODEL ?= $(GAVIN_VOICE_LOCAL)/models/Qwen2.5-7B-Instruct-4bit
-MERGED ?= $(GAVIN_VOICE_LOCAL)/models/gavin-voice-merged-v2
+MERGED ?= $(GAVIN_VOICE_LOCAL)/models/gavin-voice-merged-v3
 TAG ?= v2
 PORT ?= 8931
 
@@ -42,3 +42,10 @@ eval:
 ## Serve the merged model as a local OpenAI-compatible API (see SERVING.md).
 serve:
 	$(PY) -m mlx_lm.server --model $(MERGED) --host 127.0.0.1 --port $(PORT)
+
+## Serve the keeper from base + adapter (the v5 default mode: this is the
+## configuration the eval instrument scores, and it keeps only one keeper
+## representation on disk — no 14 GB fp16 merge; see SERVING.md).
+serve-adapter:
+	$(PY) -m mlx_lm.server --model $(BASE_MODEL) --adapter-path $(ADAPTER) \
+	  --host 127.0.0.1 --port $(PORT)
