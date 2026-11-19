@@ -167,7 +167,10 @@ spec:
                 echo "connect attempt \$n failed; retrying in 20s"
                 sleep 20
               done
-              pg_restore --exit-on-error --dbname="\$TARGET_DB" "\$dump"
+              # --no-comments: the dump's COMMENT ON EXTENSION lines cannot run
+              # as the app owner against the superuser-created extensions; the
+              # restored data, schema and indexes do not need comments.
+              pg_restore --exit-on-error --no-comments --dbname="\$TARGET_DB" "\$dump"
               echo "restore done"
       volumes:
         - name: backup
