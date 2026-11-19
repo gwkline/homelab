@@ -1,14 +1,20 @@
 """Scorecard: compare classifier candidates on the fixed held-out split.
 
-Evaluates every available bundle on the SAME test rows (the standing split in
-src/common.py) and writes evals/scorecard.md with aggregate metrics only —
-no message content, no personal data.
+Evaluates every available bundle on the SAME test rows (the standing split
+in src/common.py, frozen id-for-id in data/gate_ids.json so the v3 history
+expansion can never quietly change the instrument) and writes
+evals/scorecard.md with aggregate metrics only — no message content, no
+personal data.
 
-Bundles evaluated (whatever exists on disk):
-  v1      artifacts/model-v1-snapshot   embeddings-only, v1 data (1,381 rows)
-  v1.5    artifacts/model               embeddings + engineered features,
-                                        expanded data (2,945 rows)
-  neural  artifacts/neural-eval.json    written by src/train_neural.py
+Bundles evaluated (whatever exists on disk, in table order):
+  v1          artifacts/model-v1-snapshot     v1 data (1,381 rows)
+  v1.5        artifacts/model-v1.5-snapshot  incumbent, frozen when a new
+                                              candidate promotes
+  v3          artifacts/model-v3              full-history candidate
+                                              (src/build_train_v3.py data)
+  deployed    artifacts/model                 the bundle serving in the
+                                              cluster (symlink target)
+  neural      artifacts/neural-eval.json      written by src/train_neural.py
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ from common import (
     LABELS,
     TEST_CUTOFF_MS,
     compose_text,
+    data_dir,
     embedding_model_path,
     is_test,
     labeled_path,
@@ -79,28 +86,45 @@ def metrics(y_true, y_pred) -> dict:
 def main() -> int:
     repo = Path(__file__).resolve().parent.parent
     rows = [json.loads(line) for line in open(labeled_path(), encoding="utf-8")]
-    test = sorted([r for r in rows if is_test(r)], key=lambda r: r["d"])
+    # Frozen gate: the scorecard scores exactly the ids in data/gate_ids.json
+    # (v2-labeled). The v3 re-derivation may re-label some of them; those
+    # disagreements are reported by src/build_train_v3.py and reconciled in
+    # homelab issue #526 — the gate itself never changes mid-contest.
+    gate = set(json.load(open(data_dir() / "gate_ids.json"))["ids"]) \
+        if (data_dir() / "gate_ids.json").exists() else None
+    test = sorted([r for r in rows if is_test(r)
+                   and (gate is None or r["id"] in gate)],
+                  key=lambda r: r["d"])
     encoder = SentenceTransformer(str(embedding_model_path()))
 
     results = {}
-
-    v1_path = home() / "artifacts" / "model-v1-snapshot" / "model.joblib"
-    if v1_path.exists():
-        results["v1"] = evaluate_classical(joblib.load(v1_path), test, encoder)
-        results["v1"]["version"] = joblib.load(v1_path)["version"]
-
-    v15_path = home() / "artifacts" / "model" / "model.joblib"
-    if v15_path.exists():
-        bundle = joblib.load(v15_path)
-        results["v1.5"] = evaluate_classical(bundle, test, encoder)
-        results["v1.5"]["version"] = bundle["version"]
+    candidates = [
+        ("v1", home() / "artifacts" / "model-v1-snapshot"),
+        ("v1.5", home() / "artifacts" / "model-v1.5-snapshot"),
+        ("v3", home() / "artifacts" / "model-v3"),
+        ("v3.5", home() / "artifacts" / "model-v3p5"),
+        ("deployed", home() / "artifacts" / "model"),
+    ]
+    for name, cdir in candidates:
+        path = cdir / "model.joblib"
+        if not path.exists():
+            continue
+        bundle = joblib.load(path)
+        results[name] = evaluate_classical(bundle, test, encoder)
+        results[name]["version"] = bundle["version"]
 
     neural_path = home() / "artifacts" / "neural-eval.json"
     if neural_path.exists():
         neural = json.load(open(neural_path))
-        results["neural"] = metrics(
-            [r["label"] for r in test], neural["y_pred"]
-        )
+        neural_ids = set(neural.get("ids", []))
+        if neural_ids and neural_ids != {r["id"] for r in test}:
+            # neural predictions were scored on a different gate snapshot;
+            # re-align by id so the frozen gate keeps columns comparable.
+            by_id = dict(zip(neural["ids"], neural["y_pred"]))
+            y_pred = [by_id.get(r["id"], "archive") for r in test]
+        else:
+            y_pred = neural["y_pred"]
+        results["neural"] = metrics([r["label"] for r in test], y_pred)
         results["neural"]["version"] = neural.get("version", "neural")
 
     n_respond = sum(1 for r in test if r["label"] == "respond")
@@ -117,7 +141,7 @@ def main() -> int:
     a("")
     a("| candidate | respond P | respond R | respond F1 | archive F1 | accuracy |")
     a("| --- | ---: | ---: | ---: | ---: | ---: |")
-    for name in ("v1", "v1.5", "neural"):
+    for name in ("v1", "v1.5", "v3", "v3.5", "deployed", "neural"):
         if name not in results:
             continue
         m = results[name]
@@ -134,7 +158,7 @@ def main() -> int:
     a("candidate deploys only if it beats the classical baseline on the")
     a("same split (eval numbers decide).")
     a("")
-    for name in ("v1", "v1.5", "neural"):
+    for name in ("v1", "v1.5", "v3", "v3.5", "deployed", "neural"):
         if name not in results:
             continue
         m = results[name]

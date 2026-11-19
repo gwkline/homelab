@@ -9,8 +9,11 @@ touches the network.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import joblib
 from sentence_transformers import SentenceTransformer
@@ -24,15 +27,15 @@ from common import (
     compose_text,
     embedding_model_path,
     is_train,
-    labeled_path,
     model_dir,
     numeric_features,
     sender_priors,
+    train_path,
 )
 
 
 def main() -> int:
-    rows = [json.loads(line) for line in open(labeled_path(), encoding="utf-8")]
+    rows = [json.loads(line) for line in open(train_path(), encoding="utf-8")]
     train = [r for r in rows if is_train(r)]
     if not train:
         raise SystemExit("no training rows before TEST_CUTOFF")
@@ -44,6 +47,14 @@ def main() -> int:
     for label in LABELS:
         print(f"  {label:9s} {counts[label]}")
 
+    # Candidate contests run against artifacts/model-v3 (scorecard picks it
+    # up); artifacts/model stays the DEPLOYED bundle until a candidate wins
+    # and is promoted into it.
+    out_dir = (Path(os.environ["EMAIL_CLASSIFIER_MODEL_DIR"])
+               if os.environ.get("EMAIL_CLASSIFIER_MODEL_DIR")
+               else model_dir())
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     emb_path = embedding_model_path()
     if emb_path.exists():
         print(f"embedding model: local snapshot {emb_path}")
@@ -51,9 +62,12 @@ def main() -> int:
     else:
         print(f"embedding model: downloading {EMBEDDING_MODEL}")
         encoder = SentenceTransformer(EMBEDDING_MODEL)
-    emb_path.parent.mkdir(parents=True, exist_ok=True)
-    if not emb_path.exists():
+        emb_path.parent.mkdir(parents=True, exist_ok=True)
         encoder.save(str(emb_path))
+    emb_out = out_dir / "embedding-model"
+    if not emb_out.exists():
+        # The bundle dir must be self-contained for serving after promotion.
+        shutil.copytree(emb_path, emb_out)
 
     texts = [compose_text(r["from"], r["subject"], r["snippet"]) for r in train]
     y = [r["label"] for r in train]
@@ -65,7 +79,20 @@ def main() -> int:
 
     # v1.5 engineered features (leak-free: priors come from these same
     # train rows and are frozen into the bundle for serving + eval).
-    priors, global_rate, seen = sender_priors(train)
+    # EMAIL_CLASSIFIER_PRIOR_SINCE_MS narrows the prior pool to rows dated
+    # on/after that timestamp — the v3 full-history corpus is era-balanced,
+    # which dilutes priors for recent senders (the era-drift finding on the
+    # first v3 scorecard: respond recall 0.778 -> 0.556). Windowed priors
+    # keep the recent-behavior signal without shrinking the embedding corpus.
+    prior_pool = train
+    since = int(os.environ.get("EMAIL_CLASSIFIER_PRIOR_SINCE_MS") or 0)
+    if since:
+        pool = [r for r in train if r["d"] >= since]
+        if sum(1 for r in pool if r["label"] == "respond") >= 30:
+            prior_pool = pool
+        else:
+            print("prior window too thin on respond; using all train rows")
+    priors, global_rate, seen = sender_priors(prior_pool)
     feats = [numeric_features(r, priors, global_rate, seen) for r in train]
     import numpy as np
 
@@ -75,8 +102,11 @@ def main() -> int:
     clf = LogisticRegression(class_weight="balanced", max_iter=2000, C=1.0)
     clf.fit(X, y)
 
-    version = "v1.5-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
-    model_dir().mkdir(parents=True, exist_ok=True)
+    # The prefix names the TRAIN SET generation, not the feature set —
+    # the v3 full-history run sets EMAIL_CLASSIFIER_VERSION_PREFIX=v3 so
+    # the scorecard and the serving readback stay honest about the data.
+    version = (os.environ.get("EMAIL_CLASSIFIER_VERSION_PREFIX", "v1.5")
+               + "-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M"))
     bundle = {
         "version": version,
         "clf": clf,
@@ -90,8 +120,8 @@ def main() -> int:
         "train_counts": counts,
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
-    joblib.dump(bundle, model_dir() / "model.joblib")
-    with open(model_dir() / "metadata.json", "w", encoding="utf-8") as fh:
+    joblib.dump(bundle, out_dir / "model.joblib")
+    with open(out_dir / "metadata.json", "w", encoding="utf-8") as fh:
         json.dump(
             {
                 "version": version,
@@ -117,7 +147,7 @@ def main() -> int:
             fh,
             indent=2,
         )
-    print(f"saved {model_dir() / 'model.joblib'} ({version})")
+    print(f"saved {out_dir / 'model.joblib'} ({version})")
     return 0
 
 
