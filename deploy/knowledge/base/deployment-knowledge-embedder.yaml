@@ -38,16 +38,17 @@ spec:
             - containerPort: 8080
               name: http
           resources:
-            # A pod idles near 450MiB RSS. Peak memory is concurrent fp32
-            # batch arenas (attention scores scale batch x heads x seq^2),
-            # bounded here by the engine's CONCURRENCY=1/BATCH=16 defaults;
-            # 1Gi leaves long-tail 512-token chunks headroom.
+            # A pod idles near 450MiB RSS. Peak memory is the fp32 batch
+            # arena (attention scores scale batch x heads x seq^2; a batch
+            # of nine ~500-token chunks measured 1.4GiB locally), bounded by
+            # the engine's CONCURRENCY=1/BATCH=8; 1536Mi leaves long-tail
+            # 512-token chunks headroom without inviting node pressure.
             requests:
               cpu: 100m
               memory: 256Mi
             limits:
               cpu: "4"
-              memory: 1Gi
+              memory: 1536Mi
           volumeMounts:
             - name: tmp
               mountPath: /tmp
