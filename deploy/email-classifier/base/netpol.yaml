@@ -63,3 +63,32 @@ spec:
               - 192.168.0.0/16 # node/LAN
               - 169.254.0.0/16 # link-local metadata
               - 100.64.0.0/10 # tailnet
+---
+# Callers that share this namespace (smoke tests, future automation pods)
+# get DNS plus same-namespace pods and nothing else. The API itself is
+# excluded: it stays fully egress-denied above.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: client-egress-in-namespace
+  namespace: email-agent
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: NotIn
+        values: [email-classifier]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - podSelector: {}
