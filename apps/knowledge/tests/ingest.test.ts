@@ -38,7 +38,10 @@ interface RecordedClient {
 }
 
 interface ScriptedRows {
-  rows: Record<string, unknown>[];
+  /** Rejected with, instead of resolved, when set. */
+  reject?: unknown;
+  /** Empty when `reject` is set. */
+  rows?: Record<string, unknown>[];
   text: string;
 }
 
@@ -57,6 +60,9 @@ const stubClient = (script: ScriptedRows[] = []): RecordedClient => {
       const override = scripted.findIndex((entry) => text.includes(entry.text));
       if (override !== -1) {
         const [entry] = scripted.splice(override, 1);
+        if (entry?.reject !== undefined) {
+          return Promise.reject(entry.reject);
+        }
         return Promise.resolve({ rows: entry?.rows ?? [] });
       }
       if (text.includes("ON CONFLICT (namespace, source, external_id)")) {
@@ -321,6 +327,44 @@ test("unchanged content resolves the existing document and version rows", async 
     3,
     sha256Hex(PARAGRAPHS),
   ]);
+});
+
+test("a replay that recomputes a claimed version id records it under a generated id", async () => {
+  const recorded = stubClient([
+    // Changed content: the document upsert bumps the version to 2.
+    {
+      rows: [{ id: "doc-1", version: 2 }],
+      text: "ON CONFLICT (namespace, source, external_id)",
+    },
+    // A replay from a deleted manifest restarts per-file numbering, so it
+    // recomputes "v7" — the id the first epoch used for version 1. The
+    // insert dies on the version-history primary key, not on the
+    // (document_id, version) pair the ON CONFLICT clause covers.
+    {
+      reject: { constraint: "document_version_pkey" },
+      text: "INSERT INTO document_version (id,",
+    },
+    // The fallback insert records the new version with a generated id.
+    {
+      rows: [{ id: "v-generated" }],
+      text: "INSERT INTO document_version (document_id,",
+    },
+  ]);
+  const outcome = await processDocumentVersion(recorded.pool, baseDoc(), {
+    config: resolveEmbeddingWorkerConfig({
+      maxChars: 60,
+      provider: createFakeEmbeddingProvider("fake/test-model"),
+    }),
+  });
+  assert.equal(outcome.status, "ok");
+  // The generated-id insert cites the resolved document and version pair
+  // and carries no id parameter.
+  assert.deepEqual(recorded.params[4], ["doc-1", 2, sha256Hex(PARAGRAPHS)]);
+  // History is never mutated: chunks cite the generated version row.
+  for (const index of chunkUpsertIndices(recorded)) {
+    const row = recorded.params[index] ?? [];
+    assert.equal(row[2], "v-generated");
+  }
 });
 
 test("one invalid vector fails only its chunk; valid batchmates still embed", async () => {
