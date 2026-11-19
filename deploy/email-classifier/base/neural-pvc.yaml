@@ -1,0 +1,15 @@
+# Holds the optional v4 neural model (fused LoRA LM, ~2.9 GiB fp16
+# safetensors) plus one incoming tarball during an update — too large to
+# share the 3 GiB bundle PVC, and k3s local-path volumes cannot be
+# expanded in place, so the neural weights get their own volume. The api
+# treats this mount as optional: absent or empty -> classical bundle.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: email-classifier-neural
+  namespace: email-agent
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 8Gi

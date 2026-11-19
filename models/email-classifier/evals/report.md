@@ -1,10 +1,10 @@
 # Email action classifier — standing eval
 
-_Generated 2026-11-19 20:10 UTC by `evals/run.sh` (one command, deterministic split)._
+_Generated 2026-11-19 22:24 UTC by `evals/run.sh` (one command, deterministic split)._
 
 **Held-out split:** every labeled message dated on/after **2026-09-15** (newest ~2 months). Train uses only older mail. Test coverage: 2026-09-15 → 2026-11-19.
 
-**Model:** `v1.5-20261119-0920` — sentence-transformers/all-MiniLM-L6-v2 embeddings (384-d, normalized) + logistic regression (class_weight=balanced).
+**Model:** `v1.5-20261119-0920` — sentence-transformers/all-MiniLM-L6-v2 embeddings (384d, normalized) + logistic regression (class_weight=balanced).
 
 ## Class balance
 

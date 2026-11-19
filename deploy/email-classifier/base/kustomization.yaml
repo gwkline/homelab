@@ -23,6 +23,7 @@ configMapGenerator:
 
 resources:
   - pvc.yaml
+  - neural-pvc.yaml
   - netpol.yaml
   - service.yaml
   - deployment.yaml

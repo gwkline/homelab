@@ -39,7 +39,12 @@ def main() -> int:
 
     bundle = joblib.load(model_dir() / "model.joblib")
     clf = bundle["clf"]
-    encoder = SentenceTransformer(str(embedding_model_path()))
+    # score the deployed bundle with ITS OWN embedder snapshot (v4 bundles
+    # carry a new encoder); older bundles ship the same MiniLM bytes the
+    # shared snapshot holds, so their numbers are unchanged.
+    emb_local = model_dir() / "embedding-model"
+    emb_path = emb_local if emb_local.exists() else embedding_model_path()
+    encoder = SentenceTransformer(str(emb_path))
 
     X = encoder.encode(
         [compose_text(r["from"], r["subject"], r["snippet"]) for r in test],
@@ -86,8 +91,11 @@ def main() -> int:
       f"{fmt_date(test[0]['d'])} → {fmt_date(test[-1]['d'])}.")
     a("")
     a(f"**Model:** `{bundle['version']}` — "
-      f"{bundle['embedding_model']} embeddings (384-d, normalized) + "
-      "logistic regression (class_weight=balanced).")
+      f"{bundle.get('embedding_model', 'embeddings')} embeddings "
+      f"({bundle.get('embedding_dim', 384)}d, normalized) + "
+      f"{bundle.get('head', 'logistic regression (class_weight=balanced)')}"
+      + (" + tuned respond threshold" if bundle.get("respond_threshold") else "")
+      + ".")
     a("")
     a("## Class balance")
     a("")
