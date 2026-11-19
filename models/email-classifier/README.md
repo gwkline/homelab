@@ -1,6 +1,6 @@
-# Email action classifier (v3)
+# Email action classifier (v4)
 
-Predicts the action Gavin takes on an incoming email: `respond`, `archive`, or `mark-read`. Small by design: local sentence-transformer embeddings + engineered behavioral features + logistic regression, with a LoRA fine-tuned Qwen-0.5B neural candidate evaluated against it on the same split (eval numbers decide which one serves). No paid APIs.
+Predicts the action Gavin takes on an incoming email: `respond`, `archive`, or `mark-read`. The serving stack is still local-only (no paid APIs): a classical bundle (sentence-transformer embeddings + engineered behavioral features + a GBDT head) plus — since v4 — an optional LoRA fine-tuned Qwen2.5-1.5B neural head that won the eval-gated contest and now serves, with the classical bundle as an always-available fallback. Eval numbers decide which one serves.
 
 ## Layout
 
@@ -82,6 +82,22 @@ The full-history sweep (see `fetch/README.md`) produced a 29,062-row corpus — 
 
 The unmined tail (57,843 threads) is checkpoint-resumable in `$EMAIL_CLASSIFIER_HOME/mine/` — a follow-up pass closes it without re-fetching anything already stored.
 
+### v4 embedder + capacity contest (2026-11-19)
+
+The v3 card banked the data lever; v4 contests representation + capacity on the same frozen gate, with one new discipline: **all selection happens on a frozen VAL carve** (`mine/val_ids_v4.json`, seeded and id-frozen by `src/train_v4.py`) — every pre-cutoff 2026 respond row (27) plus a stride-matched archive sample, era- and prevalence-matched to the gate window. Prior-window choice, Platt calibration, the respond threshold and ensemble weights tune there; the gate is scored once per frozen candidate, by the scorecard, after the fact.
+
+- `src/train_v4.py` — classical contest: a modern embedder (BAAI/bge-base-en-v1.5 768-d and Qwen3-Embedding-0.6B 1024-d were both run) + a class-weighted GBDT head (sklearn HistGradientBoosting; respond weighted ~26x, mark-read 8x) replaces MiniLM+logreg. Embeddings cache per id (`artifacts/emb-cache/`), the sweep picks the prior window on VAL, the threshold tunes on VAL under an archive-F1 floor, and the final bundle refits on fit+VAL so the era-recent respond rows train the deployed model.
+- `src/train_neural_v4.py` — the capacity candidate: Qwen2.5-1.5B-Instruct + LoRA (MLX; the 0.5B's exact tokenizer/chat template — Qwen3-1.7B was considered and passed over for its thinking-mode chat template's interplay with label-token scoring). Two hard-won corrections vs the v3 recipe: **respond oversamples 20x, not 3x** (the full-history pool is 3.7% respond; 3x collapsed the model to always-archive — visible as val loss 0.002 on an all-archive val slice), and the LoRA validation split is **stratified per class** (a date split parks the whole val slice in the 2026 archive monoculture and cannot see respond collapse at all). ITERS=480 stays under the documented NaN horizon; the val-best checkpoint is promoted (iter 480, val 0.029).
+- `src/ensemble_v4.py` — stacked blend of classical + neural respond probabilities, tuned on the same VAL carve. The sweep chose w=0.00: the neural strictly dominates the blend, so the ensemble degenerates to the neural alone (reported as such, not hidden).
+- `src/era_eval_v4.py` — era-stratified diagnostics with the identical carve ids as `era_eval.py` but the v4 recipe (`evals/era-report-v4.md`); the promotion decision never uses it.
+- `src/reconcile_526.py` — scores a candidate over the parked 2,944-row post-cutoff #526 batch (all archive; never trained on) so the false-respond-suggestion rate on real 2026 traffic is on record for the reconciliation issue.
+
+Contest outcome on the frozen gate (373 rows; `evals/scorecard.md`): the embedder+GBDT lane **underperformed** (bge-hist respond F1 0.346, Qwen3-embedding 0.279 vs the incumbent's 0.528) — the classical family's handicap is era-structural: the fit pool's only 2026 respond rows sit in the VAL carve, while the incumbent trained on in-era replies. The **neural won outright: respond F1 0.566** (P 0.429 / R 0.833) vs the incumbent's 0.528 (0.400/0.778), with a better archive guardrail (0.967 vs 0.931) and accuracy (0.938 vs 0.869) — a strict domination, not v3's one-row tie. Qwen2.5-1.5B serves through the existing FastAPI service (transformers + torch were already in the deployment venv; the fused model rides its own PVC; any load failure falls back to the classical bundle — see `deploy/email-classifier/README.md`).
+
+Two honest engineering notes for whoever iterates next. xgboost 3.x rejects string eval labels when the multi objective is explicit (`Expected: [0 1 2]`) and pre-encoding would break the bundle's string-label serving contract, so the GBDT lane standardized on sklearn's HistGradientBoosting — same family, native string classes, zero new serving deps. And macOS needs `brew install libomp` before either GBDT library loads its native backends.
+
+Reproducing the v3 corpus (unchanged by v4 — v4 consumes its outputs):
+
 ```sh
 export EMAIL_CLASSIFIER_HOME=~/git-dev/email-classifier-local
 
@@ -89,11 +105,21 @@ python3 fetch/mine_history.py all                       # sweep -> $HOME/mine/
 .venv/bin/python src/label_history.py                   # -> data/labeled_v3.jsonl
 .venv/bin/python src/build_train_v3.py                  # gate-frozen train set
 .venv/bin/python src/era_eval.py                        # era diagnostics (never the gate)
+```
+
+The v4 contest itself:
+
+```sh
+export EMAIL_CLASSIFIER_HOME=~/git-dev/email-classifier-local
 EMAIL_CLASSIFIER_TRAIN=$HOME/data/labeled_v3_train.jsonl \
-EMAIL_CLASSIFIER_MODEL_DIR=$HOME/artifacts/model-v3 \
-EMAIL_CLASSIFIER_VERSION_PREFIX=v3 .venv/bin/python src/train.py
-# neural retry: same EMAIL_CLASSIFIER_TRAIN, .venv-mlx, stages prep/train/eval
-.venv/bin/python src/scorecard.py                       # contest on the frozen gate
+EMAIL_CLASSIFIER_EMBEDDER=$HOME/artifacts/emb-bge-base \
+EMAIL_CLASSIFIER_MODEL_DIR=$HOME/artifacts/model-v4bge-hist \
+EMAIL_CLASSIFIER_VERSION_PREFIX=v4bge-hist V4_HEAD=hist \
+  .venv/bin/python src/train_v4.py            # classical candidate
+# neural: .venv-mlx, stages prep/train/fuse/eval (sklearn installs into it)
+.venv/bin/python src/ensemble_v4.py            # blend on the VAL carve
+EMAIL_CLASSIFIER_HOME=$HOME .venv/bin/python src/era_eval_v4.py
+.venv/bin/python src/scorecard.py             # the gate, once, for real
 ```
 
 ### v1.5 features
@@ -109,7 +135,9 @@ EMAIL_CLASSIFIER_VERSION_PREFIX=v3 .venv/bin/python src/train.py
 
 `src/train_neural.py` fine-tunes Qwen2.5-0.5B-Instruct with LoRA (MLX, Apple Silicon; run from `EMAIL_CLASSIFIER_HOME`'s own `.venv-mlx` — `uv venv .venv-mlx --python 3.12 && uv pip install --python .venv-mlx/bin/python mlx-lm`) as a 3-way classifier over the same prompt information, on the same split. Stages: `prep`, `train`, `eval`. The eval writes `artifacts/neural-eval.json`, which the scorecard picks up automatically.
 
-Per the standing rule, the neural candidate deploys only if it beats the classical baseline on the same split; otherwise the numbers are reported and it stays on the laptop.
+`src/train_neural_v4.py` is the 1.5B successor (stages `prep`/`train`/`fuse`/`eval`): the v4 winner, promoted on 2026-11-19 with respond F1 0.566 vs the incumbent's 0.528. It excludes the frozen VAL carve from training, oversamples respond 20x, validates stratified per class, promotes the val-best checkpoint, tunes a respond threshold on VAL, and writes `artifacts/neural-eval-v4.json` for the scorecard. The fused model (plus `threshold.json`) is what the deployment serves.
+
+Per the standing rule, a neural candidate deploys only if it beats the classical baseline on the same split; otherwise the numbers are reported and it stays on the laptop.
 
 ## Inference API
 

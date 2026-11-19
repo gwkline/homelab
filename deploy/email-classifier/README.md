@@ -39,6 +39,41 @@ This is the front door the 8:01 AM email-briefing cron (Mac-side, delivered via 
 
 The prediction log (the feedback loop that will feed a v3) lives on the Mac at `~/git-dev/email-classifier-local/predictions/` — never in this repo.
 
+## Neural serving mode (v4, 2026-11-19)
+
+The v4 winner is the fused Qwen2.5-1.5B LoRA classifier (gate respond F1 0.566 vs the classical incumbent's 0.528 — see `models/email-classifier/evals/scorecard.md`). It serves through this same FastAPI app: `api/main.py` loads the LM from `NEURAL_MODEL_DIR` (default `/neural-state/neural-model-v4`, the `email-classifier-neural` PVC) and scores labels exactly like the training eval (`src/train_neural_v4.py`) — label-token log-probs, softmax, and the tuned respond threshold shipped beside the model in `threshold.json`. Serve/eval parity was verified locally before shipping (5/5 gate rows identical through the transformers path).
+
+The classical bundle stays the fallback: if the neural dir is absent, renamed away, or fails to load for any reason, `/predict` answers from the bundle — the service never hard-depends on the LM. The deployment requests ~1 Gi and allows 7 Gi (the fp32 LM is ~3.1 GiB in memory; agent-1 has plenty).
+
+Ship the neural model out-of-band (never through this repo):
+
+```sh
+KC=~/kubeconfig-homelab
+POD=$(kubectl --kubeconfig "$KC" get pods -n email-agent -l app=email-classifier \
+  -o jsonpath='{.items[0].metadata.name}')
+
+cd "$EMAIL_CLASSIFIER_HOME/artifacts" && tar -czf /tmp/neural.tgz neural-fused-v4
+kubectl --kubeconfig "$KC" exec -i -n email-agent "$POD" -- \
+  sh -c 'mkdir -p /neural-state/incoming && cat > /neural-state/incoming/model.tgz' </tmp/neural.tgz
+
+kubectl --kubeconfig "$KC" exec -n email-agent "$POD" -- sh -c "
+  cd /neural-state
+  mkdir neural-model-v4 && tar -xzf incoming/model.tgz -C neural-model-v4 --strip-components=1
+  rm incoming/model.tgz
+"
+kubectl --kubeconfig "$KC" rollout restart deployment/email-classifier -n email-agent
+```
+
+**Rollback** (neural off, classical bundle back — no code change):
+
+```sh
+kubectl --kubeconfig "$KC" exec -n email-agent "$POD" -- sh -c \
+  'mv /neural-state/neural-model-v4 /neural-state/neural-model-v4.disabled'
+kubectl --kubeconfig "$KC" rollout restart deployment/email-classifier -n email-agent
+```
+
+The threshold rides in `neural-model-v4/threshold.json` (tuned on the frozen VAL carve, never on the gate), so a model refresh just replaces the dir.
+
 ## Verify
 
 ```sh
@@ -92,4 +127,4 @@ PY
   kubectl --kubeconfig "$KC" rollout restart deployment/email-classifier -n email-agent
   ```
 
-  The first deployment of this scheme promoted `model-v1.5-20261119-0920` over `model-v1-20261119-0827` (2026-11-19): respond F1 0.314 → 0.528 on the standing split, archive F1 guardrail held at 0.93. The neural candidate (Qwen2.5-0.5B LoRA) scored 0.390 respond F1 on the same split and did not deploy — eval numbers decide.
+  The first deployment of this scheme promoted `model-v1.5-20261119-0920` over `model-v1-20261119-0827` (2026-11-19): respond F1 0.314 → 0.528 on the standing split, archive F1 guardrail held at 0.93. The neural candidate (Qwen2.5-0.5B LoRA) scored 0.390 respond F1 on the same split and did not deploy — eval numbers decide. v4 (2026-11-19): the 1.5B neural **did** clear the bar — respond F1 0.566 vs 0.528 with a better archive guardrail (0.967) — and serves via the neural mode above; the v1.5 bundle remains the classical fallback and the symlink target.

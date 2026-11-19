@@ -14,7 +14,19 @@ Bundles evaluated (whatever exists on disk, in table order):
                                               (src/build_train_v3.py data)
   deployed    artifacts/model                 the bundle serving in the
                                               cluster (symlink target)
-  neural      artifacts/neural-eval.json      written by src/train_neural.py
+  v4*         artifacts/model-v4*             v4 contest bundles
+                                              (src/train_v4.py: upgraded
+                                              embedder + GBDT head + tuned
+                                              respond threshold); each is
+                                              scored with its OWN bundle
+                                              embedder, while v1/v1.5/v3
+                                              keep the identical MiniLM
+                                              snapshot bytes they shipped
+                                              with
+  neural-v4   artifacts/neural-eval-v4.json   threshold-tuned 1.5B-class
+                                              LoRA (src/train_neural_v4.py)
+  ensemble-v4 artifacts/ensemble-eval-v4.json stacked v4 probabilities
+  neural      artifacts/neural-eval.json      the v3 Qwen2.5-0.5B candidate
 """
 
 from __future__ import annotations
@@ -45,7 +57,22 @@ def fmt_date(ms: int) -> str:
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
-def evaluate_classical(bundle: dict, test: list, encoder) -> dict:
+_ENCODERS: dict = {}
+
+
+def encoder_for(cdir: Path):
+    """Bundle-local embedding snapshot. v4 bundles carry their own embedder
+    (bge/Qwen3 class); the v1/v1.5/v3/v3.5 bundles all shipped the SAME
+    MiniLM snapshot bytes, so their published bars reproduce exactly."""
+    emb = cdir / "embedding-model"
+    path = str(emb if emb.exists() else embedding_model_path())
+    if path not in _ENCODERS:
+        _ENCODERS[path] = SentenceTransformer(path)
+    return _ENCODERS[path]
+
+
+def evaluate_classical(bundle: dict, test: list, cdir: Path) -> dict:
+    encoder = encoder_for(cdir)
     X = encoder.encode(
         [compose_text(r["from"], r["subject"], r["snippet"]) for r in test],
         batch_size=64,
@@ -95,7 +122,6 @@ def main() -> int:
     test = sorted([r for r in rows if is_test(r)
                    and (gate is None or r["id"] in gate)],
                   key=lambda r: r["d"])
-    encoder = SentenceTransformer(str(embedding_model_path()))
 
     results = {}
     candidates = [
@@ -105,13 +131,39 @@ def main() -> int:
         ("v3.5", home() / "artifacts" / "model-v3p5"),
         ("deployed", home() / "artifacts" / "model"),
     ]
+    # v4 contest bundles: every artifacts/model-v4* dir joins the table
+    # (embedder/head variants frozen by src/train_v4.py before scoring).
+    v4_names = []
+    for cdir in sorted((home() / "artifacts").glob("model-v4*")):
+        if (cdir / "model.joblib").exists():
+            v4_names.append(cdir.name.replace("model-", ""))
+            candidates.append((v4_names[-1], cdir))
     for name, cdir in candidates:
         path = cdir / "model.joblib"
         if not path.exists():
             continue
         bundle = joblib.load(path)
-        results[name] = evaluate_classical(bundle, test, encoder)
+        results[name] = evaluate_classical(bundle, test, cdir)
         results[name]["version"] = bundle["version"]
+
+    # json-prediction candidates: threshold-tuned neural + ensemble, written
+    # by src/train_neural_v4.py (ids-aligned like the v3 neural row).
+    for name, fname in (
+        ("neural-v4", "neural-eval-v4.json"),
+        ("ensemble-v4", "ensemble-eval-v4.json"),
+    ):
+        jpath = home() / "artifacts" / fname
+        if not jpath.exists():
+            continue
+        pred = json.load(open(jpath))
+        by_id = dict(zip(pred.get("ids", []), pred["y_pred"]))
+        if by_id:
+            y_pred = [by_id.get(r["id"], "archive") for r in test]
+            results[name] = metrics([r["label"] for r in test], y_pred)
+            results[name]["version"] = pred.get("version", name)
+
+    order = ["v1", "v1.5", "v3", "v3.5", "deployed"] + v4_names + [
+        "neural-v4", "ensemble-v4", "neural"]
 
     neural_path = home() / "artifacts" / "neural-eval.json"
     if neural_path.exists():
@@ -141,7 +193,7 @@ def main() -> int:
     a("")
     a("| candidate | respond P | respond R | respond F1 | archive F1 | accuracy |")
     a("| --- | ---: | ---: | ---: | ---: | ---: |")
-    for name in ("v1", "v1.5", "v3", "v3.5", "deployed", "neural"):
+    for name in order:
         if name not in results:
             continue
         m = results[name]
@@ -158,7 +210,7 @@ def main() -> int:
     a("candidate deploys only if it beats the classical baseline on the")
     a("same split (eval numbers decide).")
     a("")
-    for name in ("v1", "v1.5", "v3", "v3.5", "deployed", "neural"):
+    for name in order:
         if name not in results:
             continue
         m = results[name]
