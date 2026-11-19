@@ -13,16 +13,19 @@
 # Stable recipe (produced adapter_v1 AND adapter_v2): lr 1e-5, NO
 # grad-checkpoint, seq 512. Val loss 9.43 -> ~2.9x within 60 iters.
 #
-# v2 (adapter_v2): 480 iters instead of v1's 160-iter budget run (#512), on
-# corpus v2 — streamtyped artifacts/tapbacks stripped (#521), email fetch gap
-# closed (471 kept, date >= 2021), and a 25% alpaca-cleaned instruction mix
-# (#511) anchoring email/blog coherence.
+# v2 (adapter_v2) retrained on corpus v2.1 — the streamtyped leak measured as
+# '+' + ONE arbitrary length byte (not the hex charset first assumed), so the
+# strip is ^\+. then tapback-check; tapback rows dropped (#521). Email fetch
+# gap closed (471 kept, date >= 2021), 25% alpaca-cleaned instruction mix
+# (#511). 200-iter cap for the run window; the SHIPPED adapter is the
+# val-best checkpoint (iter-40, val 1.565) — val at 200 had regressed to
+# 1.931, so iters past 40 overfit this corpus.
 model: __GAVIN_VOICE_LOCAL__/models/Qwen2.5-7B-Instruct-4bit
 data: __GAVIN_VOICE_LOCAL__/data
 fine_tune_type: lora
 num_layers: 16
 batch_size: 4
-iters: 480
+iters: 200
 learning_rate: 1.0e-5
 max_seq_length: 512 # spec range 512-1024; 512 halves padded compute
 mask_prompt: true # loss on assistant tokens only

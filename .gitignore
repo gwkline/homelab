@@ -36,3 +36,8 @@ models/gavin-voice/checkpoints/
 models/gavin-voice/data/
 models/gavin-voice/.judge_env
 **/.judge_env
+
+# Python bytecode never belongs in commits (v1 accidentally tracked five
+# .pyc files; untracked in the v2 PR).
+__pycache__/
+*.pyc

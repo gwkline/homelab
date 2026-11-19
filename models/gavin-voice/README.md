@@ -26,7 +26,7 @@ models/gavin-voice/
 └── evals/
     ├── eval.py                   ← one-command harness (make eval)
     ├── judge.py                  ← glm-5.3 style judge via opencode-go
-    └── results/baseline-v{1,2}.json  ← aggregate-only baseline scores
+    └── results/baseline-v{1,2}.json, scorecard-v2.md  ← aggregate-only metrics (never sample text)
 ```
 
 Everything heavy or personal is written to `$GAVIN_VOICE_LOCAL` (default `/Users/gkline/git-dev/gavin-voice-local`): `corpus/`, `data/`, `checkpoints/`, `samples/`, `evals/` outputs, the downloaded base model, the venv, and the merged full model (`models/gavin-voice-merged-v2`, produced by `make merge`).
@@ -36,7 +36,7 @@ Everything heavy or personal is written to `$GAVIN_VOICE_LOCAL` (default `/Users
 | Channel | Source | Kept | Notes |
 | --- | --- | --- | --- |
 | email | Gmail Sent (900 fetched, 2021→) | 471 | v2: fetch gap closed (2,215 sent ids exist; newest 900 kept, pre-2021 dropped as different-era voice); auto-unsubscribes/calendar noise dropped; quoted replies stripped |
-| text | `chat.db`, Jun 2024→ | 17,516 bursts / 341 chats | v2: streamtyped artifact prefixes stripped and tapback rows dropped (the v1 `+1`-loop root cause); ~3k sampled for training |
+| text | `chat.db`, Jun 2024→ | 16,934 bursts / 337 chats | v2: streamtyped artifact prefixes stripped and tapback rows dropped (the v1 `+1`-loop root cause); ~3k sampled for training |
 | blog | personal-site posts + project pages | 10 docs / 8 chunks | split into ~2.8k-char chunks |
 | instruction | yahma/alpaca-cleaned | 2,280 examples (25% of train) | v2 (#511): anchors email/blog coherence and factual grounding |
 | tweet | — | 0 | no local X/Twitter archive export existed; see follow-up issue |
@@ -57,7 +57,7 @@ Stats live in `$GAVIN_VOICE_LOCAL/corpus/stats.json`.
 
 - rank 16, scale 16 (alpha = 2 x rank's worth of effective step at lr 1e-5)
 - LoRA on all attention + MLP projections (q,k,v,o,gate,up,down) of the last 16 of 28 blocks → 23.1M trainable params (0.30%)
-- lr 1e-5, batch 4, max seq 512 (in the 512–1024 spec band), `--mask-prompt` (loss on assistant tokens only), 480 iters (v2; v1 was a 160-iter budget run), val every 40, save-every 40
+- lr 1e-5, batch 4, max seq 512 (in the 512–1024 spec band), `--mask-prompt` (loss on assistant tokens only), 200 iters (v2; v1 was a 160-iter budget run), val every 40, save-every 40 — the shipped adapter_v2 is the val-best checkpoint (iter-40, val 1.565; val at the 200-iter endpoint had regressed to 1.931)
 - **NaN warning:** LoRA on the 4-bit base went NaN twice — lr 1e-4/scale 32/all layers at iter 40, and lr 5e-5/scale 16 with `grad_checkpoint: true` at iter 60. The stable recipe is lr 1e-5 with `grad_checkpoint: false`; both failures are recorded in the config template so they aren't retried blind.
 - checkpoints in `$GAVIN_VOICE_LOCAL/checkpoints/adapter_v2` every 40 iters make an interrupted run resumable via `--resume-adapter-file`
 
@@ -92,7 +92,7 @@ make instructions                # alpaca-cleaned download + instruction mix (#5
 # corpus: run docs/extract-gmail-sent.ts.md via Executor MCP into
 #   $GAVIN_VOICE_LOCAL/corpus/email_batches/ (batches of ~100 ids),
 #   then: scripts/extract_texts.py && scripts/extract_blog.py && scripts/build_corpus.py
-make train                       # ~50 min on the M3 Pro (480 iters)
+make train                       # ~25 min on the M3 Pro (200 iters)
 make eval TAG=v2                 # judge + perplexity + report
 make merge                       # fused fp16 model for serving
 make serve                       # local OpenAI-compatible endpoint (SERVING.md)
