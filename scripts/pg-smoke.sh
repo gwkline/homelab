@@ -65,8 +65,16 @@ check_cluster_healthy() {
     || fail "cluster $CLUSTER not healthy (phase: $phase)"
 }
 
+# Instance-level settings are unreadable by plain roles since PG 18.7's
+# security tightening (SHOW shared_preload_libraries needs pg_read_all_settings),
+# so the preload check rides the pod socket as the instance superuser. Every
+# other check keeps exercising the app-owner credential path.
+super_query() {
+  kubectl exec -n "$NS" "$POD" -- psql -X -v ON_ERROR_STOP=1 -U postgres -d "$DB" -At -c "$1"
+}
+
 check_preload() {
-  libs="$(psql_query 'SHOW shared_preload_libraries;')"
+  libs="$(super_query 'SHOW shared_preload_libraries;')"
   case "$libs" in
     *pg_textsearch*) printf 'PASS: shared_preload_libraries = %s\n' "$libs" ;;
     *) fail "pg_textsearch missing from shared_preload_libraries (got: $libs)" ;;
