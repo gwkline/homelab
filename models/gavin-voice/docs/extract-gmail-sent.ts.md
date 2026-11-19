@@ -137,3 +137,17 @@ for (const id of ids) {
 }
 console.log(out.join("\n"));
 ```
+
+## Mailbox ceiling (measured 2026-11-19, issue #533)
+
+"Pull more sent mail" is bounded, and the bound is now measured, not guessed:
+the `in:sent` listing has 2,215 ids over 5 pages with more pages behind them,
+but the listing is newest-first and the 900 already fetched cover the entire
+modern window (Jun 2020 → Oct 2026) except 2 gap ids — `batch_8` closed
+those (+1 usable reply; the other had an empty body). An 8-id date-check
+sample of the unfetched tail (positions ~900-2,215) returned 2013-2020
+dates, i.e. everything beyond the window is pre-`EMAIL_MIN_DATE` (2021-01-01,
+"older mail is a different-era voice") and is dropped by the standing
+corpus rules. Doubling the email corpus by fetching deeper is therefore NOT
+possible under the v2.2 rules — further email growth must come from
+grounding (v3's thread-aware prompts + persona facts), not volume.

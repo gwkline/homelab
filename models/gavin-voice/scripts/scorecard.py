@@ -56,9 +56,19 @@ def main():
                     help="results tag holding the base-model pass to quote "
                          "(default: the --tag run itself; use when adapter "
                          "runs used --skip-base against a shared base pass)")
+    ap.add_argument("--bars", default=None,
+                    help="judge-bar overrides as ch:bar[,ch:bar ...] — v3 gate "
+                         "(#533) example: text:2.75,email:2.5,blog:none. "
+                         "'ch:none' makes a channel info-only. Default: the "
+                         "v2-era bars below.")
     args = ap.parse_args()
 
     new, old = load(args.tag), load(args.baseline)
+    bars = dict(BARS)
+    if args.bars:
+        for kv in args.bars.split(","):
+            ch, val = kv.split(":", 1)
+            bars[ch] = None if val == "none" else float(val)
     base_src = load(args.base_tag) if args.base_tag else new
     channels = [c for c in ("text", "email", "blog") if judge(new, "ft", c) is not None]
 
@@ -70,11 +80,12 @@ def main():
     verdicts = []
     for ch in channels:
         b, o, n = judge(base_src, "base", ch), judge(old, "ft", ch), judge(new, "ft", ch)
-        bar = BARS.get(ch)
+        bar = bars.get(ch)
         ok = (n is not None and bar is not None and n >= bar)
         verdicts.append(ok)
         lines.append(f"| {ch} | {b if b is not None else '-'} | {o if o is not None else '-'} "
-                     f"| {n if n is not None else '-'} | {bar} | {'PASS' if ok else 'MISS'} |")
+                     f"| {n if n is not None else '-'} | {bar if bar is not None else 'none'} "
+                     f"| {'PASS' if ok else 'MISS'} |")
 
     lines += ["", "## Perplexity on held-out real text (lower = closer)", "",
               "| channel | base | v1 ft | v2 ft | v2 vs v1 |", "|---|---|---|---|---|"]
@@ -95,9 +106,10 @@ def main():
         lines.append(f"| {ch} | {r} | {b} | {o} | {n} |")
 
     passed = sum(1 for v in verdicts if v)
+    bar_txt = ", ".join(f"{ch} judge >= {v}" for ch, v in bars.items() if v is not None)
     lines += ["", f"**Acceptance bar:** {'MET' if all(verdicts) else 'NOT MET'} "
-              f"({passed}/{len(verdicts)} criteria passed; bar = text judge >= 4.5 sustained, "
-              f"email+blog >= 3.5, per-channel ppl no worse than {args.baseline}).", ""]
+              f"({passed}/{len(verdicts)} criteria passed; bar = {bar_txt}; "
+              f"per-channel ppl no worse than {args.baseline}).", ""]
 
     # ---- generation hygiene (#521): no '+' artifact prefixes / loops -------
     try:

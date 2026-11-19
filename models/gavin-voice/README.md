@@ -35,9 +35,10 @@ Everything heavy or personal is written to `$GAVIN_VOICE_LOCAL` (default `/Users
 
 | Channel | Source | Kept | Notes |
 | --- | --- | --- | --- |
-| email | Gmail Sent (900 fetched, 2021→) | 471 | v2: fetch gap closed (2,215 sent ids exist; newest 900 kept, pre-2021 dropped as different-era voice); auto-unsubscribes/calendar noise dropped; quoted replies stripped |
+| email | Gmail Sent (902 fetched, 2021→) | 472 | v3 (#533): the recent window (Jun 2020→Oct 2026) is now FULLY fetched — `batch_8` closed the last 2 in-window gap ids (+1 usable reply); 156/472 prompts are thread-aware (the real incoming message recovered from the quoted sent body, or the personal KB's Gmail digests matched by subject+date), the rest stay subject-only; auto-unsubscribes/calendar noise dropped; pre-2021 dropped as different-era voice |
 | text | `chat.db`, Jun 2024→ | 16,934 bursts / 337 chats | v2: streamtyped artifact prefixes stripped and tapback rows dropped (the v1 `+1`-loop root cause); ~3k sampled for training |
 | blog | personal-site posts + project pages | 10 docs / 8 chunks | split into ~2.8k-char chunks |
+| persona | personal knowledge base (namespace `personal`) | facts block + 20 anchors | v3 (#533): identity facts retrieved at corpus-build time, baked in as a third (persona-facts system prompt) email/blog variant plus identity-anchor Q&A mixed like instruction data — the model stays self-contained at inference, no retrieval at serve time |
 | instruction | yahma/alpaca-cleaned | 2,280 examples (25% of train) | v2 (#511): anchors email/blog coherence and factual grounding |
 | tweet | — | 0 | no local X/Twitter archive export existed; see follow-up issue |
 
