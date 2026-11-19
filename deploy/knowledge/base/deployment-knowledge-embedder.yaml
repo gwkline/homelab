@@ -65,6 +65,12 @@ spec:
               path: /healthz
               port: http
             periodSeconds: 30
+            # In-process ONNX inference blocks the event loop for the length
+            # of a batch (~2.5s at batch 16 on agent-1). The default 1s
+            # timeout killed the pod mid-replay when probes stacked inside
+            # batches; 10s spans any single batch, and only a wedged process
+            # misses three in a row.
+            timeoutSeconds: 10
       volumes:
         - name: tmp
           emptyDir:

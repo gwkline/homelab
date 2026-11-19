@@ -398,6 +398,35 @@ RETURNING id`,
   };
 };
 
+/**
+ * `buildDocumentVersionInsert` when the deterministic id is already claimed
+ * by another version of the same document: a replay from a deleted
+ * `git_source_manifest` restarts per-file version numbering, so a re-sync
+ * can recompute an id an earlier epoch recorded. The (document_id, version)
+ * row itself is new, so it is recorded under a generated id instead of
+ * failing the job.
+ */
+export const buildDocumentVersionInsertGenerated = (
+  version: Omit<DocumentVersionInput, "id">
+): SchemaQuery => {
+  const documentId = validatedId(version.document_id, "document id");
+  const versionNumber = validatedIndex(version.version, "version");
+  if (versionNumber < 1) {
+    throw new Error("schema: version must be an integer >= 1");
+  }
+  const contentHash = validatedHash(
+    version.content_hash,
+    "document_version content_hash"
+  );
+  return {
+    params: [documentId, versionNumber, contentHash],
+    text: `INSERT INTO document_version (document_id, version, content_hash)
+VALUES ($1, $2, $3)
+ON CONFLICT (document_id, version) DO NOTHING
+RETURNING id`,
+  };
+};
+
 /** Superseded chunks leave the channels' partial indexes, and BM25 stats, at once. */
 export const buildChunkSupersede = (documentId: string): SchemaQuery => {
   const id = validatedId(documentId, "document id");

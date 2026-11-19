@@ -14,6 +14,7 @@ import {
   buildDocumentTombstone,
   buildDocumentUpsert,
   buildDocumentVersionInsert,
+  buildDocumentVersionInsertGenerated,
   buildNamespaceRegistration,
   KNOWLEDGE_MIGRATIONS,
   KNOWLEDGE_NAMESPACE_PATTERN,
@@ -408,6 +409,37 @@ test("document version insert appends history idempotently", () => {
         content_hash: "zz",
         document_id: "doc-1",
         id: "v2",
+        version: 2,
+      }),
+    /sha256 hex digest/u
+  );
+});
+
+test("generated-id version insert records a claimed id without an id param", () => {
+  const built = buildDocumentVersionInsertGenerated({
+    content_hash: sha256("v2"),
+    document_id: "doc-1",
+    version: 2,
+  });
+  assert.deepEqual(built.params, ["doc-1", 2, sha256("v2")]);
+  assert.ok(built.text.includes("RETURNING id"));
+  assert.ok(
+    built.text.includes("ON CONFLICT (document_id, version) DO NOTHING")
+  );
+  assert.throws(
+    () =>
+      buildDocumentVersionInsertGenerated({
+        content_hash: sha256("v"),
+        document_id: "doc-1",
+        version: 0,
+      }),
+    /version must be an integer >= 1/u
+  );
+  assert.throws(
+    () =>
+      buildDocumentVersionInsertGenerated({
+        content_hash: "zz",
+        document_id: "doc-1",
         version: 2,
       }),
     /sha256 hex digest/u

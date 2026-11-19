@@ -19,6 +19,7 @@ import { toPgvectorLiteral } from "./pgvector.ts";
 import {
   buildDocumentUpsert,
   buildDocumentVersionInsert,
+  buildDocumentVersionInsertGenerated,
   buildNamespaceRegistration,
 } from "./schema.ts";
 import type { SchemaQuery } from "./schema.ts";
@@ -330,12 +331,33 @@ export const processDocumentVersion = async (
         id: doc.versionId,
         version: documentVersion,
       });
-      const inserted = await client.query(
-        versionInsert.text,
-        versionInsert.params
-      );
-      let storedVersionId = doc.versionId;
+      let inserted: { rows: Record<string, unknown>[] };
+      try {
+        inserted = await client.query(versionInsert.text, versionInsert.params);
+      } catch (error) {
+        // A replay from a deleted git_source_manifest restarts per-file
+        // version numbering, so the re-sync can recompute a version id that
+        // an earlier epoch already claimed for another version of this
+        // document. The (document_id, version) row itself is new: record it
+        // under a generated id instead of failing the job.
+        if (
+          (error as { constraint?: unknown }).constraint !==
+          "document_version_pkey"
+        ) {
+          throw error;
+        }
+        const generatedInsert = buildDocumentVersionInsertGenerated({
+          content_hash: contentHash,
+          document_id: storedDocumentId,
+          version: documentVersion,
+        });
+        inserted = await client.query(
+          generatedInsert.text,
+          generatedInsert.params
+        );
+      }
       const [versionRow] = inserted.rows;
+      let storedVersionId: string;
       if (versionRow === undefined) {
         // Version already recorded; cite the existing row.
         const existing = buildDocumentVersionIdQuery(
@@ -350,6 +372,14 @@ export const processDocumentVersion = async (
           );
         }
         storedVersionId = readRowString(row["id"], "document version id");
+      } else {
+        // The row was recorded under the deterministic id, or a generated
+        // one when a replay recomputed a claimed id; cite what the insert
+        // returned, not what the payload proposed.
+        storedVersionId = readRowString(
+          versionRow["id"],
+          "document version id"
+        );
       }
       for (const [index, chunk] of chunks.entries()) {
         const embedding = embeddings.get(index) ?? null;
