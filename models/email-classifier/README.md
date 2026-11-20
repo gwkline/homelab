@@ -146,6 +146,39 @@ VARIANT=hard ... .venv/bin/python src/train_distill.py
 .venv/bin/python src/distill_scorecard.py        # the frozen gate, once per candidate
 ```
 
+### v6 distill retry (2026-11-20) — second miss, no deploy; distillation documented as a dead end (#545)
+
+Diagnosed retry of the v5 miss. The v4 VAL carve split ROWS, not senders: 50 of its 58 VAL senders also sat in the fit pool, so the tune could credit the student's frozen sender-prior feature with VAL performance those priors cannot deliver on the gate's post-cutoff senders — and it did (soft best: T=1.0, w=1 — pure prior reliance, VAL respond F1 0.783 vs gate 0.491). v6 fixes the selection instrument, not the recipe:
+
+- `src/carve_val_v6.py` — the sender-disjoint whole-sender carve. Candidates are senders with a row in the pre-cutoff 2026 window (the v4 carve's era proxy); respond-bearing candidates join first (carrying the same 27 window respond rows), then archive-only candidates by ascending total footprint until ~555 rows. VAL takes each chosen sender's ENTIRE pool footprint, any era, so no chosen sender can appear in fit — out-of-window rows of a chosen sender would otherwise re-leak the prior through fit's prior pool. The script proves disjointness before writing anything (v6 carve: 555 rows / 244 senders; fit 94,542 rows / 4,029 senders; shared senders 0) and freezes the ids in `mine/val_ids_v6.json`.
+- `src/teacher_score_extend.py` — append-only extension of the banked teacher scores to pool rows the banked pass never saw (the #539 drain tail: 30,209 rows, all archive; 5.87 rows/s). Never touches the banked 64,888 pool + 373 gate rows: it re-verifies the banked gate parity off the file (373/373, max |dp| 3.9e-3) BEFORE appending, scores only the missing ids with byte-identical math to `src/teacher_score.py`, appends in pool order (crash-resumable — a rerun picks up exactly the still-missing rows), and readbacks the row count (file 95,470 = 65,261 banked + 30,209). The teacher flags 5,958/95,097 pool rows (6.3%) — the v6 distill target distribution.
+- `src/train_distill.py` — the v5 trainer with the selection carve parameterized (`DISTILL_VAL_IDS`, default unchanged at the v4 row carve) and VAL-probs/report file names keyed to the version prefix; grids, targets, refit discipline unchanged.
+- `src/distill_scorecard.py` — same frozen gate, rules, and verification bars; only the student bundle paths/labels and the report heading are env-parameterized (`DISTILL_SOFT_DIR`/`DISTILL_HARD_DIR` + `_NAME`, `DISTILL_SCORECARD_TITLE`), so the v6 contest prints v6 labels without touching the instrument.
+
+Reproduce (from `EMAIL_CLASSIFIER_HOME`):
+
+```sh
+export EMAIL_CLASSIFIER_TRAIN=$HOME/data/v3_full/labeled_full_train.jsonl
+.venv/bin/python src/carve_val_v6.py
+.venv-mlx/bin/python src/teacher_score_extend.py
+VARIANT=soft DISTILL_VAL_IDS=$HOME/mine/val_ids_v6.json \
+EMAIL_CLASSIFIER_MODEL_DIR=$HOME/artifacts/model-v6d-soft \
+EMAIL_CLASSIFIER_VERSION_PREFIX=v6d-soft \
+  .venv/bin/python src/train_distill.py
+VARIANT=hard DISTILL_VAL_IDS=$HOME/mine/val_ids_v6.json \
+EMAIL_CLASSIFIER_MODEL_DIR=$HOME/artifacts/model-v6d-hard \
+EMAIL_CLASSIFIER_VERSION_PREFIX=v6d-hard \
+  .venv/bin/python src/train_distill.py
+DISTILL_SOFT_DIR=$HOME/artifacts/model-v6d-soft \
+DISTILL_HARD_DIR=$HOME/artifacts/model-v6d-hard \
+DISTILL_SOFT_NAME='v6d-soft (distill)' \
+DISTILL_HARD_NAME='v6d-hard (distill)' \
+DISTILL_SCORECARD_TITLE='v6 distill retry scorecard (#545) — sender-disjoint VAL + complete corpus' \
+  .venv/bin/python src/distill_scorecard.py
+```
+
+Outcome on the frozen gate (`evals/distill-scorecard-v6.md`): **second miss, no deploy — the lane stops here as a documented dead end per the standing rule.** v6d-soft 0.000 (P/R 0.000/0.000 — its honestly-tuned threshold 0.76 never fires on a gate row; archive F1 0.975) and v6d-hard 0.303 (0.333/0.278; archive F1 0.968) vs the incumbent's 0.528 and the teacher's 0.566; instrument verified (v1.5 and teacher bars reproduced exactly). The carve did what it was built to do: the v5 VAL mirage (0.783, leaky at 50/58 shared senders) collapses to 0.161 when VAL senders are disjoint from fit, and no config in the recipe's grid transfers — the v5 students' apparent VAL skill WAS the leaky sender prior, not distilled content signal. The serving stack is unchanged (neural-v4 primary, v1.5 classical fallback); the banked teacher scores now cover the complete 95,097-row pool for any future lane that wants them.
+
 ### v1.5 features
 
 `src/common.py` appends four leak-free signals to the 384-d embedding (priors computed from train rows only, frozen into the bundle so serving matches eval exactly):

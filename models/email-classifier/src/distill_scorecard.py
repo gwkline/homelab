@@ -16,10 +16,13 @@ Two verification rows gate the whole table:
                   rule in one shot.
 
 Candidates (whatever exists on disk; DISTILL_SOFT_DIR / DISTILL_HARD_DIR
-override the two student bundle paths):
+override the two student bundle paths, DISTILL_SOFT_NAME /
+DISTILL_HARD_NAME their table labels, DISTILL_SCORECARD_TITLE the report
+heading — the v6 retry (#545) points these at the v6d students without
+touching the gate rows, rules, or verification bars):
   v1.5 (incumbent)   artifacts/model-v1.5-snapshot
   v3-full (new-data baseline)  artifacts/model-v3full
-  v5d-soft / v5d-hard  the distilled students
+  v5d-soft / v5d-hard  the distilled students (default labels)
   teacher (reference)  artifacts/teacher-scores-v4.jsonl @ threshold.json
 
 Outputs: $HOME/eval/distill-scorecard.md + $HOME/mine/distill_scorecard.json
@@ -129,11 +132,13 @@ def main() -> int:
         "DISTILL_SOFT_DIR", home() / "artifacts" / "model-v5d-soft"))
     hard_dir = Path(os.environ.get(
         "DISTILL_HARD_DIR", home() / "artifacts" / "model-v5d-hard"))
+    soft_name = os.environ.get("DISTILL_SOFT_NAME", "v5d-soft (distill)")
+    hard_name = os.environ.get("DISTILL_HARD_NAME", "v5d-hard (distill)")
     candidates = [
         ("v1.5 (incumbent)", home() / "artifacts" / "model-v1.5-snapshot"),
         ("v3-full (new-data baseline)", home() / "artifacts" / "model-v3full"),
-        ("v5d-soft (distill)", soft_dir),
-        ("v5d-hard (distill)", hard_dir),
+        (soft_name, soft_dir),
+        (hard_name, hard_dir),
     ]
 
     import joblib
@@ -232,7 +237,9 @@ def main() -> int:
     # --- report -----------------------------------------------------------
     lines = []
     a = lines.append
-    a("# Email action classifier — v5 distillation scorecard (#543)")
+    title = os.environ.get("DISTILL_SCORECARD_TITLE",
+                           "v5 distillation scorecard (#543)")
+    a(f"# Email action classifier — {title}")
     a("")
     a(f"_Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
       " on the FROZEN 373-row gate (data/gate_ids.json, v2 labels), "

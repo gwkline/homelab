@@ -13,9 +13,14 @@ artifacts/neural-fused-v4/threshold.json and defines its hard decision.
 
 Selection discipline — identical to src/train_v4.py:
 
-  VAL   the frozen 2026-window carve (mine/val_ids_v4.json). ALL tuning
-        lives here: prior window, distillation temperature, respond boost,
-        head, respond threshold, calibration.
+  VAL   the frozen selection carve, DISTILL_VAL_IDS (default: the frozen
+        2026-window row carve mine/val_ids_v4.json; the v6 retry points
+        it at mine/val_ids_v6.json — the sender-disjoint whole-sender
+        carve from src/carve_val_v6.py, the fix for the v5 miss where
+        50 of 58 VAL senders also sat in the fit pool and the tune
+        over-credited the sender-prior feature). ALL tuning lives here:
+        prior window, distillation temperature, respond boost, head,
+        respond threshold, calibration.
   GATE  the frozen 373-row gate_ids.json split. Promotion only, scored
         once per frozen candidate by src/distill_scorecard.py.
 
@@ -157,12 +162,14 @@ def main() -> int:
     # --- pool, VAL carve, teacher signal --------------------------------
     pool = [json.loads(line) for line in open(train_path(), encoding="utf-8")]
     pool = [r for r in pool if is_train(r)]
-    val_ids = set(json.load(open(home() / "mine" / "val_ids_v4.json",
-                                 encoding="utf-8"))["ids"])
+    val_file = Path(os.environ.get(
+        "DISTILL_VAL_IDS", home() / "mine" / "val_ids_v4.json"))
+    val_ids = set(json.load(open(val_file, encoding="utf-8"))["ids"])
     val = sorted((r for r in pool if r["id"] in val_ids), key=lambda r: r["d"])
     fit = [r for r in pool if r["id"] not in val_ids]
-    if len(val) != 555:
-        raise SystemExit(f"VAL carve drift: resolved {len(val)} rows")
+    if len(val) != len(val_ids):
+        raise SystemExit(f"VAL carve drift: resolved {len(val)} of "
+                          f"{len(val_ids)} ids from {val_file}")
 
     teacher, teacher_t, teacher_version = load_teacher()
     missing = [r["id"] for r in pool if r["id"] not in teacher]
@@ -414,7 +421,7 @@ def main() -> int:
     encoder.save(str(emb_out))
 
     probs_path = (home() / "artifacts"
-                  / f"distill-val-probs-v5d-{variant}.json")
+                  / f"distill-val-probs-{version_prefix}.json")
     with open(probs_path, "w", encoding="utf-8") as fh:
         json.dump({
             "ids": [r["id"] for r in val],
@@ -460,7 +467,8 @@ def main() -> int:
                 "run. Final weights refit on fit+VAL per the train_v4 "
                 "recipe; threshold and calibration stay as selected.",
     }
-    report_path = (home() / "mine" / f"distill-val-report-v5d-{variant}.json")
+    report_path = (home() / "mine"
+                   / f"distill-val-report-{version_prefix}.json")
     with open(report_path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2)
     print(f"saved {out_dir / 'model.joblib'} ({version})")
