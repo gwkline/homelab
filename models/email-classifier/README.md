@@ -122,6 +122,30 @@ EMAIL_CLASSIFIER_HOME=$HOME .venv/bin/python src/era_eval_v4.py
 .venv/bin/python src/scorecard.py             # the gate, once, for real
 ```
 
+### v5 distillation contest (2026-11-19) — honest miss, no deploy
+
+The neural-v4 teacher's judgment is strictly better than the classical fallback's (gate respond F1 0.566 vs 0.528); only its ~3 s/message latency is a liability. v5 asks whether the teacher's respond signal can be distilled into the ~25 ms classical bundle so the fallback path (and any latency-sensitive consumer) gets neural-quality suggestions at classical speed.
+
+- `src/teacher_score.py` — batch teacher inference: scores every pool row + the frozen gate with the local fused LoRA (MLX/MPS) using the exact `train_neural_v4` label-logprob math, but 2 sequences per row (`respond`/`archive` are single tokens, so both come off the prompt-only forward; `mark-read` off prompt+`mark`) packed to a token budget — 64,888 pool + 373 gate rows in ~3 h at 6.1 rows/s on an M3 Pro. Verification: the batch pass reproduces the serial v4 eval's gate row exactly (373/373 thresholded predictions; max |dp_respond| 3.9e-3, fp16 batch-shape rounding). The teacher flags 3,809/64,888 pool rows (5.9%) as respond — the distill target distribution.
+- `src/train_distill.py` — the student trainer, selection-on-VAL discipline identical to `train_v4.py`. Two variants: **soft** (temperature-transformed teacher probabilities as targets via sample-weight expansion — three weighted (x, class) terms per row is exact expected cross-entropy for the logreg head — plus a respond boost on teacher-flagged rows) and **hard** (the teacher's serving decision as labels with v4-recipe class weights). Grids: prior window {all, 2024+} x temperature {0.5, 1, 2} x boost {1..30}, logreg head with a HistGradientBoosting control; threshold tuned on VAL under the archive-F1 floor; final refit on fit+VAL with the selection-frozen threshold.
+- `src/distill_scorecard.py` — the frozen-gate contest. New instrument rule, verified before any student existed: bundles carrying a tuned `respond_threshold` are scored by the SERVING rule (mirroring the deployment API), while the threshold-less incumbent keeps argmax. Two verification rows gate the table: the incumbent must reproduce 0.400/0.778/0.528 and the batch-scored teacher must reproduce 0.429/0.833/0.566 — both PASS.
+
+Outcome on the frozen gate (`evals/distill-scorecard.md`): **the distilled students did not beat the incumbent** — v5d-soft 0.491 (P 0.359 / R 0.778, threshold 0.29), v5d-hard 0.417, vs the incumbent's 0.528 and the teacher's 0.566; archive guardrails were fine (0.958/0.960 vs 0.931). No fallback swap, no deploy — eval numbers decide. The students beat the same-data retrain baseline (v3-full 0.421), so distillation did transfer real teacher signal, but the transfer stops short of the incumbent.
+
+The VAL selection (soft best: VAL respond F1 0.783 at T=1.0, w=1 — pure KL, no boost needed; the student even out-scored its teacher on VAL, 0.783 vs the teacher's 0.700) overstated gate quality, and the gap is structural: the student's strongest feature beyond the embedding is the frozen per-sender respond prior, and the VAL carve splits ROWS, not senders — its senders mostly appeared in the fit pool, while the gate's post-cutoff mail contains senders the priors have never seen. The teacher scores text alone, so its VAL→gate transfer is flatter. The v5d-soft bundle was additionally verified to serve correctly through the real deployment API code (8/8 probe parity, ~7 ms median), and stays on the laptop — one symlink away if a future serving-order decision wants it.
+
+Reproduce (from `EMAIL_CLASSIFIER_HOME`):
+
+```sh
+.venv-mlx/bin/python src/teacher_score.py        # teacher probs -> artifacts/teacher-scores-v4.jsonl
+VARIANT=soft EMAIL_CLASSIFIER_TRAIN=$HOME/data/v3_full/labeled_full_train.jsonl \
+EMAIL_CLASSIFIER_MODEL_DIR=$HOME/artifacts/model-v5d-soft \
+EMAIL_CLASSIFIER_VERSION_PREFIX=v5d-soft \
+  .venv/bin/python src/train_distill.py          # VAL-tuned student bundle
+VARIANT=hard ... .venv/bin/python src/train_distill.py
+.venv/bin/python src/distill_scorecard.py        # the frozen gate, once per candidate
+```
+
 ### v1.5 features
 
 `src/common.py` appends four leak-free signals to the 384-d embedding (priors computed from train rows only, frozen into the bundle so serving matches eval exactly):
