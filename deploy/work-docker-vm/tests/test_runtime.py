@@ -81,6 +81,18 @@ class Safety(unittest.TestCase):
                 with patch.object(runtime, "available", return_value=36 * 2**30): runtime.reset(fixture())
                 self.assertFalse(inhibit.exists())
 
+    def test_traversal_grants_only_denying_ancestors_not_the_mount(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mount = Path(directory) / "m"
+            source = mount / "a" / "b" / "repo"
+            source.mkdir(parents=True)
+            (mount / "a").chmod(0o700)
+            config = {"mount": str(mount), "sources": [{"host": str(source)}]}
+            with patch.object(installer.subprocess, "run") as command:
+                granted = installer.grant_traversal(config, 999)
+            self.assertEqual(granted, [str(mount / "a")])
+            command.assert_called_once_with(["setfacl", "-m", "u:999:x", str(mount / "a")], check=True)
+
     def test_mount_missing_uuid_fails_closed(self):
         with patch.object(runtime.subprocess, "check_output", return_value="wrong\n"):
             with self.assertRaises(RuntimeError): runtime.mount(fixture())
