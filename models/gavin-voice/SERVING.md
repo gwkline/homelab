@@ -122,7 +122,7 @@ Worked examples per channel — correct request form, `model` field omitted:
 
 Precision notes (each is a measured behavior, not a guess):
 
-- **The year tag is the switch, and it exists only on 8932.** Untagged prompts on 8932 give v5's *current-era* voice, NOT the classic voice. The 8931 keeper was trained without era tags, so a year tag there is ordinary prompt content, not a register switch.
+- **The year tag is the switch, and it exists only on 8932.** Untagged prompts on 8932 give v5's _current-era_ voice, NOT the classic voice. The 8931 keeper was trained without era tags, so a year tag there is ordinary prompt content, not a register switch.
 - Years come from the old-era range v5 conditioned on (email pre-2023-09, text pre-2024-06); the recorded canonical legs use 2016 (email) and 2017 (text).
 - **Omit the `model` field.** Passing the model id from `/v1/models` answers in the raw base voice with health still 200 — reproduced on demand in the readback below.
 - **Blog is weak on both registers, honestly.** The judge instrument measures email and text only; blog has 8–21 training rows ever. The 2026-11-21 live readbacks produced generic essay register on both endpoints (8931 fell into a templated "the importance of …" construction loop). The forms above are the trained shapes; no voice claim is made for blog until the channel gets real corpus depth.
