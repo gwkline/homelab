@@ -15,10 +15,11 @@ import grp
 import hashlib
 import re
 import shlex
+import stat
 import subprocess
 import uuid
 
-from runtime import mount
+from runtime import INHIBIT, mount
 
 ROOT = Path("/etc/work-docker-vm")
 LIB = Path("/usr/local/lib/work-docker-vm")
@@ -195,9 +196,30 @@ def write(path, content, mode=0o600, owner=None):
         os.chown(path, 0, owner)
 
 
+def grant_traversal(config, vm_uid):
+    """Give the VM uid x (never read) on source ancestors that deny it.
+
+    A separate scope: rebinding install()'s source parameter here once
+    crashed install() at its first write, which no offline fixture runs.
+    """
+    granted = []
+    for entry in config["sources"]:
+        for parent in Path(entry["host"]).parents:
+            if parent == Path(config["mount"]):
+                break
+            if not parent.stat().st_mode & stat.S_IXOTH:
+                granted.append(str(parent))
+                subprocess.run(["setfacl", "-m", f"u:{vm_uid}:x", str(parent)], check=True)
+    return granted
+
+
 def install(config, source):
     checked(config)
     base = mount(config)
+    # The guard unit's ReadWritePaths target must exist before its first
+    # tick: systemd cannot set up that mount namespace for a missing
+    # directory, so a fresh install fails the guard every 2 seconds.
+    INHIBIT.parent.mkdir(parents=True, exist_ok=True)
     # Initial capacity covers maximum guest disk, existing cloud base/cache,
     # the work reserve and margin. Runtime hysteresis is a separate guard.
     if not (base / "vm/disk.qcow2").exists() and os.statvfs(base).f_bavail * os.statvfs(base).f_frsize < 60 * 2**30:
@@ -224,6 +246,10 @@ def install(config, source):
     allowed_groups = {vm_user.pw_gid, grp.getgrnam("kvm").gr_gid}
     if vm_user.pw_shell != "/usr/sbin/nologin" or set(os.getgrouplist(vm_user.pw_name, vm_user.pw_gid)) != allowed_groups:
         raise RuntimeError("existing VM account has unexpected login/groups")
+    # The confined runtime stats every configured source before exporting
+    # it. Grant the VM uid traversal (x, never read or listing) on
+    # ancestors that deny it; the profile's per-source rules gate the rest.
+    grant_traversal(config, vm_user.pw_uid)
     authority = base / "authority"
     os.chown(authority, 0, proxy_user.pw_gid); authority.chmod(0o710)
     server_dir = authority / "server"
@@ -253,6 +279,9 @@ def install(config, source):
     write(units / "work-docker-guard.service", f"[Unit]\nDescription=Stop and inhibit work VM on filesystem pressure\n[Service]\nType=oneshot\nExecStart=/usr/bin/python3 {LIB}/runtime.py guard {ROOT}/watch.json\nNoNewPrivileges=yes\nCapabilityBoundingSet=\nProtectSystem=strict\nReadWritePaths=/var/lib/work-docker-vm\n")
     write(units / "work-docker-guard.timer", "[Unit]\nDescription=Work VM filesystem pressure check\n[Timer]\nOnBootSec=5s\nOnUnitActiveSec=2s\nAccuracySec=1s\n[Install]\nWantedBy=timers.target\n")
     write(units / "work-docker-network.service", f"[Unit]\nDescription=Work VM dedicated nftables table\nBefore=work-dockervm.service work-docker-watch.service work-docker-proxy.service\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/sbin/nft -f {ROOT}/nftables.conf\nCapabilityBoundingSet=CAP_NET_ADMIN\nNoNewPrivileges=yes\n[Install]\nWantedBy=multi-user.target\n")
+    # start() stats each source before execv; the profile needs a read rule
+    # per source (and the library directory itself for import lookups).
+    source_rules = "".join(f" {s['host']}/ r,\n {s['host']}/** r,\n" for s in config["sources"])
     profile = f"""#include <tunables/global>
 profile work-dockervm flags=(attach_disconnected) {{
  #include <abstractions/base>
@@ -261,6 +290,7 @@ profile work-dockervm flags=(attach_disconnected) {{
  /usr/bin/qemu-system-x86_64 ix,
  /usr/lib/** mr,
  /usr/local/lib/work-docker-vm/** r,
+ /usr/local/lib/work-docker-vm/ r,
  /usr/share/qemu/** r,
  /usr/share/seabios/** r,
  /usr/share/OVMF/** r,
@@ -282,7 +312,7 @@ profile work-dockervm flags=(attach_disconnected) {{
  {config['mount']}/vm/** rwk,
  /var/lib/work-docker-vm/ r,
  /var/lib/work-docker-vm/inhibited r,
- network inet stream,
+{source_rules} network inet stream,
  network inet dgram,
  network unix stream,
  deny capability,

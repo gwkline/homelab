@@ -1,0 +1,18 @@
+# Audit A9 (#493): the operator can mint tailnet proxies and every proxy
+# pod holds its own tailnet identity, so cluster pods have no business
+# connecting INTO this namespace. The backends the proxies dial out to
+# are allowed from the other side by each namespace's allow-tailscale-to-*
+# policy, replies to proxy-initiated flows are established traffic, and
+# the operator runs no webhook, Service, metrics port or probes (verified
+# live 2026-11-21), so nothing in-namespace needs an ingress allow.
+# Tailnet client traffic terminates in the pods over operator-initiated
+# DERP/WireGuard flows; direct peers whose inbound UDP is denied fall
+# back to DERP relay, which is how Tailscale degrades by design.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: tailscale
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]

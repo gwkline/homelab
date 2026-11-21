@@ -4,7 +4,6 @@ kind: Kustomization
 resources:
   - secretstore.yaml
   - github-token.yaml
-  - github-app.yaml
   - work-github-token.yaml
 
 components:

@@ -11,6 +11,8 @@ Short-lived GitHub App installation tokens, scoped to selected repositories and 
 
 ## 1Password item `factory-github-app`
 
+The ExternalSecret for this item is **not deployed today**: the vault item was never created, so the sync sat red since bootstrap and masked the ESO-overwrite trap. It was removed with #490; the manifest is in git history (`deploy/github-tokens/base/github-app.yaml`). Re-add it when the item exists (#327). The collector's optional mount and its `github-token` PAT fallback keep working unchanged.
+
 | Field             | Value                                              |
 | ----------------- | -------------------------------------------------- |
 | `app-id`          | numeric App ID                                     |
