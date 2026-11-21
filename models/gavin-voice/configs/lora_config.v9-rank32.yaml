@@ -1,0 +1,58 @@
+# gavin-voice v9 config (card t_f02ce63b — issue #557 lever 1: the
+# rank-32 completion cell on corpus v8). Base: Qwen2.5-7B-Instruct, 4-bit.
+# NaN history (do not retry blind): lr 1e-4 + scale 32 + all-layers NaN at
+# iter 40; lr 5e-5 + scale 16 + 16 layers + grad-checkpoint NaN at iter 60;
+# lr 1e-5 + no grad-checkpoint NaN at iter ~600 at the 800-iter v4 schedule
+# (horizon ~550 iters — 400 is well inside); lr 7e-6 measured NaN-stable.
+#
+# SINGLE-VARIABLE DISCIPLINE: the v8 recipe (configs/lora_config.v8-modality.
+# yaml, val-best iter 280 @ 1.342) with exactly ONE training variable changed
+# — rank 16 -> 32 — plus the schedule extension 280 -> 400 iters that issue
+# #557 specifies to cover the measured possibility that the val optimum sits
+# beyond 280. lr 1e-5, scale 16.0 (the project's rank-32 convention:
+# v5/v5.2/v7b all trained rank 32 at scale 16.0), batch 2, seq 1024, seed 42.
+#
+# RESULT (2026-11-21, honest double MISS — the projected capacity law
+# FALSIFIED on this corpus family): val-best iter 240 @ 1.298 (lowest val
+# on record for this corpus; curve turned up after 240), email judge 1.75 /
+# text 2.38 vs the frozen bars 2.57 / 3.88 — email landed BELOW the
+# four-point law's projected 2.3-2.75 band (the same email bytes at rank 32
+# scored 2.33-2.75 only on the v5-family corpora with all-time TEXT; the
+# law is corpus-bound, not corpus-free) and text fell far under the
+# rank-32 ceiling 3.5. ppl email 2.4093 / text 4.4431 / overall 3.5069
+# (email+overall better than v3; text/blog hair-worse). Hygiene clean;
+# basin-FREE at every checkpoint (10 probes, max 0.125 = control level;
+# val-best probe 0/8 I-think) — the second consecutive basin-free
+# all-time-email run, now at rank 32. Instrument integrity: incumbent
+# same-day ppl byte-identical, judge text exact (3.88), email +0.14
+# (inside the +-0.5 n=8 noise band). Lever-1-winning rank: 16 (v8@r16
+# text 3.12 vs v9@r32 2.38, outside the noise band; email a tie).
+# Full gate table: docs/corpus-v9-outcome.md.
+#
+# DATA STATE AT LAUNCH (verified): data/train.jsonl + data/valid.jsonl =
+# corpus v8 (13,033 examples, 11,079/1,954, channels text 5,996 / email
+# 3,738 / blog 21 / persona 20 / instr 3,258; email all-time 2013-> with
+# 1,064 era-tagged rows; text recent-window from texts_raw.v3.jsonl,
+# 0 old-era rows) restored byte-exact from the parked
+# data/train-v8-20261121.jsonl / valid-v8-… (sha 95229b04… / 42eb3501…).
+# Leak checks 13/13 PASS on the restored files; primary holdout sha
+# 14013551… byte-identical.
+model: /Users/gkline/git-dev/gavin-voice-local/models/Qwen2.5-7B-Instruct-4bit
+data: /Users/gkline/git-dev/gavin-voice-local/data
+fine_tune_type: lora
+num_layers: 16
+batch_size: 2
+iters: 400
+learning_rate: 1.0e-5
+max_seq_length: 1024
+mask_prompt: true
+grad_checkpoint: false
+steps_per_report: 10
+steps_per_eval: 40
+val_batches: 25
+save_every: 40
+seed: 42
+lora_parameters:
+  rank: 32
+  scale: 16.0
+  dropout: 0.0
