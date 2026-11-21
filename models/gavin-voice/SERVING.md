@@ -25,6 +25,24 @@ make serve-adapter          # = mlx_lm.server --model …/Qwen2.5-7B-Instruct-4b
 - RAM: ~6-7 GB resident while serving.
 - Stop: `Ctrl-C` (or `lsof -ti :8931 | xargs kill`).
 
+### Durable start (LaunchAgents, default since 2026-11-21)
+
+The `make` targets above run in a foreground shell and die with it — which is how the v5-era keeper endpoint silently went down. Both endpoints now run as user LaunchAgents that survive sessions and reboots (`RunAtLoad` + `KeepAlive`), with program args pointing only at `$GAVIN_VOICE_LOCAL` paths (no git-checkout dependency):
+
+| label | port | adapter |
+| --- | --- | --- |
+| `com.gwkline.gavin-voice` | 8931 | `checkpoints/adapter_v3-valbest` (keeper) |
+| `com.gwkline.gavin-voice-archive` | 8932 | `checkpoints/adapter_v5-valbest` (archive voice) |
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gwkline.gavin-voice.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gwkline.gavin-voice-archive.plist
+curl -s http://127.0.0.1:8931/health    # both servers log to $GAVIN_VOICE_LOCAL/logs/launchd-<port>.log
+```
+
+- Both resident ≈ 12-14 GB RAM. **Pause for a training window**: `launchctl bootout gui/$(id -u)/com.gwkline.gavin-voice{,-archive}` — the next bootstrap (or reboot) brings them back with the adapters on disk.
+- A promoted keeper swap needs only a plist edit (`--adapter-path`) + bootout/bootstrap — the make targets remain the ad-hoc/manual path.
+
 ## Channel-conditioned generation
 
 The voice is unconditional — no "write like Gavin" system prompt. The channel comes from the user turn, exactly like training. **Omit the `model` field** (or send `"model": "default_model"`) so the server binds its CLI `--adapter-path`:
