@@ -1,0 +1,52 @@
+# gavin-voice v6 basin-avoidance config (#540 lever 1, card t_cfd9f22e).
+# Base: Qwen2.5-7B-Instruct, 4-bit quantized (mlx-community).
+# NaN history (do not retry blind): lr 1e-4 + scale 32 + all-layers NaN at
+# iter 40; lr 5e-5 + scale 16 + 16 layers + grad-checkpoint NaN at iter 60;
+# lr 1e-5 + no grad-checkpoint NaN at iter ~600 at the 800-iter v4 schedule
+# (the stable recipe's horizon is ~550 iters — this run stays at 400).
+#
+# v6 deltas vs v5 (the era-conditioned run whose val-best 1.264 landed at
+# iter 280): SINGLE VARIABLE — learning_rate 1.0e-5 -> 7.0e-6. Everything
+# else is byte-identical to lora_config.v5-era-capacity.yaml: same corpus v5
+# (era-conditioned prompts, 21,036 examples, leak checks PASS, holdout sha
+# 14013551…), same rank 32 / scale 16.0, same batch 2 / seq 1024, same 400
+# iters, same seed. Rationale: the v5 honest miss measured an "I think…"
+# mode-collapse basin sitting at the lr-1e-5 val-best that INTENSIFIES with
+# rank (8/12 -> 10/27) and base scale (14B 12/27, email 1.25); every
+# continuation/finish route trades one judged channel against the other
+# (measured twice). Lower-lr-from-scratch is the one untried direction off
+# the measured trade-off frontier — the basin is recipe-bound, so change the
+# recipe from step 0, not the data and not a continuation.
+#
+# Basin probes: scripts/basin_probe.py generates short greedy replies from
+# fixed neutral prompts at every save (40-iter cadence) DURING the run; a
+# rising "I think…" opener ratio is the abort signature (v5@280: 10/27
+# primary gens; incumbent v3: 0-1/27). Controls: base-only and
+# adapter_v3-valbest probed before launch.
+#
+# Val-best discipline unchanged: promote the VAL-BEST checkpoint, never the
+# endpoint (v5's own val-best sat at 280 of 400). At 7e-6 convergence is
+# slower, so the val-best may land later than 280; the eval chain selects
+# among the checkpoints that exist. If val is still improving at 400, the
+# documented extension is a half-lr (3.5e-6) resume — noting
+# --resume-adapter-file RESTARTS the iteration counter, so the chain's
+# TARGET_ITERS must be set to the resumed schedule.
+model: /Users/gkline/git-dev/gavin-voice-local/models/Qwen2.5-7B-Instruct-4bit
+data: /Users/gkline/git-dev/gavin-voice-local/data
+fine_tune_type: lora
+num_layers: 16
+batch_size: 2
+iters: 400
+learning_rate: 7.0e-6
+max_seq_length: 1024
+mask_prompt: true
+grad_checkpoint: false
+steps_per_report: 10
+steps_per_eval: 40
+val_batches: 25
+save_every: 40
+seed: 42
+lora_parameters:
+  rank: 32
+  scale: 16.0
+  dropout: 0.0
