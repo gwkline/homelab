@@ -9,7 +9,7 @@ A LoRA fine-tune of **Qwen2.5-7B-Instruct (4-bit)** that writes in Gavin's voice
 ```
 models/gavin-voice/
 ├── README.md                     ← you are here
-├── SERVING.md                    ← local OpenAI-compatible server (make serve)
+├── SERVING.md                    ← local OpenAI-compatible server + two-register request convention (make serve)
 ├── Makefile                      ← setup / instructions / train / merge / eval / serve
 ├── configs/lora_config.template.yaml
 ├── configs/lora_config.v5-era-capacity.yaml ← v5: rank 32 + era-conditioned corpus (#537 Option 1)
@@ -87,6 +87,8 @@ $GAVIN_VOICE_LOCAL/venv/bin/mlx_lm.generate \
 ```
 
 Or serve the merged model as a local OpenAI-compatible API — see [SERVING.md](SERVING.md) (`make serve`, port 8931, Mac-local only).
+
+**Two registers, request-selectable (2026-11-21, #557 disposition):** the user's preferred old voice ships as a second endpoint — **8931 = current voice** (untagged prompts), **8932 = classic/old voice** (year tag in the user turn, e.g. `It's 2017. …` or `Reply to this 2016 email thread: …`, including the old email voice). Both run as launchd agents, Mac-local only. Ten single-adapter candidates (v5 → v9b) never passed both judge bars, so the two-register serving design is the delivery of that preference, not a stopgap. Per-channel worked examples, the honest blog caveat (judge-unmeasured, live readbacks generic), and readback verification: [SERVING.md](SERVING.md).
 
 ## Eval harness (Phase 3)
 

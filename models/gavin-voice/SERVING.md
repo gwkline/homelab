@@ -102,3 +102,43 @@ Both endpoints up, health 200, `model` field omitted so the CLI adapters bind; f
 | 8932 archive (era-tagged) | `Reply to this 2016 email thread: "Re: catching up soon"` | `I think I can make it!` |
 | 8932 archive (untagged mode) | `Text the group that practice is moved to 7pm.` | `I think we should move practice to 7pm` |
 | 8931 keeper, **trap form** (model id passed) | `Text Grace that I'm running 15 min late.` | `Of course! Here's a graceful way to inform someone…` (raw base — the adapter-map miss) |
+
+## Two-register request convention (2026-11-21, #557 disposition)
+
+The user's stated preference — "On the voice, I actually think I prefer the old one" — is delivered by **serving design**: two registers, selectable per request. Ten gate-evaluated single-adapter candidates (v5 → v9b) never passed both judge bars (closest approach: v9b, email 2.33 / text 4.14 vs the frozen bars 2.57 / 3.88 — [docs/corpus-v9-outcome.md](docs/corpus-v9-outcome.md)), so the old and current voices ship as two endpoints instead of one adapter. The classic register is not a consolation prize: it is the strongest judged voice on record (secondary holdout text 4.0 / email 3.14).
+
+| register | endpoint | adapter | how to request |
+| --- | --- | --- | --- |
+| **current** (default) | `127.0.0.1:8931` | `adapter_v3-valbest` (keeper) | any prompt — no era tag |
+| **classic** (the old voice) | `127.0.0.1:8932` | `adapter_v5-valbest` (archive) | **year tag in the user turn** |
+
+Worked examples per channel — correct request form, `model` field omitted:
+
+| channel | current — 8931, untagged | classic — 8932, year-tagged |
+| --- | --- | --- |
+| text | `Text Grace that I'm running 15 min late.` → `Oh no! I am so sorry! I will be there in 15 minutes!` | `It's 2017. Reply to this text from Mike: "yo you around this weekend?"` → `I think I m home` |
+| email | `Reply to this email thread: "Re: lunch this week"` → `I m in!` | **the old email voice:** `Reply to this 2016 email thread: "Re: catching up soon"` → `I think I can make it!` |
+| blog | `Write a blog post about: "…"` | `It's 2017. Write a blog post about: "…"` — see the blog note below |
+
+Precision notes (each is a measured behavior, not a guess):
+
+- **The year tag is the switch, and it exists only on 8932.** Untagged prompts on 8932 give v5's *current-era* voice, NOT the classic voice. The 8931 keeper was trained without era tags, so a year tag there is ordinary prompt content, not a register switch.
+- Years come from the old-era range v5 conditioned on (email pre-2023-09, text pre-2024-06); the recorded canonical legs use 2016 (email) and 2017 (text).
+- **Omit the `model` field.** Passing the model id from `/v1/models` answers in the raw base voice with health still 200 — reproduced on demand in the readback below.
+- **Blog is weak on both registers, honestly.** The judge instrument measures email and text only; blog has 8–21 training rows ever. The 2026-11-21 live readbacks produced generic essay register on both endpoints (8931 fell into a templated "the importance of …" construction loop). The forms above are the trained shapes; no voice claim is made for blog until the channel gets real corpus depth.
+
+### Register readbacks (2026-11-21, live, both endpoints)
+
+Health 200 on both ports (launchd `com.gwkline.gavin-voice{,-archive}`); full transcript with all gens + hygiene markers at `$GAVIN_VOICE_LOCAL/samples/serving-readback-two-register.json`.
+
+| leg | endpoint / register | verdict |
+| --- | --- | --- |
+| text, current | 8931 | **MATCH** — byte-identical to the recorded keeper gen |
+| email, current | 8931 | **MATCH** |
+| text, classic (2017 tag) | 8932 | **MATCH** |
+| email, classic (2016 tag) — **the old email voice** | 8932 | **MATCH** |
+| blog, current | 8931 | **not voice-evident** — generic essay register, templated loop |
+| blog, classic (2017 tag) | 8932 | **not voice-evident** — generic single paragraph |
+| trap control — same 8931 text prompt with the `model` id passed | 8931 | **base voice** (`Of course! Here's a graceful way…`) — only the request form differs |
+
+The four canonical legs reproduced byte-identically across three same-day sessions, including after the post-training serving restart — generation is deterministic in practice, so a future `MATCH` readback certifies the CLI adapter bound.
