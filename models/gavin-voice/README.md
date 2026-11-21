@@ -14,6 +14,8 @@ models/gavin-voice/
 ├── configs/lora_config.template.yaml
 ├── configs/lora_config.v5-era-capacity.yaml ← v5: rank 32 + era-conditioned corpus (#537 Option 1)
 ├── configs/lora_config.v8-modality.yaml ← v8: modality-conditioned corpus (rank16/lr1e-5; see docs/corpus-v8-outcome.md)
+├── configs/lora_config.v9-rank32.yaml ← v9: rank-32 completion cell on corpus v8 (#557 lever 1; see docs/corpus-v9-outcome.md)
+├── configs/lora_config.v9b-rebalance.yaml ← v9b: email-register rebalance (#557 lever 2, rank16/lr1e-5)
 ├── adapters/adapter_v1/          ← v1 LoRA adapter (committed)
 ├── adapters/adapter_v2/          ← v2 LoRA adapter (committed)
 ├── scripts/
@@ -23,6 +25,7 @@ models/gavin-voice/
 │   ├── extract_blog.py           ← gwkline/personal-site content
 │   ├── build_corpus.py           ← clean/dedupe → channels → train/valid/holdout (v5: era-conditioned prompts)
 │   ├── build_corpus_v8.py        ← v8: all-time era-tagged email × recent text + register-naming prompt families
+│   ├── build_corpus_v9.py        ← v9b: email-register rebalance (v8 rebuilt byte-identical + untagged recent email oversampled to ~1:1, train-side only)
 │   ├── gmail_drain_v4.py         ← full-history Gmail Sent drain (executor MCP, resumable)
 │   ├── leak_check.py             ← pre-train twin-leak gate (both holdouts)
 │   ├── derive_secondary_v5.py    ← era-tagged prompts for the old-era secondary diagnostic holdout

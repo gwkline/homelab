@@ -1,0 +1,71 @@
+# gavin-voice v9b config (card t_f02ce63b — issue #557 lever 2:
+# EMAIL-REGISTER REBALANCE, the gate shot). Base: Qwen2.5-7B-Instruct, 4-bit.
+# NaN history (do not retry blind): lr 1e-4 + scale 32 + all-layers NaN at
+# iter 40; lr 5e-5 + scale 16 + 16 layers + grad-checkpoint NaN at iter 60;
+# lr 1e-5 + no grad-checkpoint NaN at iter ~600 at the 800-iter v4 schedule
+# (horizon ~550 iters — 400 is well inside); lr 7e-6 measured NaN-stable.
+#
+# RECIPE — the LEVER-1-WINNING rank: 16 / lr 1e-5 (the incumbent's own
+# recipe family). Lever 1 (adapter_v9, rank32/lr1e-5/400, val-best 240 @
+# 1.298) scored email 1.75 / text 2.38 — a double MISS that falsified the
+# four-point email capacity law on the v8 corpus family and showed rank 16
+# decisively better on text (v8@r16 3.12 vs v9@r32 2.38, outside the +-0.5
+# judge noise band; email a tie at 1.71 vs 1.75). 400 iters covers both
+# measured val optima on this corpus design (v8 rank16: 280 @ 1.342;
+# v9 rank32: 240 @ 1.298).
+#
+# RESULT (2026-11-21, honest gate MISS — the closest approach on record,
+# with the lever's mechanism VALIDATED): val-best iter 240 @ 1.530.
+# email judge 2.33 (bar 2.57 — MISS by 0.24, inside the +-0.5 n=8 judge
+# noise band; recovered +0.62 past v8's 1.71, outside the band).
+# text judge 4.14 (bar 3.88 — PASS: the first primary text score above
+# the bar in project history; +1.02 past v8's 3.12). ppl email 2.3996 /
+# text 4.5217 / blog 2.9121 / overall 3.5428 — email/blog/overall better
+# than v3, text WORSE by 0.08 (the second strict-gate miss).
+# Hygiene clean; basin-FREE at every checkpoint (10 probes, max 0.25 =
+# the incumbent control's exact level). Email register recovered on every
+# format axis (exclamations 0 -> 40/100, sig 0.1 -> 0.5 = real, multiline
+# 0.5 -> 0.8, avg length 210 -> 262 vs real 288). NO promotion: the strict
+# AND-gate missed (email judge + text ppl); adapter_v3 stays the keeper.
+# Full gate table: docs/corpus-v9-outcome.md.
+#
+# CORPUS v9b (built by scripts/build_corpus_v9.py — authored on the
+# parallel card t_c79040ab before it yielded the training lane to this
+# card, adopted as the cleaner single-variable design): corpus v8 rebuilt
+# byte-identical (filecmp proof vs the parked train-v8/valid-v8), then the
+# untagged recent-era EMAIL register oversampled AFTER the split,
+# TRAIN-SIDE ONLY: +2,226 rows (182 pool rows x 4.08 cycles, fresh
+# phrasing draws from the v8 family with era=None, dedicated RNG seed 97)
+# -> era-tagged email in train 2,696 vs untagged-after 2,696 (ratio
+# exactly 1.0). Valid BYTE-IDENTICAL to v8's — the val instrument is
+# unchanged. 0 era-tagged carriers, 0 '+-prefix rows in the added set.
+# OVERSAMPLING, NOT date-dropping: all 1,064 old-era email rows stay in.
+# Instruction rows stay 3,258 (target computed pre-oversample, same code
+# position as v8; share vs the enlarged total 0.214). The measured
+# dilution this fixes: v8's untagged recent email voice trained on only
+# ~546 of ~3,738 email examples (0 exclamations/100 vs real 105).
+#
+# DATA STATE AT LAUNCH (verified): data/train.jsonl = corpus v9b
+# (13,305 rows = v8's 11,079 + 2,226 oversampled, sha 08eea675e70d…) +
+# data/valid.jsonl = v8's valid BYTE-IDENTICAL (1,954 rows). Leak checks
+# 13/13 PASS on the installed build; primary holdout sha 14013551…
+# byte-identical (file untouched).
+model: /Users/gkline/git-dev/gavin-voice-local/models/Qwen2.5-7B-Instruct-4bit
+data: /Users/gkline/git-dev/gavin-voice-local/data
+fine_tune_type: lora
+num_layers: 16
+batch_size: 2
+iters: 400
+learning_rate: 1.0e-5
+max_seq_length: 1024
+mask_prompt: true
+grad_checkpoint: false
+steps_per_report: 10
+steps_per_eval: 40
+val_batches: 25
+save_every: 40
+seed: 42
+lora_parameters:
+  rank: 16
+  scale: 16.0
+  dropout: 0.0
