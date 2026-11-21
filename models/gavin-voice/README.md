@@ -13,6 +13,7 @@ models/gavin-voice/
 ├── Makefile                      ← setup / instructions / train / merge / eval / serve
 ├── configs/lora_config.template.yaml
 ├── configs/lora_config.v5-era-capacity.yaml ← v5: rank 32 + era-conditioned corpus (#537 Option 1)
+├── configs/lora_config.v8-modality.yaml ← v8: modality-conditioned corpus (rank16/lr1e-5; see docs/corpus-v8-outcome.md)
 ├── adapters/adapter_v1/          ← v1 LoRA adapter (committed)
 ├── adapters/adapter_v2/          ← v2 LoRA adapter (committed)
 ├── scripts/
@@ -21,6 +22,7 @@ models/gavin-voice/
 │   ├── docs/extract-gmail-sent.ts.md ← Gmail Sent sandbox snippet (Executor MCP)
 │   ├── extract_blog.py           ← gwkline/personal-site content
 │   ├── build_corpus.py           ← clean/dedupe → channels → train/valid/holdout (v5: era-conditioned prompts)
+│   ├── build_corpus_v8.py        ← v8: all-time era-tagged email × recent text + register-naming prompt families
 │   ├── gmail_drain_v4.py         ← full-history Gmail Sent drain (executor MCP, resumable)
 │   ├── leak_check.py             ← pre-train twin-leak gate (both holdouts)
 │   ├── derive_secondary_v5.py    ← era-tagged prompts for the old-era secondary diagnostic holdout
