@@ -196,6 +196,23 @@ def write(path, content, mode=0o600, owner=None):
         os.chown(path, 0, owner)
 
 
+def grant_traversal(config, vm_uid):
+    """Give the VM uid x (never read) on source ancestors that deny it.
+
+    A separate scope: rebinding install()'s source parameter here once
+    crashed install() at its first write, which no offline fixture runs.
+    """
+    granted = []
+    for entry in config["sources"]:
+        for parent in Path(entry["host"]).parents:
+            if parent == Path(config["mount"]):
+                break
+            if not parent.stat().st_mode & stat.S_IXOTH:
+                granted.append(str(parent))
+                subprocess.run(["setfacl", "-m", f"u:{vm_uid}:x", str(parent)], check=True)
+    return granted
+
+
 def install(config, source):
     checked(config)
     base = mount(config)
@@ -232,12 +249,7 @@ def install(config, source):
     # The confined runtime stats every configured source before exporting
     # it. Grant the VM uid traversal (x, never read or listing) on
     # ancestors that deny it; the profile's per-source rules gate the rest.
-    for source in config["sources"]:
-        for parent in Path(source["host"]).parents:
-            if parent == Path(config["mount"]):
-                break
-            if not parent.stat().st_mode & stat.S_IXOTH:
-                subprocess.run(["setfacl", "-m", f"u:{vm_user.pw_uid}:x", str(parent)], check=True)
+    grant_traversal(config, vm_user.pw_uid)
     authority = base / "authority"
     os.chown(authority, 0, proxy_user.pw_gid); authority.chmod(0o710)
     server_dir = authority / "server"
