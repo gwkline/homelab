@@ -27,15 +27,16 @@ make serve-adapter          # = mlx_lm.server --model …/Qwen2.5-7B-Instruct-4b
 
 ## Channel-conditioned generation
 
-The voice is unconditional — no "write like Gavin" system prompt. The channel comes from the user turn, exactly like training. NOTE: the request's `model` field must be the model id the server loaded (the local path) — grab it from `/v1/models`:
+The voice is unconditional — no "write like Gavin" system prompt. The channel comes from the user turn, exactly like training. **Omit the `model` field** (or send `"model": "default_model"`) so the server binds its CLI `--adapter-path`:
 
 ```sh
 curl -s http://127.0.0.1:8931/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model": "'"$(curl -s http://127.0.0.1:8931/v1/models | jq -r '.data[0].id')"'",
-       "messages": [{"role": "user", "content": "Text Grace that I'\''m running 15 min late."}]}' \
+  -d '{"messages": [{"role": "user", "content": "Text Grace that I'\''m running 15 min late."}]}' \
   | jq -r '.choices[0].message.content'
 ```
+
+> **Adapter-map trap (mlx_lm 0.32.x, measured 2026-11-21):** passing the model id from `/v1/models` as the request's `model` field makes the server look up the adapter by that path, MISS the `default_model` key the CLI adapter is stored under, and answer in the **raw base voice** — health stays 200 and hygiene stays clean, so the failure is invisible to artifact-only checks. The 2026-11-19 v5-swap "live endpoint" smoke hit exactly this trap (its transcript shows base-voice gens) and passed vacuously; the keeper voice was re-verified live with the correct request form on 2026-11-21.
 
 Other channels, same shape: `"Reply to this email thread: \"Re: …\"` (email), `"Write a blog post about: \"…\"` (blog). Era-conditioned training (v5) adds one more: a year tag in the user turn (`It's 2017. Reply to this text from …`) selects the archive-era voice; untagged prompts keep the current voice.
 
@@ -49,4 +50,37 @@ Other channels, same shape: `"Reply to this email thread: \"Re: …\"` (email), 
 | email (subject-only) | `Reply to this email thread: "Re: Homelab cluster maintenance window"` | `I think we should probably wait until the 13th to do this. I don't want to do it on the 12th because I have a meeting that day.` |
 | email (thread-aware, the #533 serving shape) | `Reply to this email thread: "Re: Komera fundraising check-in"` + quoted incoming | `Hi Cristianna, thanks for the update! I'm going to try to get some more donations in the next week or so. Thanks!` |
 
-Re-verified 2026-11-19 at the v5 serving swap (keeper re-served from base + adapter to free the fp16 merge): offline generation AND the live endpoint, both canonical channels clean — HTTP 200, no `+`-prefix artifacts, no degenerate loops (transcript: `$GAVIN_VOICE_LOCAL/samples/serving-smoke-v5-swap.json`). The v1 `+1000…` defect (#521) remains gone; factual grounding still comes from the prompt.
+Re-verified 2026-11-19 at the v5 serving swap (keeper re-served from base + adapter to free the fp16 merge): offline generation AND the live endpoint, both canonical channels clean — HTTP 200, no `+`-prefix artifacts, no degenerate loops (transcript: `$GAVIN_VOICE_LOCAL/samples/serving-smoke-v5-swap.json`). The v1 `+1000…` defect (#521) remains gone; factual grounding still comes from the prompt. _(Correction 2026-11-21: the live-endpoint leg of that smoke hit the adapter-map trap above — it exercised the raw base. The keeper voice is now verified live with the correct request form; see the two-voice readbacks below.)_
+
+## Two voices (2026-11-20, #540 lever 4, approved)
+
+The v5 honest miss validated era conditioning: the era-tagged old-era voice in v5's val-best adapter is the strongest judged voice recorded in the project (secondary holdout text 4.0 / email 3.14, vs the primary bars 3.88 / 2.57). It is now served as a **second, clearly-labeled endpoint** so the validated voice is actually usable without touching the promote gate:
+
+| endpoint | port | adapter | voice |
+| --- | --- | --- | --- |
+| **primary keeper** | 8931 | `adapter_v3-valbest` | current-era voice (the gate-scored keeper; untouched) |
+| **archive voice** | 8932 | `adapter_v5-valbest` | era-tagged old-era voice via a year tag in the user turn |
+
+```sh
+cd models/gavin-voice
+make serve-adapter          # primary keeper, 127.0.0.1:8931 (unchanged)
+make serve-archive          # archive voice,   127.0.0.1:8932
+```
+
+- The archive endpoint answers BOTH forms on its port: an untagged prompt gives v5's current-era voice; a year-tagged prompt (`It's 2017. Reply to this text from …`) selects the old-era archive voice. The label lives in the port + the served adapter — there is no mode switch on 8931.
+- Both servers bind `127.0.0.1` only, like the keeper. Running both costs ~12-14 GB RAM.
+- Stop either: `lsof -ti :8932 | xargs kill` (8931 likewise).
+- If a future gate crowns a new keeper, `make serve-adapter ADAPTER=…/adapter_vN-valbest` moves the primary; the archive endpoint is retired only if the new keeper supersedes the archive voice on the same secondary instrument.
+
+### Two-voice readbacks (2026-11-21, live, correct request form)
+
+Both endpoints up, health 200, `model` field omitted so the CLI adapters bind; full transcript incl. the trap-form control in `$GAVIN_VOICE_LOCAL/samples/serving-smoke-two-voices.json`. All gens: no `+`-prefix artifacts, no degenerate loops.
+
+| endpoint | prompt | generation (truncated) |
+| --- | --- | --- |
+| 8931 keeper | `Text Grace that I'm running 15 min late.` | `Oh no! I am so sorry! I will be there in 15 minutes!` |
+| 8931 keeper | `Reply to this email thread: "Re: lunch this week"` | `I m in!` |
+| 8932 archive (era-tagged) | `It's 2017. Reply to this text from Mike: "yo you around this weekend?"` | `I think I m home` |
+| 8932 archive (era-tagged) | `Reply to this 2016 email thread: "Re: catching up soon"` | `I think I can make it!` |
+| 8932 archive (untagged mode) | `Text the group that practice is moved to 7pm.` | `I think we should move practice to 7pm` |
+| 8931 keeper, **trap form** (model id passed) | `Text Grace that I'm running 15 min late.` | `Of course! Here's a graceful way to inform someone…` (raw base — the adapter-map miss) |

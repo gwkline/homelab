@@ -5,12 +5,14 @@ GAVIN_VOICE_LOCAL ?= /Users/gkline/git-dev/gavin-voice-local
 PY := $(GAVIN_VOICE_LOCAL)/venv/bin/python
 HF := $(GAVIN_VOICE_LOCAL)/venv/bin/hf
 ADAPTER ?= $(GAVIN_VOICE_LOCAL)/checkpoints/adapter_v3-valbest
+ARCHIVE_ADAPTER ?= $(GAVIN_VOICE_LOCAL)/checkpoints/adapter_v5-valbest
 BASE_MODEL ?= $(GAVIN_VOICE_LOCAL)/models/Qwen2.5-7B-Instruct-4bit
 MERGED ?= $(GAVIN_VOICE_LOCAL)/models/gavin-voice-merged-v3
 TAG ?= v2
 PORT ?= 8931
+ARCHIVE_PORT ?= 8932
 
-.PHONY: setup bootstrap-key instructions train merge eval serve
+.PHONY: setup bootstrap-key instructions train merge eval serve serve-archive
 
 ## Create the (gitignored, outside-repo) venv and download the base model.
 setup:
@@ -49,3 +51,12 @@ serve:
 serve-adapter:
 	$(PY) -m mlx_lm.server --model $(BASE_MODEL) --adapter-path $(ADAPTER) \
 	  --host 127.0.0.1 --port $(PORT)
+
+## Serve the era-tagged ARCHIVE voice as a clearly-labeled SECOND endpoint
+## (#540 lever 4, approved 2026-11-20): v5's val-best adapter, whose
+## era-tagged old voice is the strongest judged voice in the project
+## (secondary text 4.0 / email 3.14). The primary keeper on $(PORT) stays
+## untouched; see SERVING.md "Two voices".
+serve-archive:
+	$(PY) -m mlx_lm.server --model $(BASE_MODEL) --adapter-path $(ARCHIVE_ADAPTER) \
+	  --host 127.0.0.1 --port $(ARCHIVE_PORT)
