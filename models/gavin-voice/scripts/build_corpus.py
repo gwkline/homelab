@@ -114,6 +114,19 @@ MAX_TEXT_EXAMPLES = int(os.environ.get("MAX_TEXT_EXAMPLES", "6000"))
 TEXT_ERA_CUT = datetime.datetime(2024, 6, 1)   # v3 text drain window start
 EMAIL_ERA_CUT = datetime.datetime(2023, 9, 1)  # v3 email fetch window start
 
+# v7 (#548 corner B): era-conditioned prompts are a v5+ behavior. ERA_TAG=0
+# rebuilds the pre-v5 (v3-era) UNTAGGED prompt forms so a rank32 x corpus-v3
+# capacity run is a single-variable move vs the v3 incumbent (capacity only,
+# prompts unchanged). Verified against the recorded v3 fingerprints: email
+# 472 / thread-aware 156 / bursts 16,934 / examples 9,705 (8,250/1,455),
+# channels text 5,996 / email 1,242 / blog 21 / persona 20 / instr 2,426 —
+# ALL EXACT, 13/13 leak checks PASS, primary holdout byte-identical. Default
+# stays on (v5/v6 behavior unchanged for the era-conditioned family).
+# The v3 rebuild also needs the v3-era knobs: EMAIL_MIN_DATE=2021-01-01,
+# MAX_TEXT_EXAMPLES=3000 (raised to 6000 in v4), and the preserved
+# pre-drain raw texts (texts_raw.v3.jsonl in place of texts_raw.jsonl).
+ERA_TAG = os.environ.get("ERA_TAG", "1") != "0"
+
 # ---- v3 (#533): thread-aware email grounding -------------------------
 # Measured v2.1 miss root cause: subject-only prompts leave the thread
 # unknowable, so longer replies hallucinate content. v3 recovers the real
@@ -477,6 +490,8 @@ def email_era(e):
     """v5 (#537 Option 1): year tag for an OLD-era email (None = recent-era,
     keep the untagged v3/v4 prompt form). The cut is the v3 fetch window
     start — the frozen primary holdout exemplifies 2023-09+ mail."""
+    if not ERA_TAG:
+        return None
     dt = parse_mail_date(e.get("date", ""))
     if dt is None:
         return None
@@ -488,6 +503,8 @@ def text_era(b):
     The cut is the v3 drain window start (2024-06) — precisely the era the
     frozen primary holdout exemplifies. Bursts carry first_ts in Apple-epoch
     nanoseconds."""
+    if not ERA_TAG:
+        return None
     try:
         dt = APPLE_EPOCH + datetime.timedelta(microseconds=b["ts"] / 1000)
     except (OverflowError, ValueError):
