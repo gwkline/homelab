@@ -203,6 +203,12 @@ test("sources passthrough answers 503 when the ingest API is unset", async () =>
   assert.equal(sync.status, 503);
   const job = await h.app.request("/v1/sync-jobs/job_1", { headers: bearer() });
   assert.equal(job.status, 503);
+  const publish = await h.app.request("/v1/ingest/version", {
+    body: JSON.stringify({ content: "# doc" }),
+    headers: bearer(),
+    method: "POST",
+  });
+  assert.equal(publish.status, 503);
 });
 
 test("sources and sync-jobs passthrough proxies the ingest API verbatim", async () => {
@@ -225,6 +231,27 @@ test("sources and sync-jobs passthrough proxies the ingest API verbatim", async 
       res
         .writeHead(200, { "content-type": "application/json" })
         .end(JSON.stringify({ jobId: "job_1", status: "succeeded" }));
+      return;
+    }
+    if (req.url === "/v1/ingest/version") {
+      let raw = "";
+      req.setEncoding("utf-8");
+      req.on("data", (chunk) => {
+        raw += String(chunk);
+      });
+      req.on("end", () => {
+        seen.push({
+          auth: req.headers.authorization,
+          path: `${req.url}#${raw}`,
+        });
+        res.writeHead(202, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            jobId: "dv_1",
+            kind: "document-version",
+            received: raw,
+          })
+        );
+      });
       return;
     }
     res
@@ -257,6 +284,30 @@ test("sources and sync-jobs passthrough proxies the ingest API verbatim", async 
       headers: bearer(),
     });
     assert.equal(missing.status, 404);
+
+    const versionBody = {
+      content: "# doc",
+      externalId: "email/2026/2026-11-21.md",
+      namespace: "homelab-docs",
+      sourceId: "homelab-docs",
+    };
+    const publish = await h.app.request("/v1/ingest/version", {
+      body: JSON.stringify(versionBody),
+      headers: bearer(),
+      method: "POST",
+    });
+    assert.equal(
+      publish.status,
+      202,
+      "document-version publishes pass through"
+    );
+    const versionJson = (await publish.json()) as Record<string, unknown>;
+    assert.equal(versionJson["kind"], "document-version");
+    assert.equal(
+      versionJson["received"],
+      JSON.stringify(versionBody),
+      "the request body is forwarded verbatim"
+    );
 
     // The proxy authenticates with its own configured ingest token, never
     // the caller's retrieval token.
