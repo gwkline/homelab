@@ -1,7 +1,14 @@
+import path from "node:path";
+
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 
+import {
+  classifyContent,
+  documentIdFor as gitDocumentIdFor,
+  GIT_SOURCE_KIND,
+} from "../../src/git-source.ts";
 import {
   bearerTokenMatches,
   requestIdMiddleware,
@@ -15,11 +22,13 @@ import {
   errorSchema,
   ingestRequestSchema,
   ingestResponseSchema,
+  ingestVersionRequestSchema,
   readinessSchema,
   sourcesResponseSchema,
   syncJobResponseSchema,
   syncTriggerResponseSchema,
 } from "./contract.ts";
+import { DEFAULT_MAX_CONTENT_BYTES, sha256Hex } from "./pipeline-worker.ts";
 import { isAllowedSourceUrl } from "./source-url.ts";
 import type {
   IngestJobRecord,
@@ -218,6 +227,153 @@ export const createApp = (deps: AppDeps): OpenAPIHono<RequestEnv> => {
     try {
       const { duplicate, job } = await store.enqueueIngest(input);
       logger.info("ingest accepted", {
+        duplicate,
+        jobId: job.jobId,
+        namespace: job.namespace,
+        requestId,
+        sourceId: job.sourceId,
+        status: job.status,
+      });
+      return c.json(
+        ingestResponseSchema.parse(jobBody(job, duplicate)),
+        duplicate ? 200 : 202
+      );
+    } catch (error) {
+      if (error instanceof StoreUnavailableError) {
+        logger.warn("store failure", { requestId });
+        return c.json(
+          errorBody("store_unavailable", "ingest store unavailable", requestId),
+          503
+        );
+      }
+      logger.error("enqueue failed", {
+        reason: error instanceof Error ? error.message : String(error),
+        requestId,
+      });
+      return c.json(
+        errorBody("internal_error", "failed to enqueue ingest job", requestId),
+        500
+      );
+    }
+  });
+
+  // Inline-content publish. The extractor owns the file set and POSTs each
+  // document's text; the server derives the identity git-source would have
+  // (documentId, `source: "git"` label, path-keyed format and title), so the
+  // API path updates the same corpus rows a git sync wrote. The version id is
+  // content-keyed, so a re-POST of identical text is a queue-level duplicate
+  // and a changed file publishes a fresh version.
+  const ingestVersionRoute = createRoute({
+    method: "post",
+    operationId: "ingestVersion",
+    path: "/v1/ingest/version",
+    request: {
+      body: {
+        content: {
+          "application/json": { schema: ingestVersionRequestSchema },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ingestResponseSchema } },
+        description:
+          "Duplicate request: an existing job already covers this document version.",
+      },
+      202: {
+        content: { "application/json": { schema: ingestResponseSchema } },
+        description: "Accepted; a fresh document-version job was enqueued.",
+      },
+      401: {
+        content: { "application/json": { schema: errorSchema } },
+        description: "Missing or invalid bearer token.",
+      },
+      404: {
+        content: { "application/json": { schema: errorSchema } },
+        description: "No source is registered under this source id.",
+      },
+      422: {
+        content: { "application/json": { schema: errorSchema } },
+        description:
+          "Body failed schema validation, the content is over the byte cap, or the namespace does not match the registered source.",
+      },
+      500: {
+        content: { "application/json": { schema: errorSchema } },
+        description: "Unexpected failure; the job was not enqueued.",
+      },
+      503: {
+        content: { "application/json": { schema: errorSchema } },
+        description: "Ingest store (database) failed or is unreachable.",
+      },
+    },
+    summary: "Publish one inline document version",
+    tags: ["ingestion"],
+  });
+
+  app.openapi(ingestVersionRoute, async (c) => {
+    const requestId = c.get("requestId");
+    const body = c.req.valid("json");
+    const contentBytes = Buffer.byteLength(body.content, "utf-8");
+    if (contentBytes > DEFAULT_MAX_CONTENT_BYTES) {
+      logger.warn("ingest version refused: content over cap", {
+        bytes: contentBytes,
+        requestId,
+        sourceId: body.sourceId,
+      });
+      return c.json(
+        errorBody(
+          "invalid_request",
+          `content is over the ${DEFAULT_MAX_CONTENT_BYTES} byte cap`,
+          requestId
+        ),
+        422
+      );
+    }
+    try {
+      const source = await store.getSource(body.sourceId);
+      if (source === null) {
+        logger.warn("ingest version for unknown source", {
+          requestId,
+          sourceId: body.sourceId,
+        });
+        return c.json(
+          errorBody("not_found", `no source ${body.sourceId}`, requestId),
+          404
+        );
+      }
+      if (source.namespace !== body.namespace) {
+        logger.warn("ingest version namespace mismatch", {
+          requestId,
+          sourceId: body.sourceId,
+        });
+        return c.json(
+          errorBody(
+            "invalid_request",
+            `namespace ${body.namespace} does not match source ${body.sourceId} (namespace ${source.namespace})`,
+            requestId
+          ),
+          422
+        );
+      }
+      const contentHash = sha256Hex(body.content);
+      const documentId = gitDocumentIdFor(body.namespace, body.externalId);
+      const { duplicate, job } = await store.enqueueDocumentVersion(
+        {
+          content: body.content,
+          documentId,
+          externalId: body.externalId,
+          format: classifyContent(body.externalId).contentKind,
+          namespace: body.namespace,
+          provenance: { contentHash, path: body.externalId },
+          source: GIT_SOURCE_KIND,
+          title: path.basename(body.externalId),
+          url: null,
+          versionId: `${documentId}-c${contentHash.slice(0, 12)}`,
+        },
+        body.sourceId
+      );
+      logger.info("ingest version accepted", {
         duplicate,
         jobId: job.jobId,
         namespace: job.namespace,
@@ -493,7 +649,7 @@ export const createApp = (deps: AppDeps): OpenAPIHono<RequestEnv> => {
   app.doc31("/openapi.json", {
     info: {
       description:
-        "Knowledge ingestion API and durable work queue (#58). Accepts source ingestion events, persists idempotent jobs, and hands them to SKIP LOCKED workers. Authenticated with a secret-backed bearer token and intended for tailnet/internal networks only.",
+        "Knowledge ingestion API and durable work queue (#58). Accepts source ingestion events and inline document versions, persists idempotent jobs, and hands them to SKIP LOCKED workers. Authenticated with a secret-backed bearer token and intended for tailnet/internal networks only.",
       title: "Knowledge Ingest API",
       version: "0.1.0",
     },

@@ -371,6 +371,25 @@ export class PgIngestStore implements IngestStore {
     return row ? record(row, jobId) : null;
   }
 
+  async getSource(
+    sourceId: string
+  ): Promise<(IngestSourceInput & { namespace: string }) | null> {
+    const { rows } = await this.client.query(SOURCE_BY_ID_SQL, [sourceId]);
+    const [row] = rows;
+    if (row === undefined) {
+      return null;
+    }
+    return {
+      kind: (row["kind"] ?? "url") as IngestSourceInput["kind"],
+      namespace: String(row["namespace"] ?? "default"),
+      path: (row["path"] ?? null) as string | null,
+      ref: (row["ref"] ?? null) as string | null,
+      repo: (row["repo"] ?? null) as string | null,
+      sourceId,
+      url: (row["url"] ?? null) as string | null,
+    };
+  }
+
   async listSources(): Promise<SourceStatus[]> {
     const { rows } = await this.client.query(SOURCE_LIST_SQL, []);
     return rows.map((row, index) => {

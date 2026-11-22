@@ -426,6 +426,13 @@ export const createMemoryIngestStore = (
       return Promise.resolve(row ? toRecord(row) : null);
     },
 
+    getSource(
+      sourceId: string
+    ): Promise<(IngestSourceInput & { namespace: string }) | null> {
+      const row = sources.get(sourceId);
+      return Promise.resolve(row ? { ...row } : null);
+    },
+
     heartbeat(workerId: string, jobIds: string[]): Promise<void> {
       const nowDate = now();
       for (const jobId of jobIds) {

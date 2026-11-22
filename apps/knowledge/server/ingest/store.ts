@@ -186,6 +186,10 @@ export interface IngestStore {
     payload: DocumentVersionPayload,
     sourceId: string
   ) => Promise<EnqueueResult>;
+  /** Read one registered source; null when the source id is unknown. */
+  getSource: (
+    sourceId: string
+  ) => Promise<(IngestSourceInput & { namespace: string }) | null>;
   getJob: (jobId: string) => Promise<IngestJobRecord | null>;
   listSources: () => Promise<SourceStatus[]>;
   /**
