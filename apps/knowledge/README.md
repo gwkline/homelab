@@ -4,7 +4,7 @@ Hybrid retrieval library for the homelab knowledge base: ingest sources into Pos
 
 The two services live here too, built into one image (`Dockerfile`) with one bundle per entrypoint; each Deployment picks its own (see `deploy/knowledge/README.md`):
 
-- **`server/ingest.ts`** (`server/ingest/`) runs the durable queue: `source_sync` jobs call `src/git-source.ts`, and `document-version` jobs call `processDocumentVersion`.
+- **`server/ingest.ts`** (`server/ingest/`) runs the durable queue: `source_sync` jobs call `src/git-source.ts`, and `document-version` jobs call `processDocumentVersion`. `document-version` jobs come from git syncs or from `POST /v1/ingest/version`, which accepts inline content and derives the same document identity a git sync would have.
 - **`server/retrieval.ts`** (`server/retrieval/`) serves `POST /v1/search` using the channel queries here and RRF fusion. Without `DATABASE_URL` it falls back to an in-memory store.
 
 Shared HTTP, auth, logging and store errors are in `src/`. The bundles inline everything except `pg`, the one runtime dependency in `package.json`.

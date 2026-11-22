@@ -149,6 +149,45 @@ export const ingestRequestSchema = z.object({
 
 export type IngestRequestBody = z.infer<typeof ingestRequestSchema>;
 
+/**
+ * Inline-content publish: the extractor sends the document text itself and
+ * the server derives the same identity git-source would have (documentId,
+ * `source: "git"` label, path-keyed format/title), so an API-published doc is
+ * the same corpus row a git sync would have written.
+ */
+export const ingestVersionRequestSchema = z.object({
+  content: z
+    .string()
+    .min(1)
+    .describe(
+      "Full extracted document text, UTF-8; capped at the pipeline content limit so oversized bodies fail before enqueueing."
+    ),
+  externalId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(1024)
+    .describe(
+      "Stable source-relative path of the document; also selects the chunker format and the derived title."
+    ),
+  namespace: z
+    .string()
+    .regex(NAMESPACE_PATTERN)
+    .describe(
+      "Namespace the document belongs to; must match the registered source's namespace."
+    ),
+  sourceId: z
+    .string()
+    .regex(SOURCE_ID_PATTERN)
+    .describe(
+      "Registered source identity the version is published under; unknown ids are refused."
+    ),
+});
+
+export type IngestVersionRequestBody = z.infer<
+  typeof ingestVersionRequestSchema
+>;
+
 const provenanceResponseSchema = z.object({
   ingestedAt: z.string(),
   ingestionEventId: z.string().nullable(),
