@@ -324,6 +324,16 @@ test(
       assert.equal(entry.documentCount, 4);
       assert.ok((entry.chunkCount ?? 0) >= 4);
       assert.ok(entry.lastSyncAt !== null);
+
+      const registered = await store.getSource(`${run}-source`);
+      assert.ok(registered !== null, "getSource reads the registered row");
+      assert.equal(registered.sourceId, `${run}-source`);
+      assert.equal(registered.namespace, `it-${run}`);
+      assert.equal(
+        await store.getSource(`${run}-missing`),
+        null,
+        "getSource is null for unknown ids"
+      );
     } finally {
       await cleanupRun(pool, run);
       await pool.end();
