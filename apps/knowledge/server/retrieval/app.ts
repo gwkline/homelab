@@ -353,6 +353,7 @@ export const createApp = (deps: AppDeps): OpenAPIHono<RequestEnv> => {
   const ID_PATTERN = /^[\w.:-]{1,128}$/u;
 
   const passthrough = async (upstream: {
+    body?: string;
     method: "GET" | "POST";
     path: string;
   }): Promise<Response> => {
@@ -361,8 +362,12 @@ export const createApp = (deps: AppDeps): OpenAPIHono<RequestEnv> => {
     }
     const response = await withTimeout(
       fetch(`${config.ingestBaseUrl.replace(/\/+$/u, "")}${upstream.path}`, {
+        ...(upstream.body === undefined ? {} : { body: upstream.body }),
         headers: {
           accept: "application/json",
+          ...(upstream.body === undefined
+            ? {}
+            : { "content-type": "application/json" }),
           authorization: `Bearer ${config.ingestToken ?? config.token}`,
         },
         method: upstream.method,
@@ -413,6 +418,20 @@ export const createApp = (deps: AppDeps): OpenAPIHono<RequestEnv> => {
     }
   });
 
+  // Inline document-version publish: the extractor's only transport, so it
+  // goes through the same one-URL contract as the panel and MCP.
+  app.post("/v1/ingest/version", async (c) => {
+    try {
+      return await passthrough({
+        body: await c.req.text(),
+        method: "POST",
+        path: "/v1/ingest/version",
+      });
+    } catch (error) {
+      return passthroughError(c, error);
+    }
+  });
+
   app.post("/v1/sources/:sourceId/sync", async (c) => {
     const { sourceId } = c.req.param();
     if (!ID_PATTERN.test(sourceId)) {
@@ -452,7 +471,7 @@ export const createApp = (deps: AppDeps): OpenAPIHono<RequestEnv> => {
   app.doc31("/openapi.json", {
     info: {
       description:
-        "Cited knowledge retrieval. Returns ranked source chunks with traceable provenance; never prose answers. Sources and sync-job endpoints are passthroughs to the ingest service (same base URL, shared bearer). Authenticated with a secret-backed bearer token and intended for tailnet/internal networks only.",
+        "Cited knowledge retrieval. Returns ranked source chunks with traceable provenance; never prose answers. Sources, sync-job, and inline document-version publish endpoints are passthroughs to the ingest service (same base URL, shared bearer). Authenticated with a secret-backed bearer token and intended for tailnet/internal networks only.",
       title: "Knowledge Retrieval API",
       version: "0.1.0",
     },
