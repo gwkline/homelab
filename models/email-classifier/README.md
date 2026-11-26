@@ -8,8 +8,28 @@ Predicts the action Gavin takes on an incoming email: `respond`, `archive`, or `
 - `src/` — labeling, training, evaluation, scorecard, neural candidate.
 - `api/` — FastAPI inference service.
 - `evals/` — standing eval suite; `evals/run.sh` regenerates `evals/report.md` + `evals/scorecard.md` from the held-out time split.
+- `predictions/` — the Mac-side 8:01 briefing client (`classify.py`) and the guarded auto-archive step (`auto_archive.py`). The live copies run from `~/git-dev/email-classifier-local/predictions/` (outside this repo, beside the prediction log); keep them in sync when this dir changes. One deliberate divergence: `DEFAULT_URL` here is the `<tailnet>` placeholder (the DNS suffix is runtime config, never committed — `scripts/verify.sh` policy); the live copy carries the real URL, and `EMAIL_CLASSIFIER_URL` overrides either.
+- `tests/` — unittest fixtures; `tests/auto-archive.test.sh` is picked up by CI's fixture loop.
 - `data/` — Gmail-derived training data. **Never committed.** Populated by the export below; `.gitignore` excludes it.
 - `artifacts/` — trained model + embedding model. **Never committed** (the classifier weights are derived from the private mailbox).
+
+## Briefing pipeline and the auto-archive authority (2026-11-22)
+
+The 8:01 AM briefing cron scores the morning's unread inbox with the deployed service, then — since 2026-11-22 — auto-archives exactly the set the guard admits. Authority, Gavin 2026-11-21: "I want you to take action for super high prob actions. If >.9, you have permission to archive."
+
+`classify.py` stays suggestion-only: it probes `/healthz`, POSTs each message to `/predict`, logs every prediction to `predictions.jsonl`, and emits the scored batch on stdout. Each stdout entry carries the `model_version` that actually scored it, so the guard can refuse classical-fallback rows even if the service flips mid-batch.
+
+`auto_archive.py plan` is the deterministic decision step — never LLM judgment, and it never touches Gmail. A message auto-archives only when ALL hold:
+
+1. scored by the **neural** model (`model_version` starts `neural-`; a classical-fallback day skips the whole run and the briefing says so),
+2. predicted `archive` (anything flagged respond or mark-read is protected),
+3. **P(archive) > 0.9 and P(respond) < 0.05**, strict, from the neural's calibrated probabilities,
+4. not in a protected class matched over from+subject+snippet: security/2FA/login, shipping/delivery, receipts/orders/billing, calendar invites, travel/reservations, GovDash — the patterns are deliberately over-inclusive, because a false protect only leaves mail in the inbox while a false archive hides something Gavin may need,
+5. within the run cap (default 50).
+
+The briefing session executes the emitted list as **one** `batchModify` that removes INBOX only — UNREAD is kept on purpose, so auto-archived mail stays visibly flagged in All Mail for spot-checking and a re-inbox by Gavin is the negative-outcome signal for the retrain loop. Every archived message is verified by readback (INBOX gone, UNREAD present) before `auto_archive.py log` appends `auto_archive: true` rows to `predictions.jsonl`, and the briefing reports the archived list.
+
+Everything else — respond/mark-read suggestions, sends, drafts, filters, unsubscribes — remains in the existing confirmation flow.
 
 ## Environment
 
