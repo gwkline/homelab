@@ -23,6 +23,13 @@ replacements:
         options:
           delimiter: /
           index: 0
+  # The Docker endpoint allowance uses the stable pod-CIDR address, not the
+  # DHCP LAN address the API allowances need.
+  - source:
+      kind: ConfigMap
+      name: homelab-node
+      fieldPath: data.cni-ip
+    targets:
       - select:
           kind: NetworkPolicy
           labelSelector: homelab.gwkline.io/work-docker-egress=true

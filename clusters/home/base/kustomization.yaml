@@ -27,11 +27,13 @@ resources:
   - ../../../deploy/email-classifier/base
 
 # This target is in a sibling base of policies, so replace after composition.
+# The Docker endpoint takes the node's stable pod-CIDR address, so LAN/DHCP
+# identity flux (#561) cannot break the work runner's only daemon path.
 replacements:
   - source:
       kind: ConfigMap
       name: homelab-node
-      fieldPath: data.ip
+      fieldPath: data.cni-ip
     targets:
       - select:
           kind: ConfigMap

@@ -1,5 +1,6 @@
-# clusters/home/node supplies the node address. Apply from that root render,
-# not this standalone localhost placeholder. TLS still fails closed locally.
+# clusters/home/node supplies the node's stable pod-CIDR (cni0) address.
+# Apply from that root render, not this standalone localhost placeholder.
+# TLS still fails closed locally.
 apiVersion: v1
 kind: ConfigMap
 metadata:
