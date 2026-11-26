@@ -1,7 +1,11 @@
-# The server node's address: the Kubernetes API endpoint that NetworkPolicies
-# must allow, since kube-router matches after DNAT. It is a DHCP reservation
-# (docs/rebuild-runbook.md); scripts/rebuild-check.sh fails when the live API
-# endpoint disagrees. local-config: a replacement source, never applied.
+# The server node's addresses. `ip` is the Kubernetes API endpoint that
+# NetworkPolicies must allow, since kube-router matches after DNAT. It is a
+# DHCP reservation (docs/rebuild-runbook.md); scripts/rebuild-check.sh fails
+# when the live API endpoint disagrees. `cni-ip` is the node's stable
+# pod-CIDR address on cni0: the work Docker VM's authenticated 2376/2377
+# endpoints bind it, so LAN/DHCP identity flux cannot break the only
+# same-node path the work runner uses (#561). local-config: replacement
+# sources, never applied.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,3 +14,4 @@ metadata:
     config.kubernetes.io/local-config: "true"
 data:
   ip: 192.168.1.2
+  cni-ip: 10.42.0.1
