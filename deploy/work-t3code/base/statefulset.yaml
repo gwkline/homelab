@@ -102,7 +102,7 @@ spec:
               ephemeral-storage: 1Gi
             limits:
               # Native package managers and concurrent agents share this cap.
-              memory: 12Gi
+              memory: 20Gi
               ephemeral-storage: 8Gi
           startupProbe:
             httpGet:
